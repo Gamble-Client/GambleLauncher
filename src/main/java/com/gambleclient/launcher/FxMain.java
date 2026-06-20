@@ -33,7 +33,9 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.TilePane;
 import javafx.scene.layout.VBox;
-import javafx.scene.web.WebView;
+import javafx.scene.media.Media;
+import javafx.scene.media.MediaPlayer;
+import javafx.scene.media.MediaView;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 
@@ -98,6 +100,7 @@ public class FxMain extends Application {
     private Label sidebarAdCopy;
     private Button sidebarAdButton;
     private Timeline hudInfoRefresh;
+    private MediaPlayer sponsorMediaPlayer;
     private String lastLog = "";
     private boolean syncingFromBackend;
     private boolean slotSoundsEnabled = true;
@@ -976,17 +979,7 @@ public class FxMain extends Application {
         confirmLeave.setManaged(false);
         confirmLeave.setVisible(false);
 
-        if (isDirectMediaUrl(adUrl)) {
-            WebView view = new WebView();
-            view.setContextMenuEnabled(false);
-            view.setPrefSize(650, 330);
-            view.setMinHeight(300);
-            view.setMaxHeight(330);
-            view.getEngine().loadContent(sponsorVideoHtml(adUrl));
-            mediaBox.getChildren().setAll(view);
-        } else {
-            fallback.setText("Sponsor media is not playable. Ask staff to upload an MP4 or WebM ad.");
-        }
+        loadSponsorMedia(mediaBox, fallback, adUrl);
 
         final Timeline[] timerRef = new Timeline[1];
         leave.setOnAction(event -> {
@@ -1032,38 +1025,52 @@ public class FxMain extends Application {
     }
 
     private void stopSponsorMedia() {
+        if (sponsorMediaPlayer == null) return;
+        try {
+            sponsorMediaPlayer.stop();
+            sponsorMediaPlayer.dispose();
+        } catch (RuntimeException ignored) {
+        } finally {
+            sponsorMediaPlayer = null;
+        }
+    }
+
+    private void loadSponsorMedia(StackPane mediaBox, Label fallback, String adUrl) {
+        if (!isDirectMediaUrl(adUrl)) {
+            fallback.setText("Sponsor media is not playable. Ask staff to upload an MP4 or WebM ad.");
+            return;
+        }
+
+        try {
+            stopSponsorMedia();
+            Media media = new Media(adUrl);
+            MediaPlayer player = new MediaPlayer(media);
+            MediaView view = new MediaView(player);
+            view.setPreserveRatio(true);
+            view.setFitWidth(650);
+            view.setFitHeight(330);
+            player.setMute(true);
+            player.setCycleCount(MediaPlayer.INDEFINITE);
+            player.setOnReady(() -> {
+                mediaBox.getChildren().setAll(view);
+                player.play();
+            });
+            player.setOnError(() -> showSponsorFallback(mediaBox, fallback));
+            media.setOnError(() -> showSponsorFallback(mediaBox, fallback));
+            sponsorMediaPlayer = player;
+        } catch (RuntimeException e) {
+            showSponsorFallback(mediaBox, fallback);
+        }
+    }
+
+    private void showSponsorFallback(StackPane mediaBox, Label fallback) {
+        fallback.setText("Sponsor media is playing as a timed break on this device.");
+        mediaBox.getChildren().setAll(fallback);
     }
 
     private boolean isDirectMediaUrl(String url) {
         String lower = String.valueOf(url).toLowerCase(Locale.ROOT);
         return lower.endsWith(".mp4") || lower.endsWith(".m4v") || lower.endsWith(".webm") || lower.endsWith(".m3u8") || lower.endsWith(".mp3") || lower.endsWith(".wav");
-    }
-
-    private String sponsorVideoHtml(String adUrl) {
-        String safeUrl = htmlAttr(adUrl);
-        return """
-            <!doctype html>
-            <html>
-            <head>
-            <meta charset="utf-8">
-            <style>
-            html,body{margin:0;width:100%;height:100%;background:#111018;color:#f7f3ea;font-family:system-ui,sans-serif;overflow:hidden}
-            .wrap{position:relative;width:100%;height:100%;display:grid;place-items:center;background:linear-gradient(135deg,#15131d,#211722)}
-            video{width:100%;height:100%;object-fit:contain;background:#0d0b11}
-            .fallback{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;background:linear-gradient(135deg,#17141f,#231b22);color:#f4b34f;font-weight:900}
-            video:not([src])+.fallback,body.error .fallback{display:grid}
-            video[src]+.fallback{display:none}
-            body.error video{display:none}
-            </style>
-            </head>
-            <body>
-            <div class="wrap">
-            <video src="%s" autoplay playsinline controls controlslist="nodownload noremoteplayback" onerror="document.body.className='error'"></video>
-            <div class="fallback">Sponsor media could not render in the launcher. Keep this window open for the timer.</div>
-            </div>
-            </body>
-            </html>
-            """.replace("%s", safeUrl);
     }
 
     private String accountStatusWithMicrosoft() {
