@@ -13,7 +13,7 @@ Current flow:
 - Installs managed Fabric helper mods for Fabric profiles: Fabric API and Mod Menu.
 - Downloads Minecraft/Fabric runtime files when missing.
 - Launches Minecraft directly through Fabric Loader.
-- Optionally links a Microsoft account for online Minecraft auth. Without it, the launcher falls back to the local/offline session.
+- Optionally links a Microsoft account for online Minecraft auth using the approved Gamble Client app registration. Without it, the launcher falls back to the local/offline session.
 
 Managed game folder:
 
@@ -25,15 +25,10 @@ Override with `GAMBLE_CLIENT_GAME_DIR` or `-Dgamble.gameDir=/path/to/minecraft`.
 
 Microsoft auth:
 
-Create a Microsoft Entra app registration for the launcher and enable public-client/device-code use. Then run with one of:
-
-```bash
-GAMBLE_MICROSOFT_CLIENT_ID="application-client-id" ./gradlew run
-```
-
-```bash
-java -Dgamble.microsoftClientId="application-client-id" -jar build/libs/gamble-client-launcher-0.1.0.jar
-```
+The launcher includes the approved Gamble Client Microsoft app ID by default.
+Use the in-launcher Microsoft Sign In button to link an online account. For
+local testing against a different app registration, override the client ID with
+`GAMBLE_MICROSOFT_CLIENT_ID` or `-Dgamble.microsoftClientId=...`.
 
 Build:
 

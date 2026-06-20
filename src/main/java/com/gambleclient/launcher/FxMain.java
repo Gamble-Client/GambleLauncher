@@ -153,7 +153,7 @@ public class FxMain extends Application {
         Label title = new Label("Gamble Client");
         title.getStyleClass().add("title");
 
-        launcherInstalled = chipLine("Installed: 0.1.51");
+        launcherInstalled = chipLine("Installed: 0.1.52");
         launcherReleased = chipLine("Released: checking...");
         clientInstalled = chipLine("Installed: none");
         clientReleased = chipLine("Released: sign in to check");

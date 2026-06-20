@@ -4,7 +4,11 @@ plugins {
 }
 
 group = "com.gambleclient"
-version = "0.1.51"
+version = "0.1.52"
+
+val javafxVersion = "22.0.2"
+val javafxModuleNames = listOf("base", "graphics", "controls", "media", "web")
+val javafxPlatforms = listOf("linux", "win", "mac", "mac-aarch64")
 
 java {
     toolchain {
@@ -13,12 +17,20 @@ java {
 }
 
 application {
-    mainClass = "com.gambleclient.launcher.FxLauncher"
+    mainClass = "com.gambleclient.launcher.LauncherBootstrap"
 }
 
 javafx {
-    version = "22.0.2"
+    version = javafxVersion
     modules = listOf("javafx.controls", "javafx.graphics", "javafx.media", "javafx.web")
+}
+
+dependencies {
+    javafxModuleNames.forEach { moduleName ->
+        javafxPlatforms.forEach { platform ->
+            runtimeOnly("org.openjfx:javafx-$moduleName:$javafxVersion:$platform")
+        }
+    }
 }
 
 tasks.jar {
