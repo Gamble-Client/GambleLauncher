@@ -124,7 +124,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.53";
+    private static final String LAUNCHER_VERSION = "0.1.54";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -3364,9 +3364,19 @@ public class Main {
         final List<String> extraJavaArgs;
         try {
             extraJavaArgs = splitArgs(javaArgs.getText());
+            validateExtraJavaArgs(extraJavaArgs);
         } catch (IllegalArgumentException e) {
             JOptionPane.showMessageDialog(frame, e.getMessage(), "Java args", JOptionPane.WARNING_MESSAGE);
             return;
+        }
+
+        if (isOfflineLaunchSelected()) {
+            JOptionPane.showMessageDialog(
+                frame,
+                "You are launching without a Microsoft account.\n\nOnline servers may reject this session. Add or select a Microsoft account from Accounts to launch with Microsoft authentication.",
+                "Offline Minecraft session",
+                JOptionPane.WARNING_MESSAGE
+            );
         }
 
         clearLog();
@@ -3617,7 +3627,7 @@ public class Main {
 
     private LaunchIdentity resolveLaunchIdentity(String fallbackName) throws IOException {
         if (crackedMode || microsoftAccount == null || microsoftAccount.refreshToken.isEmpty()) {
-            log("Launching offline as " + fallbackName + ".");
+            log("Launching without a Microsoft account as " + fallbackName + ". Online servers may reject this session.");
             return LaunchIdentity.offline(fallbackName);
         }
 
@@ -3796,7 +3806,7 @@ public class Main {
                 validation.ok("Microsoft account ready: " + identity.playerName);
             }
         } else {
-            validation.ok("Offline account ready: " + identity.playerName);
+            validation.warn("Launching without Microsoft account: " + identity.playerName + ". Online servers may reject this session.");
         }
 
         return validation;
@@ -4250,6 +4260,21 @@ public class Main {
         replacements.put("${game_directory}", gameDir.getAbsolutePath());
         replacements.put("${version_name}", profile.id);
         return replacePlaceholders(arg, replacements);
+    }
+
+    private boolean isOfflineLaunchSelected() {
+        return crackedMode || microsoftAccount == null || microsoftAccount.refreshToken == null || microsoftAccount.refreshToken.trim().isEmpty();
+    }
+
+    private void validateExtraJavaArgs(List<String> args) {
+        for (String arg : args) {
+            if ("net.minecraft.client.main.Main".equals(arg) || arg.endsWith(".KnotClient")) {
+                throw new IllegalArgumentException(
+                    "Java Args should only contain JVM options.\n\n"
+                        + "Remove the Minecraft main class and any game arguments from Java Args: " + arg
+                );
+            }
+        }
     }
 
     private List<String> splitArgs(String value) {
@@ -5478,7 +5503,7 @@ public class Main {
         if (lower.contains("mod resolution failed") || lower.contains("requires any version") || lower.contains("depends on")) return "Fabric dependency failure";
         if (lower.contains("a fatal error has been detected by the java runtime")) return "JVM crash";
         if (lower.contains("exception in thread")) return "Unhandled Java exception";
-        if (lower.contains("[83ac]")) return "Mod/loader self-terminated before client initialization ([83ac])";
+        if (lower.contains("[83ac]")) return "Native Library Error ([83ac])";
         if (lower.contains("failed to load") && lower.contains("native")) return "Native library load failure";
         return "";
     }
@@ -5493,8 +5518,8 @@ public class Main {
             return new LaunchDiagnosis(
                 summary,
                 detected,
-                "KRLoader or another pre-launch/native mod intentionally terminated the JVM before Minecraft reached the render thread.",
-                "Try a real Microsoft launch session if that mod requires online auth. If it still exits, remove KRLoader or compare the full command/classpath in latest-launch.log against Prism."
+                "A native library failed before Minecraft reached client initialization.",
+                "Your Java installation may be corrupted. Try reinstalling Java 17+ and restarting your launcher."
             );
         }
         if (detected.contains("ClassNotFoundException") || detected.contains("NoClassDefFoundError")) {
@@ -5507,7 +5532,7 @@ public class Main {
             return new LaunchDiagnosis(summary, detected, "Fabric dependency resolution failed.", "Open the mod list in latest-launch.log and install the missing dependency.");
         }
         if (detected.contains("Native") || detected.contains("UnsatisfiedLinkError")) {
-            return new LaunchDiagnosis(summary, detected, "A native library failed to load.", "Verify Java architecture, native libraries, and any mod-bundled native files.");
+            return new LaunchDiagnosis(summary, detected, "A native library failed to load.", "Your Java installation may be corrupted. Try reinstalling Java 17+ and restarting your launcher.");
         }
         if (abnormalStartup) {
             return new LaunchDiagnosis(
