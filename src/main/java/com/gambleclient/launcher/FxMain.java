@@ -48,9 +48,11 @@ import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import java.awt.Desktop;
 import java.io.File;
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.URI;
+import java.net.URLConnection;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import javax.sound.sampled.AudioFormat;
@@ -155,7 +157,7 @@ public class FxMain extends Application {
         Label title = new Label("Gamble Client");
         title.getStyleClass().add("title");
 
-        launcherInstalled = chipLine("Installed: 0.1.55");
+        launcherInstalled = chipLine("Installed: 0.1.56");
         launcherReleased = chipLine("Released: checking...");
         clientInstalled = chipLine("Installed: none");
         clientReleased = chipLine("Released: sign in to check");
@@ -1154,9 +1156,38 @@ public class FxMain extends Application {
             return;
         }
 
+        stopSponsorMedia();
+        Thread loader = new Thread(() -> {
+            try {
+                String mediaSource = cacheSponsorMedia(adUrl);
+                Platform.runLater(() -> playSponsorMedia(mediaBox, fallback, mediaSource));
+            } catch (Exception e) {
+                Platform.runLater(() -> showSponsorFallback(mediaBox, fallback));
+            }
+        }, "Sponsor media loader");
+        loader.setDaemon(true);
+        loader.start();
+    }
+
+    private String cacheSponsorMedia(String adUrl) throws IOException {
+        String extension = sponsorMediaExtension(adUrl);
+        java.nio.file.Path temp = Files.createTempFile("gamble-sponsor-", extension);
+        temp.toFile().deleteOnExit();
+        URLConnection connection = URI.create(adUrl).toURL().openConnection();
+        connection.setConnectTimeout(8000);
+        connection.setReadTimeout(20000);
+        connection.setRequestProperty("User-Agent", "GambleClientLauncher/" + backendString("launcherVersion"));
+        try (InputStream input = connection.getInputStream()) {
+            Files.copy(input, temp, StandardCopyOption.REPLACE_EXISTING);
+        }
+        if (Files.size(temp) <= 0) throw new IOException("Sponsor media download was empty.");
+        return temp.toUri().toString();
+    }
+
+    private void playSponsorMedia(StackPane mediaBox, Label fallback, String mediaSource) {
         try {
             stopSponsorMedia();
-            Media media = new Media(adUrl);
+            Media media = new Media(mediaSource);
             MediaPlayer player = new MediaPlayer(media);
             MediaView view = new MediaView(player);
             view.setPreserveRatio(true);
@@ -1184,6 +1215,16 @@ public class FxMain extends Application {
     private boolean isDirectMediaUrl(String url) {
         String lower = String.valueOf(url).toLowerCase(Locale.ROOT);
         return lower.endsWith(".mp4") || lower.endsWith(".m4v") || lower.endsWith(".webm") || lower.endsWith(".m3u8") || lower.endsWith(".mp3") || lower.endsWith(".wav");
+    }
+
+    private String sponsorMediaExtension(String url) {
+        String lower = String.valueOf(url).toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".m4v")) return ".m4v";
+        if (lower.endsWith(".webm")) return ".webm";
+        if (lower.endsWith(".m3u8")) return ".m3u8";
+        if (lower.endsWith(".mp3")) return ".mp3";
+        if (lower.endsWith(".wav")) return ".wav";
+        return ".mp4";
     }
 
     private String accountStatusWithMicrosoft() {
