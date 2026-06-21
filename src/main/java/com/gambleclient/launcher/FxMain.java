@@ -37,6 +37,7 @@ import javafx.scene.media.Media;
 import javafx.scene.media.MediaPlayer;
 import javafx.scene.media.MediaView;
 import javafx.stage.Stage;
+import javafx.stage.FileChooser;
 import javafx.util.Duration;
 
 import javax.swing.JButton;
@@ -63,6 +64,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+import java.io.IOException;
 
 public class FxMain extends Application {
     private static final String[] PROFILE_LABELS = {"With Gamble Client", "Vanilla", "Fabric"};
@@ -153,7 +155,7 @@ public class FxMain extends Application {
         Label title = new Label("Gamble Client");
         title.getStyleClass().add("title");
 
-        launcherInstalled = chipLine("Installed: 0.1.52");
+        launcherInstalled = chipLine("Installed: 0.1.53");
         launcherReleased = chipLine("Released: checking...");
         clientInstalled = chipLine("Installed: none");
         clientReleased = chipLine("Released: sign in to check");
@@ -168,7 +170,8 @@ public class FxMain extends Application {
             sidebarAdBox(),
             spacer(),
             antiScreenshareButton,
-            actionButton("Mods", this::openModManager)
+            actionButton("Mods", this::openModManager),
+            actionButton("Resource Packs", this::openResourcePackManager)
         );
         return side;
     }
@@ -556,6 +559,78 @@ public class FxMain extends Application {
         showScreen(body);
     }
 
+    private void openResourcePackManager() {
+        syncToBackend();
+        runSwing(() -> call("ensureProfileFolders", selectedBackendProfile()));
+
+        File packsFolder = resourcePacksFolder();
+        if (!packsFolder.exists() && !packsFolder.mkdirs()) {
+            appendLog("Could not create resource packs folder.");
+            return;
+        }
+
+        VBox body = new VBox(12);
+        body.getStyleClass().addAll("content", "screen");
+        HBox header = screenHeader(profileBox.getValue() + " Resource Packs");
+        Label summary = new Label();
+        summary.getStyleClass().add("muted");
+
+        ListView<ModFile> list = new ListView<>();
+        list.getStyleClass().add("mod-list");
+        list.setCellFactory(view -> new ModFileCell());
+        VBox.setVgrow(list, Priority.ALWAYS);
+        Runnable reloadPacks = () -> {
+            List<ModFile> packs = readResourcePacks();
+            list.getItems().setAll(packs);
+            long enabled = packs.stream().filter(pack -> pack.enabled).count();
+            summary.setText(packs.isEmpty()
+                ? "Drop zip resource packs here to add them to this profile."
+                : enabled + " enabled, " + (packs.size() - enabled) + " disabled.");
+        };
+        reloadPacks.run();
+        list.setOnMouseClicked(e -> {
+            if (e.getClickCount() == 2) toggleSelectedResourcePack(list, summary, reloadPacks);
+        });
+        list.setOnDragOver(e -> {
+            Dragboard board = e.getDragboard();
+            if (board.hasFiles() && board.getFiles().stream().anyMatch(this::isResourcePackLikeFile)) {
+                e.acceptTransferModes(TransferMode.COPY);
+            }
+            e.consume();
+        });
+        list.setOnDragDropped(e -> {
+            Dragboard board = e.getDragboard();
+            boolean ok = false;
+            if (board.hasFiles()) {
+                ok = copyDroppedResourcePacks(board.getFiles(), summary);
+                reloadPacks.run();
+            }
+            e.setDropCompleted(ok);
+            e.consume();
+        });
+
+        HBox buttons = new HBox(10);
+        buttons.setAlignment(Pos.CENTER_RIGHT);
+        Button refresh = secondary("Refresh");
+        refresh.setOnAction(e -> reloadPacks.run());
+        Button toggle = secondary("Toggle");
+        toggle.setOnAction(e -> toggleSelectedResourcePack(list, summary, reloadPacks));
+        Button add = secondary("Add");
+        add.setOnAction(e -> {
+            FileChooser chooser = new FileChooser();
+            chooser.setTitle("Add Resource Packs");
+            chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Resource packs", "*.zip"));
+            List<File> files = chooser.showOpenMultipleDialog(stage);
+            if (files != null && copyDroppedResourcePacks(files, summary)) reloadPacks.run();
+        });
+        Button open = secondary("Open Folder");
+        open.setOnAction(e -> openFile(resourcePacksFolder()));
+        buttons.getChildren().addAll(refresh, toggle, add, open);
+
+        body.getChildren().addAll(header, summary, list, buttons);
+        showScreen(body);
+    }
+
     private HBox accountRow(String kind, String name, String status) {
         HBox row = new HBox(12);
         row.getStyleClass().add("account-row");
@@ -600,6 +675,44 @@ public class FxMain extends Application {
             }
         }
         summary.setText(copied == 1 ? "Added 1 mod." : "Added " + copied + " mods.");
+        return copied > 0;
+    }
+
+    private void toggleSelectedResourcePack(ListView<ModFile> list, Label summary, Runnable reloadPacks) {
+        ModFile file = list.getSelectionModel().getSelectedItem();
+        if (file == null) return;
+        try {
+            File target = file.toggleTarget();
+            Files.move(file.file.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            setResourcePackEnabled(target, !file.enabled);
+            reloadPacks.run();
+        } catch (Exception ex) {
+            appendLog("Resource pack toggle failed: " + rootMessage(ex));
+            summary.setText("Could not toggle resource pack.");
+        }
+    }
+
+    private boolean copyDroppedResourcePacks(List<File> files, Label summary) {
+        File packs = resourcePacksFolder();
+        if (!packs.exists() && !packs.mkdirs()) {
+            summary.setText("Could not create resource packs folder.");
+            return false;
+        }
+
+        int copied = 0;
+        for (File file : files) {
+            if (!isResourcePackLikeFile(file)) continue;
+            try {
+                File target = new File(packs, file.getName());
+                if (file.isDirectory()) copyDirectory(file.toPath(), target.toPath());
+                else Files.copy(file.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                setResourcePackEnabled(target, true);
+                copied++;
+            } catch (Exception e) {
+                appendLog("Resource pack copy failed: " + file.getName() + ": " + rootMessage(e));
+            }
+        }
+        summary.setText(copied == 1 ? "Added 1 resource pack." : "Added " + copied + " resource packs.");
         return copied > 0;
     }
 
@@ -1956,6 +2069,24 @@ public class FxMain extends Application {
         return new File(new File(appData(), "minecraft/profiles/" + id), "mods");
     }
 
+    private File resourcePacksFolder() {
+        String id = switch (profileBox.getSelectionModel().getSelectedIndex()) {
+            case 1 -> "vanilla";
+            case 2 -> "fabric";
+            default -> "gamble-client";
+        };
+        return new File(new File(appData(), "minecraft/profiles/" + id), "resourcepacks");
+    }
+
+    private File profileFolder() {
+        String id = switch (profileBox.getSelectionModel().getSelectedIndex()) {
+            case 1 -> "vanilla";
+            case 2 -> "fabric";
+            default -> "gamble-client";
+        };
+        return new File(appData(), "minecraft/profiles/" + id);
+    }
+
     private File appData() {
         String xdg = System.getenv("XDG_DATA_HOME");
         File home = xdg != null && !xdg.isBlank() ? new File(xdg) : new File(System.getProperty("user.home"), ".local/share");
@@ -1981,6 +2112,21 @@ public class FxMain extends Application {
         return result;
     }
 
+    private java.util.List<ModFile> readResourcePacks() {
+        File[] files = resourcePacksFolder().listFiles();
+        java.util.List<ModFile> result = new java.util.ArrayList<>();
+        if (files == null) return result;
+        for (File file : files) {
+            String lower = file.getName().toLowerCase(Locale.ROOT);
+            boolean enabled = isEnabledResourcePack(file);
+            boolean disabled = lower.endsWith(".zip.disabled") || lower.endsWith(".disabled");
+            if (!isResourcePackLikeFile(file) && !disabled) continue;
+            result.add(new ModFile(file, enabled, false));
+        }
+        result.sort(java.util.Comparator.comparing(value -> value.file.getName().toLowerCase(Locale.ROOT)));
+        return result;
+    }
+
     private boolean isGambleClientJar(String name) {
         return name.startsWith("cg-client") || name.startsWith("cg-mod");
     }
@@ -2000,6 +2146,75 @@ public class FxMain extends Application {
     private boolean isJarLikeFile(File file) {
         String name = file.getName().toLowerCase(Locale.ROOT);
         return file.isFile() && (name.endsWith(".jar") || name.endsWith(".jar.disabled"));
+    }
+
+    private boolean isResourcePackLikeFile(File file) {
+        String name = file.getName().toLowerCase(Locale.ROOT);
+        return (file.isFile() && (name.endsWith(".zip") || name.endsWith(".zip.disabled"))) || file.isDirectory();
+    }
+
+    private boolean isEnabledResourcePack(File file) {
+        String name = file.getName().toLowerCase(Locale.ROOT);
+        return file.isDirectory() ? !name.endsWith(".disabled") : name.endsWith(".zip");
+    }
+
+    private void setResourcePackEnabled(File file, boolean enabled) throws IOException {
+        File options = new File(profileFolder(), "options.txt");
+        java.util.List<String> lines = options.isFile()
+            ? Files.readAllLines(options.toPath(), java.nio.charset.StandardCharsets.UTF_8)
+            : new java.util.ArrayList<>();
+        String packName = enabledResourcePackName(file);
+        String entry = "file/" + packName;
+        boolean found = false;
+        for (int i = 0; i < lines.size(); i++) {
+            if (!lines.get(i).startsWith("resourcePacks:")) continue;
+            java.util.List<String> packs = parseResourcePackList(lines.get(i).substring("resourcePacks:".length()));
+            packs.removeIf(value -> value.equals(entry) || value.equals("file/" + disabledResourcePackName(file)));
+            if (enabled) packs.add(entry);
+            lines.set(i, "resourcePacks:" + encodeResourcePackList(packs));
+            found = true;
+            break;
+        }
+        if (!found && enabled) lines.add("resourcePacks:" + encodeResourcePackList(java.util.List.of(entry)));
+        if (!lines.stream().anyMatch(line -> line.startsWith("incompatibleResourcePacks:"))) {
+            lines.add("incompatibleResourcePacks:[]");
+        }
+        Files.write(options.toPath(), lines, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private String enabledResourcePackName(File file) {
+        String name = file.getName();
+        return name.endsWith(".disabled") ? name.substring(0, name.length() - ".disabled".length()) : name;
+    }
+
+    private String disabledResourcePackName(File file) {
+        String name = file.getName();
+        return name.endsWith(".disabled") ? name : name + ".disabled";
+    }
+
+    private java.util.List<String> parseResourcePackList(String raw) {
+        java.util.List<String> packs = new java.util.ArrayList<>();
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("\"((?:\\\\.|[^\"])*)\"").matcher(raw);
+        while (matcher.find()) packs.add(matcher.group(1).replace("\\\"", "\"").replace("\\\\", "\\"));
+        return packs;
+    }
+
+    private String encodeResourcePackList(java.util.List<String> packs) {
+        return packs.stream()
+            .distinct()
+            .map(value -> "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"")
+            .collect(java.util.stream.Collectors.joining(",", "[", "]"));
+    }
+
+    private void copyDirectory(java.nio.file.Path source, java.nio.file.Path target) throws IOException {
+        try (java.util.stream.Stream<java.nio.file.Path> stream = Files.walk(source)) {
+            for (java.nio.file.Path path : stream.toList()) {
+                java.nio.file.Path relative = source.relativize(path);
+                java.nio.file.Path dest = target.resolve(relative);
+                if (Files.isDirectory(path)) Files.createDirectories(dest);
+                else Files.copy(path, dest, StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
     }
 
     private void openBackendFile(String method) {

@@ -12,6 +12,7 @@ import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
+import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JList;
@@ -123,7 +124,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.52";
+    private static final String LAUNCHER_VERSION = "0.1.53";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -235,12 +236,14 @@ public class Main {
     private final JButton settingsBackButton = new JButton("Back");
     private final JButton settingsGameFolderButton = new JButton("Game Folder");
     private final JButton settingsModsButton = new JButton("Manage Mods");
+    private final JButton settingsResourcePacksButton = new JButton("Resource Packs");
     private final JButton settingsSiteButton = new JButton("Website");
     private final JLabel microsoftName = new JLabel("Offline session");
     private final JLabel microsoftStatus = new JLabel("Realms/profile auth disabled");
     private final JButton microsoftSignInButton = new JButton("Microsoft Sign In");
     private final JButton microsoftSignOutButton = new JButton("Sign Out");
     private final JButton modsButton = new JButton("Manage Mods");
+    private final JButton resourcePacksButton = new JButton("Resource Packs");
     private final JButton siteButton = new JButton("Website");
     private String launcherToken = "";
     private MicrosoftAccount microsoftAccount;
@@ -521,6 +524,10 @@ public class Main {
         mods.setPreferredSize(new Dimension(100, 38));
         panel.add(mods, gbc);
         gbc.gridy = 3;
+        JButton resourcePacks = secondaryButton(resourcePacksButton);
+        resourcePacks.setPreferredSize(new Dimension(100, 38));
+        panel.add(resourcePacks, gbc);
+        gbc.gridy = 4;
         gbc.insets = new Insets(0, 0, 0, 0);
         JButton site = secondaryButton(siteButton);
         site.setPreferredSize(new Dimension(100, 38));
@@ -681,9 +688,11 @@ public class Main {
 
         JButton gameFolder = secondaryButton(settingsGameFolderButton);
         JButton mods = secondaryButton(settingsModsButton);
+        JButton resourcePacks = secondaryButton(settingsResourcePacksButton);
         JButton site = secondaryButton(settingsSiteButton);
         gameFolder.setPreferredSize(new Dimension(120, 40));
         mods.setPreferredSize(new Dimension(120, 40));
+        resourcePacks.setPreferredSize(new Dimension(140, 40));
         site.setPreferredSize(new Dimension(120, 40));
 
         gbc.gridx = 0;
@@ -691,6 +700,8 @@ public class Main {
         gbc.gridx = 1;
         panel.add(mods, gbc);
         gbc.gridx = 2;
+        panel.add(resourcePacks, gbc);
+        gbc.gridx = 3;
         gbc.insets = new Insets(0, 0, 0, 0);
         panel.add(site, gbc);
         return panel;
@@ -773,9 +784,11 @@ public class Main {
         launchButton.addActionListener(e -> launch());
         copyLogButton.addActionListener(e -> copyLauncherLog());
         modsButton.addActionListener(e -> showModsManager());
+        resourcePacksButton.addActionListener(e -> showResourcePacksManager());
         siteButton.addActionListener(e -> open(siteUrl()));
         settingsGameFolderButton.addActionListener(e -> open(getMinecraftFolder()));
         settingsModsButton.addActionListener(e -> showModsManager());
+        settingsResourcePacksButton.addActionListener(e -> showResourcePacksManager());
         settingsSiteButton.addActionListener(e -> open(siteUrl()));
         microsoftSignInButton.addActionListener(e -> startMicrosoftSignIn(true));
         microsoftSignOutButton.addActionListener(e -> signOutMicrosoft());
@@ -953,6 +966,111 @@ public class Main {
         dialog.setVisible(true);
     }
 
+    private void showResourcePacksManager() {
+        LaunchProfile profile = selectedProfile();
+        try {
+            ensureProfileFolders(profile);
+        } catch (IOException e) {
+            JOptionPane.showMessageDialog(frame, e.getMessage(), "Resource Packs", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        File packs = getResourcePacksFolder(profile);
+        if (!packs.exists() && !packs.mkdirs()) {
+            JOptionPane.showMessageDialog(frame, "Failed to create resource packs folder: " + packs, "Resource Packs", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        JDialog dialog = new JDialog(frame, profile.label + " Resource Packs", true);
+        JPanel root = card(new BorderLayout(0, 12));
+        root.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(LINE),
+            BorderFactory.createEmptyBorder(16, 16, 16, 16)
+        ));
+
+        DefaultListModel<ModEntry> model = new DefaultListModel<>();
+        JList<ModEntry> list = new JList<>(model);
+        list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        list.setBackground(FIELD);
+        list.setForeground(TEXT);
+        list.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+        list.setFixedCellHeight(32);
+        JScrollPane scroll = new JScrollPane(list);
+        styleScrollPane(scroll);
+        scroll.setPreferredSize(new Dimension(520, 300));
+
+        Runnable reload = () -> {
+            model.clear();
+            loadResourcePackEntries(packs, model);
+            if (!model.isEmpty()) list.setSelectedIndex(0);
+        };
+        reload.run();
+
+        JPanel header = transparentPanel(new BorderLayout(0, 4));
+        header.add(label("Resource Packs", 18, Font.BOLD, TEXT), BorderLayout.NORTH);
+
+        JPanel actions = transparentPanel();
+        JButton toggle = secondaryButton(new JButton("Toggle"));
+        JButton add = secondaryButton(new JButton("Add"));
+        JButton openFolder = secondaryButton(new JButton("Open Folder"));
+        JButton close = primaryButton(new JButton("Done"));
+        toggle.setPreferredSize(new Dimension(104, 38));
+        add.setPreferredSize(new Dimension(92, 38));
+        openFolder.setPreferredSize(new Dimension(126, 38));
+        close.setPreferredSize(new Dimension(92, 38));
+
+        toggle.addActionListener(e -> {
+            ModEntry entry = list.getSelectedValue();
+            if (entry == null) return;
+            try {
+                File target = toggleResourcePackEntry(profile, entry);
+                log((entry.enabled ? "Disabled " : "Enabled ") + target.getName() + ".");
+                reload.run();
+            } catch (IOException ex) {
+                JOptionPane.showMessageDialog(dialog, ex.getMessage(), "Resource Packs", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        add.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setMultiSelectionEnabled(true);
+            chooser.setDialogTitle("Add Resource Packs");
+            int result = chooser.showOpenDialog(dialog);
+            if (result != JFileChooser.APPROVE_OPTION) return;
+            int copied = 0;
+            for (File file : chooser.getSelectedFiles()) {
+                if (!isResourcePackLikeFile(file)) continue;
+                try {
+                    File target = new File(packs, file.getName());
+                    Files.copy(file.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                    setResourcePackEnabled(profile, target, true);
+                    copied++;
+                } catch (IOException ex) {
+                    JOptionPane.showMessageDialog(dialog, ex.getMessage(), "Resource Packs", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+            if (copied > 0) {
+                log("Added " + copied + " resource pack" + (copied == 1 ? "." : "s."));
+                reload.run();
+            }
+        });
+        openFolder.addActionListener(e -> open(packs));
+        close.addActionListener(e -> dialog.dispose());
+
+        actions.add(toggle);
+        actions.add(add);
+        actions.add(openFolder);
+        actions.add(close);
+
+        root.add(header, BorderLayout.NORTH);
+        root.add(scroll, BorderLayout.CENTER);
+        root.add(actions, BorderLayout.SOUTH);
+
+        dialog.setContentPane(root);
+        dialog.pack();
+        dialog.setLocationRelativeTo(frame);
+        dialog.setVisible(true);
+    }
+
     private void loadModEntries(LaunchProfile profile, File mods, DefaultListModel<ModEntry> model) {
         File[] files = mods.listFiles();
         if (files == null) return;
@@ -968,6 +1086,16 @@ public class Main {
         }
     }
 
+    private void loadResourcePackEntries(File packs, DefaultListModel<ModEntry> model) {
+        File[] files = packs.listFiles();
+        if (files == null) return;
+
+        for (File file : files) {
+            if (!isResourcePackLikeFile(file)) continue;
+            model.addElement(new ModEntry(file, isEnabledResourcePack(file), false));
+        }
+    }
+
     private void toggleModEntry(ModEntry entry) throws IOException {
         File source = entry.file;
         File target;
@@ -980,6 +1108,22 @@ public class Main {
 
         if (target.exists()) throw new IOException("Target already exists: " + target.getName());
         Files.move(source.toPath(), target.toPath());
+    }
+
+    private File toggleResourcePackEntry(LaunchProfile profile, ModEntry entry) throws IOException {
+        File source = entry.file;
+        File target;
+        if (entry.enabled) {
+            target = new File(source.getParentFile(), source.getName() + ".disabled");
+        } else {
+            String name = source.getName();
+            target = new File(source.getParentFile(), name.substring(0, name.length() - ".disabled".length()));
+        }
+
+        if (target.exists()) throw new IOException("Target already exists: " + target.getName());
+        Files.move(source.toPath(), target.toPath());
+        setResourcePackEnabled(profile, target, !entry.enabled);
+        return target;
     }
 
     private void selectStoredProfile() {
@@ -5572,6 +5716,76 @@ public class Main {
 
     private File getModsFolder() {
         return new File(getMinecraftFolder(), "mods");
+    }
+
+    private File getResourcePacksFolder(LaunchProfile profile) {
+        return new File(getMinecraftFolder(profile), "resourcepacks");
+    }
+
+    private boolean isResourcePackLikeFile(File file) {
+        if (file == null) return false;
+        String lower = file.getName().toLowerCase(Locale.ROOT);
+        return (file.isFile() && (lower.endsWith(".zip") || lower.endsWith(".zip.disabled")))
+            || (file.isDirectory() && !lower.equals("server-resource-packs"));
+    }
+
+    private boolean isEnabledResourcePack(File file) {
+        String lower = file.getName().toLowerCase(Locale.ROOT);
+        return file.isDirectory() ? !lower.endsWith(".disabled") : lower.endsWith(".zip");
+    }
+
+    private void setResourcePackEnabled(LaunchProfile profile, File file, boolean enabled) throws IOException {
+        File options = new File(getMinecraftFolder(profile), "options.txt");
+        List<String> lines = options.isFile()
+            ? Files.readAllLines(options.toPath(), StandardCharsets.UTF_8)
+            : new ArrayList<>();
+        String packName = enabledResourcePackName(file);
+        String entry = "file/" + packName;
+        boolean found = false;
+
+        for (int i = 0; i < lines.size(); i++) {
+            if (!lines.get(i).startsWith("resourcePacks:")) continue;
+            List<String> packs = parseResourcePackList(lines.get(i).substring("resourcePacks:".length()));
+            packs.removeIf(value -> value.equals(entry) || value.equals("file/" + disabledResourcePackName(file)));
+            if (enabled) packs.add(entry);
+            lines.set(i, "resourcePacks:" + encodeResourcePackList(packs));
+            found = true;
+            break;
+        }
+
+        if (!found && enabled) lines.add("resourcePacks:" + encodeResourcePackList(Collections.singletonList(entry)));
+        if (!lines.stream().anyMatch(line -> line.startsWith("incompatibleResourcePacks:"))) {
+            lines.add("incompatibleResourcePacks:[]");
+        }
+        Files.write(options.toPath(), lines, StandardCharsets.UTF_8);
+    }
+
+    private String enabledResourcePackName(File file) {
+        String name = file.getName();
+        return name.endsWith(".disabled") ? name.substring(0, name.length() - ".disabled".length()) : name;
+    }
+
+    private String disabledResourcePackName(File file) {
+        String name = file.getName();
+        return name.endsWith(".disabled") ? name : name + ".disabled";
+    }
+
+    private List<String> parseResourcePackList(String raw) {
+        List<String> packs = new ArrayList<>();
+        java.util.regex.Matcher matcher = Pattern.compile("\"((?:\\\\.|[^\"])*)\"").matcher(raw);
+        while (matcher.find()) packs.add(matcher.group(1).replace("\\\"", "\"").replace("\\\\", "\\"));
+        return packs;
+    }
+
+    private String encodeResourcePackList(List<String> packs) {
+        StringBuilder builder = new StringBuilder("[");
+        boolean first = true;
+        for (String pack : new LinkedHashSet<>(packs)) {
+            if (!first) builder.append(',');
+            builder.append('"').append(pack.replace("\\", "\\\\").replace("\"", "\\\"")).append('"');
+            first = false;
+        }
+        return builder.append(']').toString();
     }
 
     private File getLauncherDataFolder() {
