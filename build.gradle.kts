@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.gambleclient"
-version = "0.1.56"
+version = "0.1.57"
 
 val javafxVersion = "22.0.2"
 val javafxModuleNames = listOf("base", "graphics", "controls", "media", "web")
@@ -47,5 +47,63 @@ tasks.jar {
         }
     }) {
         exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
+    }
+}
+
+fun jpackageExecutable(): String {
+    val javaHome = System.getProperty("java.home")
+    val executable = if (System.getProperty("os.name").lowercase().contains("win")) "jpackage.exe" else "jpackage"
+    return file("$javaHome/bin/$executable").absolutePath
+}
+
+val launcherJar = tasks.named<Jar>("jar").flatMap { it.archiveFile }
+val nativeOutputDir = layout.buildDirectory.dir("native")
+
+tasks.register<Exec>("packageNativeImage") {
+    group = "distribution"
+    description = "Builds a portable native launcher image for the current OS using jpackage."
+    dependsOn(tasks.jar)
+
+    doFirst {
+        val output = nativeOutputDir.get().asFile
+        delete(output)
+        output.mkdirs()
+        commandLine(
+            jpackageExecutable(),
+            "--type", "app-image",
+            "--name", "GambleClientLauncher",
+            "--app-version", project.version.toString(),
+            "--input", launcherJar.get().asFile.parentFile.absolutePath,
+            "--main-jar", launcherJar.get().asFile.name,
+            "--main-class", application.mainClass.get(),
+            "--dest", output.absolutePath
+        )
+    }
+}
+
+tasks.register<Exec>("packageWindowsExe") {
+    group = "distribution"
+    description = "Builds a Windows .exe installer. Run this on Windows with jpackage and WiX available."
+    dependsOn(tasks.jar)
+    onlyIf {
+        System.getProperty("os.name").lowercase().contains("win")
+    }
+
+    doFirst {
+        val output = nativeOutputDir.get().asFile
+        output.mkdirs()
+        commandLine(
+            jpackageExecutable(),
+            "--type", "exe",
+            "--name", "GambleClientLauncher",
+            "--app-version", project.version.toString(),
+            "--input", launcherJar.get().asFile.parentFile.absolutePath,
+            "--main-jar", launcherJar.get().asFile.name,
+            "--main-class", application.mainClass.get(),
+            "--dest", output.absolutePath,
+            "--win-dir-chooser",
+            "--win-menu",
+            "--win-shortcut"
+        )
     }
 }

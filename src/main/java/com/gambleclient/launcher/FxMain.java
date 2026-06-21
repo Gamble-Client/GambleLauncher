@@ -36,6 +36,7 @@ import javafx.scene.layout.VBox;
 import javafx.scene.media.Media;
 import javafx.scene.media.MediaPlayer;
 import javafx.scene.media.MediaView;
+import javafx.scene.web.WebView;
 import javafx.stage.Stage;
 import javafx.stage.FileChooser;
 import javafx.util.Duration;
@@ -1160,8 +1161,9 @@ public class FxMain extends Application {
         Thread loader = new Thread(() -> {
             try {
                 String mediaSource = cacheSponsorMedia(adUrl);
-                Platform.runLater(() -> playSponsorMedia(mediaBox, fallback, mediaSource));
+                Platform.runLater(() -> playSponsorMedia(mediaBox, fallback, adUrl, mediaSource));
             } catch (Exception e) {
+                Platform.runLater(() -> appendLog("Sponsor media download failed: " + e.getMessage()));
                 Platform.runLater(() -> showSponsorFallback(mediaBox, fallback));
             }
         }, "Sponsor media loader");
@@ -1184,7 +1186,7 @@ public class FxMain extends Application {
         return temp.toUri().toString();
     }
 
-    private void playSponsorMedia(StackPane mediaBox, Label fallback, String mediaSource) {
+    private void playSponsorMedia(StackPane mediaBox, Label fallback, String adUrl, String mediaSource) {
         try {
             stopSponsorMedia();
             Media media = new Media(mediaSource);
@@ -1199,32 +1201,71 @@ public class FxMain extends Application {
                 mediaBox.getChildren().setAll(view);
                 player.play();
             });
-            player.setOnError(() -> showSponsorFallback(mediaBox, fallback));
-            media.setOnError(() -> showSponsorFallback(mediaBox, fallback));
+            player.setOnError(() -> showSponsorWebFallback(mediaBox, fallback, adUrl, mediaSource, player.getError()));
+            media.setOnError(() -> showSponsorWebFallback(mediaBox, fallback, adUrl, mediaSource, media.getError()));
             sponsorMediaPlayer = player;
         } catch (RuntimeException e) {
+            showSponsorWebFallback(mediaBox, fallback, adUrl, mediaSource, e);
+        }
+    }
+
+    private void showSponsorWebFallback(StackPane mediaBox, Label fallback, String adUrl, String mediaSource, Throwable error) {
+        stopSponsorMedia();
+        if (error != null && error.getMessage() != null && !error.getMessage().isBlank()) {
+            appendLog("JavaFX media playback failed: " + error.getMessage());
+        } else {
+            appendLog("JavaFX media playback failed; trying embedded web playback.");
+        }
+
+        try {
+            WebView webView = new WebView();
+            webView.setContextMenuEnabled(false);
+            webView.setPrefSize(650, 330);
+            String source = mediaSource == null || mediaSource.isBlank() ? resolveAdUrl(adUrl) : mediaSource;
+            String tag = isAudioMediaUrl(adUrl)
+                ? "<audio controls autoplay loop muted style=\"width:100%;height:100%;background:#050408\" src=\"" + htmlAttr(source) + "\"></audio>"
+                : "<video controls autoplay loop muted playsinline style=\"width:100%;height:100%;object-fit:contain;background:#050408\" src=\"" + htmlAttr(source) + "\"></video>";
+            webView.getEngine().loadContent("<!doctype html><html><body style=\"margin:0;background:#050408;overflow:hidden\">" + tag + "</body></html>");
+            mediaBox.getChildren().setAll(webView);
+        } catch (RuntimeException webError) {
+            appendLog("Embedded sponsor media playback failed: " + webError.getMessage());
             showSponsorFallback(mediaBox, fallback);
         }
     }
 
     private void showSponsorFallback(StackPane mediaBox, Label fallback) {
-        fallback.setText("Sponsor media is playing as a timed break on this device.");
+        fallback.setText("Sponsor media could not be displayed on this device. Try uploading an H.264 MP4 ad.");
         mediaBox.getChildren().setAll(fallback);
     }
 
     private boolean isDirectMediaUrl(String url) {
-        String lower = String.valueOf(url).toLowerCase(Locale.ROOT);
-        return lower.endsWith(".mp4") || lower.endsWith(".m4v") || lower.endsWith(".webm") || lower.endsWith(".m3u8") || lower.endsWith(".mp3") || lower.endsWith(".wav");
+        String lower = mediaUrlPath(url);
+        return lower.endsWith(".mp4") || lower.endsWith(".m4v") || lower.endsWith(".mov") || lower.endsWith(".webm") || lower.endsWith(".m3u8") || lower.endsWith(".mp3") || lower.endsWith(".wav");
+    }
+
+    private boolean isAudioMediaUrl(String url) {
+        String lower = mediaUrlPath(url);
+        return lower.endsWith(".mp3") || lower.endsWith(".wav");
     }
 
     private String sponsorMediaExtension(String url) {
-        String lower = String.valueOf(url).toLowerCase(Locale.ROOT);
+        String lower = mediaUrlPath(url);
         if (lower.endsWith(".m4v")) return ".m4v";
+        if (lower.endsWith(".mov")) return ".mov";
         if (lower.endsWith(".webm")) return ".webm";
         if (lower.endsWith(".m3u8")) return ".m3u8";
         if (lower.endsWith(".mp3")) return ".mp3";
         if (lower.endsWith(".wav")) return ".wav";
         return ".mp4";
+    }
+
+    private String mediaUrlPath(String url) {
+        String lower = String.valueOf(url).toLowerCase(Locale.ROOT);
+        int query = lower.indexOf('?');
+        if (query >= 0) lower = lower.substring(0, query);
+        int hash = lower.indexOf('#');
+        if (hash >= 0) lower = lower.substring(0, hash);
+        return lower;
     }
 
     private String accountStatusWithMicrosoft() {

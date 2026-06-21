@@ -36,6 +36,20 @@ Build:
 ./gradlew clean build
 ```
 
+Native launcher image for the current OS:
+
+```bash
+./gradlew packageNativeImage
+```
+
+Windows installer:
+
+```powershell
+.\gradlew.bat packageWindowsExe
+```
+
+The Windows `.exe` has to be built on Windows with `jpackage` and WiX installed. Linux builds produce a portable app image under `build/native/`.
+
 Run:
 
 ```bash

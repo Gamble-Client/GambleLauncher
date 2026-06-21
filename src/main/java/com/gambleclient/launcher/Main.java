@@ -124,7 +124,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.56";
+    private static final String LAUNCHER_VERSION = "0.1.57";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -251,6 +251,7 @@ public class Main {
     private volatile long minecraftProcessStartedAt;
     private volatile boolean minecraftStartupComplete;
     private volatile boolean minecraftFatalDetected;
+    private volatile boolean minecraftStopRequested;
     private volatile String minecraftDetectedFailure = "";
     private volatile int minecraftOutputThreadsRunning;
     private volatile boolean captureLaunchLog;
@@ -3334,13 +3335,8 @@ public class Main {
 
         Process runningProcess = minecraftProcess;
         if (runningProcess != null && runningProcess.isAlive()) {
-            if (!hasOwnerAccess(launcherUser)) {
-                setProgressStatus("Already running");
-                log("Launch blocked: this account cannot run multiple Minecraft instances.");
-                JOptionPane.showMessageDialog(frame, "Minecraft is already running. Close it before launching again.", "Already running", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            log("Owner access detected; allowing another Minecraft instance.");
+            stopMinecraftProcess(runningProcess);
+            return;
         }
 
         if (launcherUser == null || launcherToken == null || launcherToken.trim().isEmpty()) {
@@ -3415,6 +3411,7 @@ public class Main {
                     minecraftProcessStartedAt = System.currentTimeMillis();
                     minecraftStartupComplete = false;
                     minecraftFatalDetected = false;
+                    minecraftStopRequested = false;
                     minecraftDetectedFailure = "";
                     Main.this.setProgress(100, "Running");
                     log("Minecraft process started.");
@@ -3446,6 +3443,7 @@ public class Main {
     private void stopMinecraftProcess(Process process) {
         setProgressStatus("Stopping");
         log("Stopping Minecraft process.");
+        minecraftStopRequested = true;
         setBusy(true);
 
         new SwingWorker<Void, Void>() {
@@ -3453,7 +3451,10 @@ public class Main {
             protected Void doInBackground() {
                 process.destroy();
                 try {
-                    if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly();
+                    if (!process.waitFor(2, TimeUnit.SECONDS)) {
+                        process.destroyForcibly();
+                        process.waitFor(4, TimeUnit.SECONDS);
+                    }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     process.destroyForcibly();
@@ -3463,7 +3464,12 @@ public class Main {
 
             @Override
             protected void done() {
-                if (minecraftProcess == process && !process.isAlive()) minecraftProcess = null;
+                if (minecraftProcess == process) minecraftProcess = null;
+                captureLaunchLog = false;
+                startDiscordRpc();
+                Main.this.setProgress(0, process.isAlive() ? "Kill sent" : "Killed");
+                if (process.isAlive()) log("Kill signal sent; Minecraft has not exited yet.");
+                else log("Minecraft was stopped from the launcher.");
                 setBusy(false);
             }
         }.execute();
@@ -5389,6 +5395,14 @@ public class Main {
     private void finishMinecraftProcess(Process process, int exitCode) {
         if (minecraftProcess == process) minecraftProcess = null;
         startDiscordRpc();
+        if (minecraftStopRequested) {
+            minecraftStopRequested = false;
+            captureLaunchLog = false;
+            setProgress(0, "Killed");
+            log("Minecraft stopped by launcher request.");
+            setBusy(false);
+            return;
+        }
         long elapsedMs = minecraftProcessStartedAt > 0 ? Math.max(0, System.currentTimeMillis() - minecraftProcessStartedAt) : 0;
         boolean abnormalStartup = !minecraftStartupComplete;
         boolean normal = exitCode == 0 && !minecraftFatalDetected && !abnormalStartup;
