@@ -124,7 +124,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.54";
+    private static final String LAUNCHER_VERSION = "0.1.55";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -4244,7 +4244,14 @@ public class Main {
 
     private boolean isLauncherManagedJvmArg(String arg) {
         return arg == null
+            || arg.isBlank()
             || arg.startsWith("-Djava.library.path=")
+            || arg.startsWith("-Dminecraft.launcher.brand=")
+            || arg.startsWith("-Dminecraft.launcher.version=")
+            || arg.startsWith("-Dgamble.capes.")
+            || arg.equals("-DFabricMcEmu=")
+            || "net.minecraft.client.main.Main".equals(arg)
+            || arg.endsWith(".KnotClient")
             || arg.equals("-cp")
             || arg.equals("-classpath")
             || arg.contains("${classpath}")
@@ -5499,7 +5506,11 @@ public class Main {
         if (lower.contains("classnotfoundexception")) return "ClassNotFoundException";
         if (lower.contains("noclassdeffounderror")) return "NoClassDefFoundError";
         if (lower.contains("unsatisfiedlinkerror")) return "Native library failure (UnsatisfiedLinkError)";
-        if (lower.contains("mixin apply failed") || lower.contains("mixinsquared") && lower.contains("failed")) return "Mixin failure";
+        if ((lower.contains("mixin apply") && lower.contains("failed"))
+            || lower.contains("mixinapplyerror")
+            || lower.contains("mixin transformation")
+            || lower.contains("invalidinjectionexception")
+            || lower.contains("mixinsquared") && lower.contains("failed")) return "Mixin failure";
         if (lower.contains("mod resolution failed") || lower.contains("requires any version") || lower.contains("depends on")) return "Fabric dependency failure";
         if (lower.contains("a fatal error has been detected by the java runtime")) return "JVM crash";
         if (lower.contains("exception in thread")) return "Unhandled Java exception";
