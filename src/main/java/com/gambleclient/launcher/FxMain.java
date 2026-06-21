@@ -2143,36 +2143,24 @@ public class FxMain extends Application {
     }
 
     private File modsFolder() {
-        String id = switch (profileBox.getSelectionModel().getSelectedIndex()) {
-            case 1 -> "vanilla";
-            case 2 -> "fabric";
-            default -> "gamble-client";
-        };
-        return new File(new File(appData(), "minecraft/profiles/" + id), "mods");
+        syncToBackend();
+        return backendFile("getModsFolder");
     }
 
     private File resourcePacksFolder() {
-        String id = switch (profileBox.getSelectionModel().getSelectedIndex()) {
-            case 1 -> "vanilla";
-            case 2 -> "fabric";
-            default -> "gamble-client";
-        };
-        return new File(new File(appData(), "minecraft/profiles/" + id), "resourcepacks");
+        syncToBackend();
+        return backendFile("getResourcePacksFolder", selectedBackendProfile());
     }
 
     private File profileFolder() {
-        String id = switch (profileBox.getSelectionModel().getSelectedIndex()) {
-            case 1 -> "vanilla";
-            case 2 -> "fabric";
-            default -> "gamble-client";
-        };
-        return new File(appData(), "minecraft/profiles/" + id);
+        syncToBackend();
+        return backendFile("getMinecraftFolder");
     }
 
-    private File appData() {
-        String xdg = System.getenv("XDG_DATA_HOME");
-        File home = xdg != null && !xdg.isBlank() ? new File(xdg) : new File(System.getProperty("user.home"), ".local/share");
-        return new File(home, "gamble-client");
+    private File backendFile(String method, Object... args) {
+        Object value = call(method, args);
+        if (value instanceof File file) return file;
+        throw new IllegalStateException(method + " did not return a folder");
     }
 
     private java.util.List<ModFile> readMods() {
