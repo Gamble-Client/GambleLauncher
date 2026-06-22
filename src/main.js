@@ -1,10 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { open as tauriOpenDialog } from "@tauri-apps/plugin-dialog";
 import "./styles.css";
 
 const SITE = "https://gamble-client.store";
 const DASH = "https://dash.gamble-client.store";
 const TOKEN_KEY = "gamble.launcher.token";
+const PREVIEW = !("__TAURI_INTERNALS__" in window);
 
 const app = document.querySelector("#app");
 
@@ -54,6 +55,77 @@ function defaultUsername() {
   return value || "Player";
 }
 
+async function invoke(command, args = {}) {
+  if (!PREVIEW) return await tauriInvoke(command, args);
+  return mockInvoke(command, args);
+}
+
+async function openDialog(options) {
+  if (!PREVIEW) return await tauriOpenDialog(options);
+  return null;
+}
+
+async function mockInvoke(command, args = {}) {
+  await sleep(40);
+  if (command === "launcher_info") {
+    return {
+      version: "0.1.63",
+      managed_root: "/home/theac/.local/share/gamble-client/minecraft",
+      data_folder: "/home/theac/.local/share/gamble-client",
+      session_file: "/home/theac/.local/share/gamble-client/launcher-session.json",
+      os: "linux"
+    };
+  }
+  if (command === "read_launcher_token") return "preview-token";
+  if (command === "read_microsoft_account") return { name: "BaseToucher", uuid: "preview", xuid: "preview" };
+  if (command === "save_launcher_token" || command === "ensure_profile" || command === "open_url") return "";
+  if (command === "delete_launcher_token" || command === "delete_microsoft_account") return null;
+  if (command === "launcher_api") {
+    const path = args.input?.path || "";
+    if (path === "/api/launcher/version") {
+      return { version: "0.1.63", minVersion: "0.1.63" };
+    }
+    if (path === "/api/launcher/session" || path === "/api/launcher/account") {
+      return {
+        user: { displayName: "BaseToucher", selectedPlan: "owner", accessStatus: "owner", ownerAccess: true },
+        ads: { required: false, canWatch: false, remainingSeconds: 0 }
+      };
+    }
+    if (path === "/api/launcher/manifest") {
+      return { buildVersion: "1.21.11", fileName: "cg-client-1.21.11.jar" };
+    }
+    if (path === "/api/launcher/start") {
+      return { loginUrl: "https://gamble-client.store/login", expiresAt: Math.floor(Date.now() / 1000) + 120, code: "preview" };
+    }
+  }
+  if (command === "list_local_files") {
+    if (args.kind === "resourcepacks") {
+      return [
+        { name: "Clean Donut UI.zip", path: "/packs/clean.zip", enabled: true, locked: false, size: 2480000 },
+        { name: "Low Fire.zip.disabled", path: "/packs/lowfire.zip.disabled", enabled: false, locked: false, size: 920000 }
+      ];
+    }
+    return [
+      { name: "fabric-api.jar", path: "/mods/fabric-api.jar", enabled: true, locked: true, size: 7200000 },
+      { name: "modmenu.jar", path: "/mods/modmenu.jar", enabled: true, locked: false, size: 520000 },
+      { name: "sodium.jar", path: "/mods/sodium.jar", enabled: true, locked: false, size: 1100000 }
+    ];
+  }
+  if (command === "diagnostics") {
+    return {
+      checks: [
+        { label: "Java", ok: true, detail: "Java 21 available" },
+        { label: "Profile folder", ok: true, detail: "Writable" },
+        { label: "Client payload", ok: true, detail: "Ready" }
+      ]
+    };
+  }
+  if (command === "install_client_manifest") {
+    return { buildVersion: "1.21.11", fileName: "cg-client-1.21.11.jar", message: "Updated managed client payload to: 1.21.11" };
+  }
+  return null;
+}
+
 function render() {
   const profile = profiles.find((item) => item.id === state.selectedProfile) || profiles[0];
   const signedIn = Boolean(state.account && state.token);
@@ -66,7 +138,7 @@ function render() {
           <div class="brand-mark">GC</div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.62")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.63")}</span>
           </div>
         </div>
         <nav>
@@ -78,15 +150,17 @@ function render() {
           <button class="nav-item" type="button" data-open="${SITE}/download">Downloads</button>
           <button class="nav-item" type="button" data-open="https://discord.gg/YPescfEt">Discord</button>
         </nav>
-        <div class="rail-card">
-          <span>Account</span>
-          <strong>${escapeHtml(accountTitle())}</strong>
-          <small>${escapeHtml(accountMeta())}</small>
-        </div>
-        <div class="rail-card">
-          <span>Launcher</span>
-          <strong>${escapeHtml(state.version?.version || "Checking")}</strong>
-          <small>${escapeHtml(state.status)}</small>
+        <div class="rail-status">
+          <div class="rail-card">
+            <span>Access</span>
+            <strong>${escapeHtml(accountTitle())}</strong>
+            <small>${escapeHtml(accountMeta())}</small>
+          </div>
+          <div class="rail-card">
+            <span>Build service</span>
+            <strong>${escapeHtml(state.version?.version || "Checking")}</strong>
+            <small>${escapeHtml(state.status)}</small>
+          </div>
         </div>
       </aside>
 
@@ -125,35 +199,53 @@ function topbar(signedIn) {
 function playView(profile, selectedBuild, canInstall, signedIn) {
   const launchLabel = state.microsoft ? "Launch" : "Microsoft Sign In";
   const clientStatus = state.manifest ? displayManifest(state.manifest) : "Not checked";
+  const enabledMods = state.mods.filter((item) => item.enabled).length;
+  const enabledPacks = state.packs.filter((item) => item.enabled).length;
   return `
-    <section class="play-layout">
+    <section class="command-grid">
       <section class="launch-panel">
-        <div>
-          <span class="eyebrow">${escapeHtml(profile.label)}</span>
+        <div class="launch-copy">
+          <span class="eyebrow">Selected loadout</span>
           <h2>${escapeHtml(selectedBuild.label)}</h2>
           <p>${escapeHtml(playCopy(profile, signedIn))}</p>
+          <div class="signal-strip" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <div class="launch-facts">
+            <div>
+              <span>Profile</span>
+              <strong>${escapeHtml(profile.label)}</strong>
+            </div>
+            <div>
+              <span>Memory</span>
+              <strong>${escapeHtml(state.memory)} GB</strong>
+            </div>
+            <div>
+              <span>Payload</span>
+              <strong>${escapeHtml(clientStatus)}</strong>
+            </div>
+          </div>
         </div>
-        <div class="launch-actions">
+        <div class="launch-card">
+          <span>Next action</span>
           <button class="launch-button" type="button" data-action="launch" ${state.busy ? "disabled" : ""}>${escapeHtml(launchLabel)}</button>
-          <button class="ghost" type="button" data-action="install" ${!canInstall || state.busy ? "disabled" : ""}>Update Client</button>
+          <button class="subtle-button" type="button" data-action="install" ${!canInstall || state.busy ? "disabled" : ""}>Update Client</button>
+          <small>${escapeHtml(state.microsoft ? `Playing as ${state.microsoft.name}` : "Minecraft account required")}</small>
         </div>
       </section>
 
-      <aside class="play-stack">
-        <article class="status-card">
-          <span>Launcher account</span>
-          <strong>${escapeHtml(accountTitle())}</strong>
-          <small>${escapeHtml(accountMeta())}</small>
-        </article>
-        <article class="status-card">
-          <span>Minecraft account</span>
-          <strong>${escapeHtml(microsoftTitle())}</strong>
-          <button type="button" data-action="${state.microsoft ? "switch-microsoft" : "microsoft"}" ${state.busy ? "disabled" : ""}>${state.microsoft ? "Switch" : "Sign in"}</button>
-        </article>
+      <aside class="account-panel">
+        <div class="panel-head">
+          <span class="eyebrow">Accounts</span>
+          <strong>${escapeHtml(signedIn ? "Ready" : "Needs sign-in")}</strong>
+        </div>
+        ${accountRow("Launcher", accountTitle(), accountMeta(), signedIn ? "Signed in" : "Required")}
+        ${accountRow("Minecraft", microsoftTitle(), state.microsoft ? "Java profile linked" : "Required for launch", state.microsoft ? "Linked" : "Required")}
+        <button class="subtle-button" type="button" data-action="${state.microsoft ? "switch-microsoft" : "microsoft"}" ${state.busy ? "disabled" : ""}>${state.microsoft ? "Switch Microsoft" : "Connect Microsoft"}</button>
       </aside>
     </section>
 
-    <section class="control-grid">
+    <section class="tune-strip">
       <label>
         <span>Profile</span>
         <select data-field="selectedProfile">
@@ -178,31 +270,44 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
       </label>
     </section>
 
-    <section class="grid">
-      <article>
+    <section class="tile-grid">
+      <article class="action-tile">
         <span>Client</span>
         <strong>${escapeHtml(clientStatus)}</strong>
         <button type="button" data-action="install" ${!canInstall || state.busy ? "disabled" : ""}>Update</button>
       </article>
-      <article>
+      <article class="action-tile">
         <span>Sponsor</span>
         <strong>${escapeHtml(sponsorTitle())}</strong>
         <button type="button" data-action="sponsor" ${!signedIn || !state.ads?.canWatch || state.busy ? "disabled" : ""}>Watch</button>
       </article>
-      <article>
+      <article class="action-tile">
         <span>Mods</span>
-        <strong>${profile.fabric ? `${state.mods.filter((item) => item.enabled).length} enabled` : "Vanilla"}</strong>
+        <strong>${profile.fabric ? `${enabledMods} enabled` : "Vanilla"}</strong>
         <button type="button" data-view="mods">Manage</button>
       </article>
-      <article>
+      <article class="action-tile">
         <span>Resource packs</span>
-        <strong>${state.packs.filter((item) => item.enabled).length} enabled</strong>
+        <strong>${enabledPacks} enabled</strong>
         <button type="button" data-view="packs">Manage</button>
       </article>
     </section>
 
     ${state.sponsor ? sponsorOverlay() : ""}
     ${logView()}
+  `;
+}
+
+function accountRow(label, title, meta, badge) {
+  return `
+    <div class="account-row">
+      <div>
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(title)}</strong>
+        <small>${escapeHtml(meta)}</small>
+      </div>
+      <b>${escapeHtml(badge)}</b>
+    </div>
   `;
 }
 
@@ -333,7 +438,7 @@ function viewTitle() {
   if (state.view === "mods") return "Manage Mods";
   if (state.view === "packs") return "Manage Resource Packs";
   if (state.view === "diagnostics") return "Launcher Diagnostics";
-  return "Launch Setup";
+  return "Launch Gamble Client";
 }
 
 function profileLabel() {

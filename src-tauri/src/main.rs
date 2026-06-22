@@ -12,7 +12,7 @@ use std::{
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
-const VERSION: &str = "0.1.62";
+const VERSION: &str = "0.1.63";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MICROSOFT_DEVICE_CODE_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
@@ -247,14 +247,11 @@ fn delete_microsoft_account() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn microsoft_device_start(force_account_picker: bool) -> Result<MicrosoftDeviceStart, String> {
-    let mut params = vec![
+fn microsoft_device_start(_force_account_picker: bool) -> Result<MicrosoftDeviceStart, String> {
+    let params = vec![
         ("client_id", MICROSOFT_CLIENT_ID.to_string()),
         ("scope", MICROSOFT_SCOPE.to_string()),
     ];
-    if force_account_picker {
-        params.push(("prompt", "select_account".to_string()));
-    }
     let body = http_client()?
         .post(MICROSOFT_DEVICE_CODE_URL)
         .form(&params)
@@ -265,9 +262,24 @@ fn microsoft_device_start(force_account_picker: bool) -> Result<MicrosoftDeviceS
         .json::<serde_json::Value>()
         .map_err(error_text)?;
 
+    let error = json_string(&body, "error");
+    if !error.trim().is_empty() {
+        let description = json_string(&body, "error_description");
+        return Err(if description.trim().is_empty() {
+            format!("Microsoft sign-in failed: {error}")
+        } else {
+            description
+        });
+    }
+    let device_code = json_string(&body, "device_code");
+    let user_code = json_string(&body, "user_code");
+    if device_code.trim().is_empty() || user_code.trim().is_empty() {
+        return Err("Microsoft did not return a usable device sign-in code.".to_string());
+    }
+
     Ok(MicrosoftDeviceStart {
-        device_code: json_string(&body, "device_code"),
-        user_code: json_string(&body, "user_code"),
+        device_code,
+        user_code,
         verification_uri: json_string(&body, "verification_uri"),
         verification_uri_complete: json_string(&body, "verification_uri_complete"),
         message: json_string(&body, "message"),
