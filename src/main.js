@@ -48,6 +48,7 @@ const state = {
   packs: [],
   diagnostics: [],
   manifest: null,
+  minecraftRunning: false,
   log: []
 };
 
@@ -78,7 +79,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(40);
   if (command === "launcher_info") {
     return {
-      version: "0.1.64",
+      version: "0.1.65",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client",
       session_file: "/home/theac/.local/share/gamble-client/launcher-session.json",
@@ -92,7 +93,7 @@ async function mockInvoke(command, args = {}) {
   if (command === "launcher_api") {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
-      return { version: "0.1.64", minVersion: "0.1.64" };
+      return { version: "0.1.65", minVersion: "0.1.65" };
     }
     if (path === "/api/launcher/session" || path === "/api/launcher/account") {
       return {
@@ -132,6 +133,9 @@ async function mockInvoke(command, args = {}) {
   if (command === "install_client_manifest") {
     return { buildVersion: "1.21.11", fileName: "cg-client-1.21.11.jar", message: "Updated managed client payload to: 1.21.11" };
   }
+  if (command === "launch_game") {
+    return "Minecraft process started (pid 4242). Latest launch log: /preview/latest-launch.log";
+  }
   return null;
 }
 
@@ -147,7 +151,7 @@ function render() {
           <div class="brand-mark">GC</div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.64")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.65")}</span>
           </div>
         </div>
         <nav>
@@ -206,20 +210,17 @@ function topbar(signedIn) {
 }
 
 function playView(profile, selectedBuild, canInstall, signedIn) {
-  const launchLabel = state.microsoft ? "Launch" : "Microsoft Sign In";
+  const launchLabel = state.minecraftRunning ? "Stop Minecraft" : state.microsoft ? "Launch" : "Microsoft Sign In";
   const clientStatus = state.manifest ? displayManifest(state.manifest) : "Not checked";
   const enabledMods = state.mods.filter((item) => item.enabled).length;
   const enabledPacks = state.packs.filter((item) => item.enabled).length;
   return `
-    <section class="command-grid">
+    <section class="play-stage">
       <section class="launch-panel">
         <div class="launch-copy">
-          <span class="eyebrow">Selected loadout</span>
+          <span class="eyebrow">Ready room</span>
           <h2>${escapeHtml(selectedBuild.label)}</h2>
           <p>${escapeHtml(playCopy(profile, signedIn))}</p>
-          <div class="signal-strip" aria-hidden="true">
-            <span></span><span></span><span></span><span></span><span></span>
-          </div>
           <div class="launch-facts">
             <div>
               <span>Profile</span>
@@ -235,12 +236,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
             </div>
           </div>
         </div>
-        <div class="launch-card">
-          <span>Next action</span>
-          <button class="launch-button" type="button" data-action="launch" ${state.busy ? "disabled" : ""}>${escapeHtml(launchLabel)}</button>
-          <button class="subtle-button" type="button" data-action="install" ${!canInstall || state.busy ? "disabled" : ""}>Update Client</button>
-          <small>${escapeHtml(state.microsoft ? `Playing as ${state.microsoft.name}` : "Minecraft account required")}</small>
-        </div>
+        <button class="launch-button" type="button" data-action="launch" ${state.busy ? "disabled" : ""}>${escapeHtml(launchLabel)}</button>
       </section>
 
       <aside class="account-panel">
@@ -258,68 +254,65 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
       </aside>
     </section>
 
-    <section class="tune-strip">
-      <label>
-        <span>Profile</span>
-        <select data-field="selectedProfile">
-          ${profiles.map((item) => `<option value="${item.id}" ${item.id === state.selectedProfile ? "selected" : ""}>${item.label}</option>`).join("")}
-        </select>
-      </label>
-      <label>
-        <span>Build</span>
-        <select data-field="selectedBuild" ${!profile.client || adTierOnly() ? "disabled" : ""}>
-          ${builds.map((item) => `<option value="${item.id}" ${item.id === selectedBuild.id ? "selected" : ""}>${item.label}</option>`).join("")}
-        </select>
-      </label>
-      <label>
-        <span>Memory</span>
-        <select data-field="memory">
-          ${["2", "3", "4", "5", "6", "7", "8", "10", "12", "16"].map((item) => `<option value="${item}" ${item === state.memory ? "selected" : ""}>${item} GB</option>`).join("")}
-        </select>
-      </label>
-      <label>
-        <span>Username</span>
-        <input data-field="username" value="${escapeAttr(state.username)}" placeholder="Offline name">
-      </label>
-      <label class="wide-field">
-        <span>JVM Args</span>
-        <input data-field="javaArgs" value="${escapeAttr(state.javaArgs)}" placeholder="-XX:+UseZGC">
-      </label>
-      <label class="privacy-field">
-        <span>Privacy</span>
-        <button class="toggle-button ${state.antiScreenshare ? "on" : ""}" type="button" data-action="toggle-anti">
-          <b></b>
-          ${state.antiScreenshare ? "Anti-screenshare on" : "Anti-screenshare off"}
-        </button>
-      </label>
-    </section>
+    <section class="launcher-deck">
+      <section class="tune-strip">
+        <label>
+          <span>Profile</span>
+          <select data-field="selectedProfile">
+            ${profiles.map((item) => `<option value="${item.id}" ${item.id === state.selectedProfile ? "selected" : ""}>${item.label}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          <span>Build</span>
+          <select data-field="selectedBuild" ${!profile.client || adTierOnly() ? "disabled" : ""}>
+            ${builds.map((item) => `<option value="${item.id}" ${item.id === selectedBuild.id ? "selected" : ""}>${item.label}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          <span>Memory</span>
+          <select data-field="memory">
+            ${["2", "3", "4", "5", "6", "7", "8", "10", "12", "16"].map((item) => `<option value="${item}" ${item === state.memory ? "selected" : ""}>${item} GB</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          <span>Username</span>
+          <input data-field="username" value="${escapeAttr(state.username)}" placeholder="Offline name">
+        </label>
+        <label class="wide-field">
+          <span>JVM Args</span>
+          <input data-field="javaArgs" value="${escapeAttr(state.javaArgs)}" placeholder="-XX:+UseZGC">
+        </label>
+        <label class="privacy-field">
+          <span>Privacy</span>
+          <button class="toggle-button ${state.antiScreenshare ? "on" : ""}" type="button" data-action="toggle-anti">
+            <b></b>
+            ${state.antiScreenshare ? "AntiScreenshare on" : "AntiScreenshare off"}
+          </button>
+        </label>
+      </section>
 
-    <section class="tile-grid">
-      <article class="action-tile">
-        <span>Client</span>
-        <strong>${escapeHtml(clientStatus)}</strong>
-        <button type="button" data-action="install" ${!canInstall || state.busy ? "disabled" : ""}>Update</button>
-      </article>
-      <article class="action-tile">
-        <span>Sponsor</span>
-        <strong>${escapeHtml(sponsorTitle())}</strong>
-        <button type="button" data-action="sponsor" ${!signedIn || !state.ads?.canWatch || state.busy ? "disabled" : ""}>Watch</button>
-      </article>
-      <article class="action-tile">
-        <span>Mods</span>
-        <strong>${profile.fabric ? `${enabledMods} enabled` : "Vanilla"}</strong>
-        <button type="button" data-view="mods">Manage</button>
-      </article>
-      <article class="action-tile">
-        <span>Resource packs</span>
-        <strong>${enabledPacks} enabled</strong>
-        <button type="button" data-view="packs">Manage</button>
-      </article>
-      <article class="action-tile">
-        <span>Privacy</span>
-        <strong>${state.antiScreenshare ? "Anti-screenshare on" : "Standard capture"}</strong>
-        <button type="button" data-action="toggle-anti">${state.antiScreenshare ? "Disable" : "Enable"}</button>
-      </article>
+      <section class="quick-grid">
+        <article class="action-tile">
+          <span>Client</span>
+          <strong>${escapeHtml(clientStatus)}</strong>
+          <button type="button" data-action="install" ${!canInstall || state.busy ? "disabled" : ""}>Update</button>
+        </article>
+        <article class="action-tile">
+          <span>Sponsor</span>
+          <strong>${escapeHtml(sponsorTitle())}</strong>
+          <button type="button" data-action="sponsor" ${!signedIn || !state.ads?.canWatch || state.busy ? "disabled" : ""}>Watch</button>
+        </article>
+        <article class="action-tile">
+          <span>Mods</span>
+          <strong>${profile.fabric ? `${enabledMods} enabled` : "Vanilla"}</strong>
+          <button type="button" data-view="mods">Manage</button>
+        </article>
+        <article class="action-tile">
+          <span>Resource packs</span>
+          <strong>${enabledPacks} enabled</strong>
+          <button type="button" data-view="packs">Manage</button>
+        </article>
+      </section>
     </section>
 
     ${state.sponsor ? sponsorOverlay() : ""}
@@ -880,20 +873,37 @@ app.addEventListener("click", async (event) => {
       await startMicrosoftSignIn();
       return;
     }
-    const hasMicrosoft = true;
-    const message = await invoke("launch_game_placeholder", {
-      hasMicrosoft,
-      javaArgs: state.javaArgs,
-      antiScreenshare: state.antiScreenshare
-    });
-    log(message);
-    render();
+    setBusy(true, "Preparing Minecraft");
+    try {
+      const selectedBuild = buildForAccount();
+      const message = await invoke("launch_game", {
+        input: {
+          profile: state.selectedProfile,
+          build: selectedBuild.id,
+          token: state.token,
+          username: state.username,
+          memory: Number(state.memory) || 4,
+          javaArgs: state.javaArgs,
+          antiScreenshare: state.antiScreenshare
+        }
+      });
+      if (String(message).toLowerCase().includes("stop signal")) {
+        state.minecraftRunning = false;
+      } else if (String(message).toLowerCase().includes("process started")) {
+        state.minecraftRunning = true;
+      }
+      log(message);
+    } catch (error) {
+      log(`Launch failed: ${error.message || error}`);
+    } finally {
+      setBusy(false);
+    }
   } else if (action === "microsoft" || action === "switch-microsoft") {
     await startMicrosoftSignIn();
   } else if (action === "toggle-anti") {
     state.antiScreenshare = !state.antiScreenshare;
     localStorage.setItem("gamble.launcher.antiScreenshare", String(state.antiScreenshare));
-    log(`Anti-screenshare ${state.antiScreenshare ? "enabled" : "disabled"}.`);
+    log(`AntiScreenshare ${state.antiScreenshare ? "enabled" : "disabled"} for the next launch.`);
     render();
   } else if (action === "open-microsoft-link") {
     const url = microsoftVerificationUrl(state.microsoftSignIn);

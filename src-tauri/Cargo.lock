@@ -907,7 +907,7 @@ dependencies = [
 
 [[package]]
 name = "gamble-client-launcher"
-version = "0.1.64"
+version = "0.1.65"
 dependencies = [
  "reqwest 0.12.28",
  "serde",

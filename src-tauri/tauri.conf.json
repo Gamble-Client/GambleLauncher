@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Gamble Client Launcher",
-  "version": "0.1.64",
+  "version": "0.1.65",
   "identifier": "store.gamble-client.launcher",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -26,7 +26,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["rpm", "deb", "appimage"],
+    "targets": ["rpm", "deb", "appimage", "nsis", "msi"],
     "category": "Game",
     "icon": [
       "icons/32x32.png",

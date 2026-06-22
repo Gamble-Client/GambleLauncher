@@ -16,6 +16,8 @@
   --red-dark: #992228;
   --teal: #18c8b5;
   --amber: #f5b84b;
+  --surface: rgba(10, 14, 20, 0.72);
+  --surface-strong: rgba(16, 22, 31, 0.92);
 }
 
 * {
@@ -24,11 +26,11 @@
 
 body {
   margin: 0;
-  min-width: 980px;
+  min-width: 860px;
   min-height: 640px;
   background:
-    linear-gradient(90deg, rgba(8, 11, 16, 0.94) 0%, rgba(8, 11, 16, 0.72) 48%, rgba(8, 11, 16, 0.9) 100%),
-    linear-gradient(180deg, rgba(8, 11, 16, 0.18), rgba(8, 11, 16, 0.94)),
+    linear-gradient(90deg, rgba(6, 8, 12, 0.98) 0%, rgba(6, 8, 12, 0.78) 42%, rgba(6, 8, 12, 0.94) 100%),
+    linear-gradient(180deg, rgba(8, 11, 16, 0.12), rgba(8, 11, 16, 0.94)),
     url("./assets/launcher-scene.png") center / cover fixed,
     var(--bg);
 }
@@ -54,7 +56,7 @@ select:disabled {
 
 .shell {
   display: grid;
-  grid-template-columns: 246px minmax(0, 1fr);
+  grid-template-columns: 228px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -176,7 +178,7 @@ nav {
 
 .content {
   min-width: 0;
-  padding: 24px 28px 26px;
+  padding: 22px 26px 24px;
   overflow: auto;
 }
 
@@ -213,7 +215,7 @@ h1 {
 
 h2 {
   margin-top: 8px;
-  font-size: 3.25rem;
+  font-size: clamp(2.15rem, 4vw, 4.4rem);
   line-height: 0.96;
 }
 
@@ -249,9 +251,9 @@ p {
   font-weight: 900;
 }
 
-.command-grid {
+.play-stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 316px);
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
   gap: 16px;
   margin-top: 22px;
 }
@@ -259,16 +261,17 @@ p {
 .launch-panel {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 210px;
-  min-height: 282px;
-  gap: 22px;
-  padding: 34px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  min-height: 330px;
+  gap: 26px;
+  padding: 30px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
   background:
-    linear-gradient(90deg, rgba(14, 18, 25, 0.86), rgba(14, 18, 25, 0.66)),
-    linear-gradient(135deg, rgba(239, 63, 69, 0.32), rgba(24, 200, 181, 0.14)),
+    linear-gradient(90deg, rgba(8, 11, 16, 0.9) 0%, rgba(8, 11, 16, 0.72) 46%, rgba(8, 11, 16, 0.28) 100%),
+    url("./assets/launcher-scene.png") center / cover,
     rgba(18, 25, 35, 0.82);
   backdrop-filter: blur(16px);
 }
@@ -279,38 +282,26 @@ p {
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.08), transparent 28%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 38%);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 22%),
+    linear-gradient(90deg, rgba(239, 63, 69, 0.18), transparent 42%, rgba(24, 200, 181, 0.14));
 }
 
 .launch-copy,
-.launch-card {
+.launch-button {
   position: relative;
   z-index: 1;
 }
 
-.signal-strip {
-  display: grid;
-  grid-template-columns: repeat(5, 42px);
-  gap: 8px;
-  margin: 24px 0 22px;
-}
-
-.signal-strip span {
-  display: block;
-  height: 4px;
-  background: rgba(255, 255, 255, 0.28);
-}
-
-.signal-strip span:nth-child(2),
-.signal-strip span:nth-child(5) {
-  background: rgba(24, 200, 181, 0.85);
+.launch-copy p {
+  margin-top: 14px;
+  max-width: 560px;
 }
 
 .launch-facts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+  margin-top: 26px;
   max-width: 620px;
 }
 
@@ -319,11 +310,11 @@ p {
   padding: 12px;
   border: 1px solid rgba(255, 255, 255, 0.13);
   border-radius: 6px;
-  background: rgba(7, 11, 16, 0.38);
+  background: rgba(7, 11, 16, 0.56);
+  backdrop-filter: blur(8px);
 }
 
-.launch-facts span,
-.launch-card span {
+.launch-facts span {
   display: block;
   color: #d2dae7;
   font-size: 0.72rem;
@@ -337,17 +328,13 @@ p {
   overflow-wrap: anywhere;
 }
 
-.launch-card {
-  display: grid;
-  align-content: center;
-  gap: 10px;
-  min-width: 0;
-}
-
 .launch-button {
-  min-height: 82px;
-  padding: 18px 22px;
-  background: linear-gradient(180deg, #ff4e54, var(--red-dark));
+  min-width: 178px;
+  min-height: 76px;
+  padding: 18px 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), transparent 42%),
+    linear-gradient(180deg, #f04449, #b3262b);
   color: white;
   font-size: 1.1rem;
   font-weight: 950;
@@ -358,11 +345,6 @@ p {
   filter: brightness(1.08);
 }
 
-.launch-card small {
-  color: #d9e1ee;
-  line-height: 1.35;
-}
-
 .account-panel {
   display: grid;
   align-content: start;
@@ -370,6 +352,14 @@ p {
   padding: 18px;
   background: rgba(16, 23, 32, 0.86);
   backdrop-filter: blur(16px);
+}
+
+.launcher-deck {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+  gap: 14px;
+  margin-top: 16px;
+  align-items: start;
 }
 
 .identity-card {
@@ -443,13 +433,12 @@ p {
 
 .tune-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  margin-top: 16px;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(8, 12, 18, 0.78);
+  background: var(--surface);
   backdrop-filter: blur(12px);
 }
 
@@ -458,7 +447,7 @@ p {
 }
 
 .privacy-field {
-  grid-column: span 1;
+  grid-column: span 3;
 }
 
 label {
@@ -532,18 +521,18 @@ option {
   color: var(--text);
 }
 
-.tile-grid {
+.quick-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .action-tile {
   display: grid;
   gap: 12px;
-  min-height: 138px;
+  min-height: 132px;
   padding: 16px;
+  background: var(--surface-strong);
 }
 
 .action-tile strong {
@@ -664,7 +653,8 @@ pre {
 }
 
 @media (max-width: 1260px) {
-  .command-grid {
+  .play-stage,
+  .launcher-deck {
     grid-template-columns: 1fr;
   }
 
@@ -678,8 +668,8 @@ pre {
     grid-column: 1 / -1;
   }
 
-  .tile-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .quick-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
@@ -693,24 +683,68 @@ pre {
     min-height: 0;
   }
 
-  .launch-card {
-    grid-template-columns: 1fr 1fr;
-    align-items: center;
-  }
-
-  .launch-card span,
-  .launch-card small {
-    grid-column: 1 / -1;
-  }
-
   .launch-facts,
   .tune-strip,
-  .tile-grid {
+  .quick-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .wide-field,
   .privacy-field {
     grid-column: span 2;
+  }
+
+  .launch-button {
+    justify-self: start;
+    min-height: 62px;
+  }
+}
+
+@media (max-width: 980px) {
+  body {
+    min-width: 760px;
+  }
+
+  .shell {
+    grid-template-columns: 196px minmax(0, 1fr);
+  }
+
+  .rail {
+    padding: 18px 12px;
+  }
+
+  .brand {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .content {
+    padding: 18px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+  }
+
+  .top-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .launch-panel {
+    padding: 24px;
+  }
+
+  .launch-facts,
+  .tune-strip,
+  .quick-grid,
+  .account-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .wide-field,
+  .privacy-field,
+  .account-panel .identity-card,
+  .account-panel .subtle-button {
+    grid-column: 1;
   }
 }

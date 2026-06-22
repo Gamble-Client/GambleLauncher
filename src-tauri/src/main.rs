@@ -6,15 +6,21 @@ use std::{
     fs::{self, File},
     io::{self, Cursor, Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Child, Command, Stdio},
+    sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
 };
 use walkdir::WalkDir;
-use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
+use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.64";
+const VERSION: &str = "0.1.65";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
+const MINECRAFT_VERSION: &str = "1.21.11";
+const FABRIC_LOADER_VERSION: &str = "0.18.4";
+const FABRIC_PROFILE_URL: &str = "https://meta.fabricmc.net/v2/versions/loader/1.21.11/0.18.4/profile/json";
+const VERSION_MANIFEST_URL: &str = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
+const ASSET_BASE_URL: &str = "https://resources.download.minecraft.net/";
 const MICROSOFT_DEVICE_CODE_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
 const MICROSOFT_TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
 const MICROSOFT_SCOPE: &str = "XboxLive.signin offline_access";
@@ -23,6 +29,7 @@ const XBOX_AUTH_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
 const XSTS_AUTH_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
 const MINECRAFT_LOGIN_URL: &str = "https://api.minecraftservices.com/launcher/login";
 const MINECRAFT_PROFILE_URL: &str = "https://api.minecraftservices.com/minecraft/profile";
+static MINECRAFT_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 
 #[derive(Serialize)]
 struct LauncherInfo {
@@ -114,6 +121,7 @@ struct MinecraftProfile {
     uuid: String,
     name: String,
     xuid: String,
+    access_token: String,
 }
 
 #[derive(Deserialize)]
@@ -140,6 +148,43 @@ struct ManifestResponse {
     size: u64,
     #[serde(default, rename = "buildVersion")]
     build_version: String,
+}
+
+#[derive(Deserialize)]
+struct LaunchRequest {
+    profile: String,
+    build: String,
+    token: String,
+    username: String,
+    memory: u8,
+    #[serde(rename = "javaArgs")]
+    java_args: String,
+    #[serde(rename = "antiScreenshare")]
+    anti_screenshare: bool,
+}
+
+#[derive(Default)]
+struct VersionProfile {
+    id: String,
+    main_class: String,
+    asset_index_id: String,
+    asset_index_url: String,
+    client_version_id: String,
+    client_jar_url: String,
+    libraries: Vec<Library>,
+    jvm_arguments: Vec<String>,
+    game_arguments: Vec<String>,
+}
+
+#[derive(Clone)]
+struct Library {
+    name: String,
+    rules: Vec<serde_json::Value>,
+    artifact_path: String,
+    artifact_url: String,
+    natives: serde_json::Map<String, serde_json::Value>,
+    classifier_paths: serde_json::Map<String, serde_json::Value>,
+    classifier_urls: serde_json::Map<String, serde_json::Value>,
 }
 
 #[tauri::command]
@@ -573,24 +618,695 @@ fn install_client_manifest(profile: String, build: String, token: String) -> Res
 }
 
 #[tauri::command]
-fn launch_game_placeholder(has_microsoft: bool, java_args: String, anti_screenshare: bool) -> Result<String, String> {
-    if !has_microsoft {
-        return Ok("Launching without a Microsoft account is not enabled in this Tauri test build yet. Add/select Microsoft in the Java launcher for real game launches while this native launch path is being ported.".to_string());
+fn launch_game(input: LaunchRequest) -> Result<String, String> {
+    {
+        let mut running = MINECRAFT_PROCESS.lock().map_err(error_text)?;
+        if let Some(child) = running.as_mut() {
+            if child.try_wait().map_err(error_text)?.is_none() {
+                child.kill().map_err(error_text)?;
+                *running = None;
+                return Ok("Minecraft stop signal sent.".to_string());
+            }
+            *running = None;
+        }
     }
-    let mut details = Vec::new();
-    if anti_screenshare {
-        details.push("anti-screenshare requested".to_string());
+
+    let profile = profile_id(&input.profile);
+    let build = input.build.trim();
+    let token = input.token.trim();
+    if token.is_empty() {
+        return Err("Sign in before launching Minecraft.".to_string());
     }
-    if !java_args.trim().is_empty() {
-        details.push(format!("custom JVM args saved: {}", java_args.trim()));
+    ensure_profile_folders(profile)?;
+
+    let account = read_microsoft_account()?.ok_or_else(|| {
+        "Microsoft is linked on the site, but this launcher does not have a local Minecraft token yet. Connect Microsoft in the launcher first.".to_string()
+    })?;
+    let mut identity = refresh_minecraft_identity(account)?;
+    if identity.name.trim().is_empty() && !input.username.trim().is_empty() {
+        identity.name = input.username.trim().to_string();
     }
-    let suffix = if details.is_empty() {
-        String::new()
+    let payload = if profile == "gamble-client" {
+        Some(PathBuf::from(install_client_manifest(profile.to_string(), build.to_string(), token.to_string())?.path))
     } else {
-        format!(" ({})", details.join(", "))
+        None
     };
-    Ok(format!("Native Minecraft process launching is still being ported. Install/update, account checks, mods, resource packs, ads, and diagnostics are available in this RPM test.{suffix}"))
+
+    let launch_ticket_file = if profile == "gamble-client" {
+        Some(write_launch_ticket_file(profile, token, build)?)
+    } else {
+        None
+    };
+    write_launcher_preferences(profile, input.anti_screenshare)?;
+
+    let profile_dir = minecraft_folder(profile);
+    let version_id = if profile == "vanilla" {
+        ensure_vanilla_version_json(&profile_dir, MINECRAFT_VERSION)?;
+        MINECRAFT_VERSION.to_string()
+    } else {
+        ensure_fabric_version_json(&profile_dir)?;
+        ensure_vanilla_version_json(&profile_dir, MINECRAFT_VERSION)?;
+        format!("fabric-loader-{FABRIC_LOADER_VERSION}-{MINECRAFT_VERSION}")
+    };
+    let version = load_version_profile(&profile_dir, &version_id)?;
+    let mut classpath = ensure_libraries(&profile_dir, &version)?;
+    classpath.push(ensure_client_jar(&profile_dir, &version)?);
+    ensure_assets(&profile_dir, &version)?;
+    let natives = extract_natives(&profile_dir, &version_id, &version)?;
+
+    let command = build_minecraft_command(
+        &profile_dir,
+        profile,
+        build,
+        &version_id,
+        &version,
+        &classpath,
+        &natives,
+        &identity,
+        input.memory.max(2).min(16),
+        &input.java_args,
+        input.anti_screenshare,
+        payload.as_deref(),
+        launch_ticket_file.as_deref(),
+    )?;
+    let log_file = latest_launch_log_file();
+    if let Some(parent) = log_file.parent() {
+        fs::create_dir_all(parent).map_err(error_text)?;
+    }
+    fs::write(&log_file, format!("Gamble Client Launcher {VERSION}\n{}\n\n", redacted_command(&command))).map_err(error_text)?;
+    let stdout = fs::OpenOptions::new().create(true).append(true).open(&log_file).map_err(error_text)?;
+    let stderr = fs::OpenOptions::new().create(true).append(true).open(&log_file).map_err(error_text)?;
+    let mut process = Command::new(&command[0]);
+    process.args(&command[1..]).current_dir(&profile_dir).stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
+    let child = process.spawn().map_err(|error| {
+        format!("Could not start Minecraft: {error}. If this mentions Java, install Java 21+ and restart the launcher.")
+    })?;
+    let pid = child.id();
+    *MINECRAFT_PROCESS.lock().map_err(error_text)? = Some(child);
+    Ok(format!("Minecraft process started (pid {pid}). Latest launch log: {}", display_path(&log_file)))
 }
+
+fn refresh_minecraft_identity(account: MicrosoftAccount) -> Result<MinecraftProfile, String> {
+    let token = refresh_microsoft_token(&account.refresh_token)?;
+    let profile = exchange_microsoft_for_minecraft(&token.access_token)?;
+    let saved = MicrosoftAccount {
+        name: profile.name.clone(),
+        uuid: profile.uuid.clone(),
+        xuid: profile.xuid.clone(),
+        refresh_token: if token.refresh_token.trim().is_empty() {
+            account.refresh_token
+        } else {
+            token.refresh_token
+        },
+        minecraft_expires_at: unix_millis() + token.expires_in_seconds.max(300) * 1000,
+    };
+    save_microsoft_account(&saved)?;
+    Ok(MinecraftProfile {
+        uuid: profile.uuid,
+        name: profile.name,
+        xuid: profile.xuid,
+        access_token: profile.access_token,
+    })
+}
+
+fn refresh_microsoft_token(refresh_token: &str) -> Result<MicrosoftToken, String> {
+    let params = [
+        ("grant_type", "refresh_token".to_string()),
+        ("client_id", MICROSOFT_CLIENT_ID.to_string()),
+        ("refresh_token", refresh_token.to_string()),
+        ("scope", MICROSOFT_SCOPE.to_string()),
+    ];
+    let body = http_client()?
+        .post(MICROSOFT_TOKEN_URL)
+        .form(&params)
+        .send()
+        .map_err(error_text)?
+        .error_for_status()
+        .map_err(error_text)?
+        .json::<serde_json::Value>()
+        .map_err(error_text)?;
+    parse_microsoft_token(&body)
+}
+
+fn write_launcher_preferences(profile: &str, anti_screenshare: bool) -> Result<(), String> {
+    let folder = profile_data_folder(profile);
+    fs::create_dir_all(&folder).map_err(error_text)?;
+    let body = json!({
+        "schema": 1,
+        "antiScreenshare": anti_screenshare,
+        "updatedAt": timestamp()
+    });
+    fs::write(folder.join("launcher-settings.json"), serde_json::to_string_pretty(&body).map_err(error_text)? + "\n").map_err(error_text)
+}
+
+fn write_launch_ticket_file(profile: &str, token: &str, build: &str) -> Result<PathBuf, String> {
+    let body = post_json(
+        &format!("{SITE_URL}/api/launcher/launch-ticket"),
+        &json!({ "build": build }),
+        token,
+    )?;
+    let ticket = json_string(&body, "ticket");
+    if ticket.trim().is_empty() {
+        return Err("Backend did not issue a launch ticket.".to_string());
+    }
+    let folder = profile_data_folder(profile).join("launch");
+    fs::create_dir_all(&folder).map_err(error_text)?;
+    let path = folder.join(format!("ticket-{}-{}.txt", timestamp(), process_id()));
+    let payload = format!(
+        "ticket={}\nbuild={}\nexpiresAt={}\n",
+        ticket,
+        json_string(&body, "build"),
+        json_u64(&body, "expiresAt")
+    );
+    fs::write(&path, payload).map_err(error_text)?;
+    Ok(path)
+}
+
+fn ensure_fabric_version_json(game_dir: &Path) -> Result<PathBuf, String> {
+    let version_id = format!("fabric-loader-{FABRIC_LOADER_VERSION}-{MINECRAFT_VERSION}");
+    let path = game_dir.join("versions").join(&version_id).join(format!("{version_id}.json"));
+    if !path.is_file() {
+        download_file(FABRIC_PROFILE_URL, &path)?;
+    }
+    Ok(path)
+}
+
+fn ensure_vanilla_version_json(game_dir: &Path, version_id: &str) -> Result<PathBuf, String> {
+    let path = game_dir.join("versions").join(version_id).join(format!("{version_id}.json"));
+    if path.is_file() {
+        return Ok(path);
+    }
+    let manifest = http_client()?.get(VERSION_MANIFEST_URL).send().map_err(error_text)?.error_for_status().map_err(error_text)?.json::<serde_json::Value>().map_err(error_text)?;
+    let versions = manifest.get("versions").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let url = versions
+        .iter()
+        .find(|entry| json_string(entry, "id") == version_id)
+        .map(|entry| json_string(entry, "url"))
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("Could not find Minecraft {version_id} in Mojang's version manifest."))?;
+    download_file(&url, &path)?;
+    Ok(path)
+}
+
+fn load_version_profile(game_dir: &Path, version_id: &str) -> Result<VersionProfile, String> {
+    let path = game_dir.join("versions").join(version_id).join(format!("{version_id}.json"));
+    let body = serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).map_err(error_text)?).map_err(error_text)?;
+    let inherits = json_string(&body, "inheritsFrom");
+    let mut profile = if inherits.trim().is_empty() {
+        VersionProfile::default()
+    } else {
+        load_version_profile(game_dir, &inherits)?
+    };
+    profile.id = version_id.to_string();
+    let main_class = json_string(&body, "mainClass");
+    if !main_class.is_empty() {
+        profile.main_class = main_class;
+    }
+    if let Some(asset) = body.get("assetIndex") {
+        let id = json_string(asset, "id");
+        let url = json_string(asset, "url");
+        if !id.is_empty() {
+            profile.asset_index_id = id;
+        }
+        if !url.is_empty() {
+            profile.asset_index_url = url;
+        }
+    }
+    if let Some(client) = body.pointer("/downloads/client") {
+        let url = json_string(client, "url");
+        if !url.is_empty() {
+            profile.client_version_id = version_id.to_string();
+            profile.client_jar_url = url;
+        }
+    }
+    if let Some(libraries) = body.get("libraries").and_then(|v| v.as_array()) {
+        for value in libraries {
+            if let Some(library) = parse_library(value) {
+                profile.libraries.push(library);
+            }
+        }
+    }
+    if let Some(arguments) = body.get("arguments") {
+        if let Some(jvm) = arguments.get("jvm").and_then(|v| v.as_array()) {
+            profile.jvm_arguments.extend(parse_arguments(jvm));
+        }
+        if let Some(game) = arguments.get("game").and_then(|v| v.as_array()) {
+            let parsed = parse_arguments(game);
+            if !parsed.is_empty() {
+                profile.game_arguments = parsed;
+            }
+        }
+    } else {
+        let legacy = json_string(&body, "minecraftArguments");
+        if !legacy.is_empty() {
+            profile.game_arguments = legacy.split_whitespace().map(ToString::to_string).collect();
+        }
+    }
+    if profile.main_class.trim().is_empty() {
+        return Err(format!("Minecraft version profile {version_id} did not include a main class."));
+    }
+    Ok(profile)
+}
+
+fn parse_library(value: &serde_json::Value) -> Option<Library> {
+    let name = json_string(value, "name");
+    if name.is_empty() {
+        return None;
+    }
+    let artifact = value.pointer("/downloads/artifact").unwrap_or(&serde_json::Value::Null);
+    let mut artifact_path = json_string(artifact, "path");
+    let mut artifact_url = json_string(artifact, "url");
+    if artifact_path.is_empty() {
+        artifact_path = maven_artifact_path(&name);
+        artifact_url = maven_artifact_url(&json_string(value, "url"), &artifact_path);
+    }
+    let classifiers = value.pointer("/downloads/classifiers").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let mut classifier_paths = serde_json::Map::new();
+    let mut classifier_urls = serde_json::Map::new();
+    for (key, item) in classifiers {
+        classifier_paths.insert(key.clone(), serde_json::Value::String(json_string(&item, "path")));
+        classifier_urls.insert(key, serde_json::Value::String(json_string(&item, "url")));
+    }
+    Some(Library {
+        name,
+        rules: value.get("rules").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
+        artifact_path,
+        artifact_url,
+        natives: value.get("natives").and_then(|v| v.as_object()).cloned().unwrap_or_default(),
+        classifier_paths,
+        classifier_urls,
+    })
+}
+
+fn parse_arguments(values: &[serde_json::Value]) -> Vec<String> {
+    let mut out = Vec::new();
+    for value in values {
+        if let Some(text) = value.as_str() {
+            out.push(text.to_string());
+            continue;
+        }
+        if !rules_allow(value.get("rules").and_then(|v| v.as_array()).cloned().unwrap_or_default().as_slice()) {
+            continue;
+        }
+        let item = value.get("value").unwrap_or(&serde_json::Value::Null);
+        if let Some(text) = item.as_str() {
+            out.push(text.to_string());
+        } else if let Some(items) = item.as_array() {
+            for nested in items {
+                if let Some(text) = nested.as_str() {
+                    out.push(text.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+fn ensure_libraries(game_dir: &Path, profile: &VersionProfile) -> Result<Vec<PathBuf>, String> {
+    let mut classpath = Vec::new();
+    let libraries_dir = game_dir.join("libraries");
+    for library in &profile.libraries {
+        if !rules_allow(&library.rules) {
+            continue;
+        }
+        if !library.artifact_path.is_empty() {
+            let path = libraries_dir.join(&library.artifact_path);
+            if !path.is_file() {
+                if library.artifact_url.is_empty() {
+                    return Err(format!("No download URL for library {}", library.name));
+                }
+                download_file(&library.artifact_url, &path)?;
+            }
+            classpath.push(path);
+        }
+        if let Some((path, url)) = native_artifact(library) {
+            let file = libraries_dir.join(path);
+            if !file.is_file() {
+                if url.is_empty() {
+                    return Err(format!("No native download URL for library {}", library.name));
+                }
+                download_file(&url, &file)?;
+            }
+        }
+    }
+    Ok(classpath)
+}
+
+fn ensure_client_jar(game_dir: &Path, profile: &VersionProfile) -> Result<PathBuf, String> {
+    if profile.client_version_id.is_empty() || profile.client_jar_url.is_empty() {
+        return Err("Minecraft profile does not include a client jar URL.".to_string());
+    }
+    let path = game_dir.join("versions").join(&profile.client_version_id).join(format!("{}.jar", profile.client_version_id));
+    if !path.is_file() {
+        download_file(&profile.client_jar_url, &path)?;
+    }
+    Ok(path)
+}
+
+fn ensure_assets(game_dir: &Path, profile: &VersionProfile) -> Result<(), String> {
+    if profile.asset_index_id.is_empty() || profile.asset_index_url.is_empty() {
+        return Err("Minecraft profile does not include an asset index.".to_string());
+    }
+    let assets = game_dir.join("assets");
+    let index = assets.join("indexes").join(format!("{}.json", profile.asset_index_id));
+    if !index.is_file() {
+        download_file(&profile.asset_index_url, &index)?;
+    }
+    let body = serde_json::from_str::<serde_json::Value>(&fs::read_to_string(index).map_err(error_text)?).map_err(error_text)?;
+    let objects = body.get("objects").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    for item in objects.values() {
+        let hash = json_string(item, "hash");
+        if hash.len() < 2 {
+            continue;
+        }
+        let path = assets.join("objects").join(&hash[0..2]).join(&hash);
+        if !path.is_file() {
+            download_file(&format!("{ASSET_BASE_URL}{}/{}", &hash[0..2], hash), &path)?;
+        }
+    }
+    Ok(())
+}
+
+fn extract_natives(game_dir: &Path, version_id: &str, profile: &VersionProfile) -> Result<PathBuf, String> {
+    let target = game_dir.join("versions").join(version_id).join("natives");
+    fs::create_dir_all(&target).map_err(error_text)?;
+    let libraries_dir = game_dir.join("libraries");
+    for library in &profile.libraries {
+        if !rules_allow(&library.rules) {
+            continue;
+        }
+        if let Some((path, _)) = native_artifact(library) {
+            let file = libraries_dir.join(path);
+            if file.is_file() {
+                unzip_natives(&file, &target)?;
+            }
+        }
+    }
+    Ok(target)
+}
+
+fn build_minecraft_command(
+    game_dir: &Path,
+    profile_id: &str,
+    build: &str,
+    version_id: &str,
+    profile: &VersionProfile,
+    classpath: &[PathBuf],
+    natives: &Path,
+    identity: &MinecraftProfile,
+    memory: u8,
+    extra_java_args: &str,
+    anti_screenshare: bool,
+    payload: Option<&Path>,
+    launch_ticket_file: Option<&Path>,
+) -> Result<Vec<String>, String> {
+    let mut command = Vec::new();
+    command.push(java_executable());
+    command.push(format!("-Xmx{memory}G"));
+    command.push(format!("-Djava.library.path={}", display_path(natives)));
+    command.push("-Dminecraft.launcher.brand=GambleClientLauncher".to_string());
+    command.push(format!("-Dminecraft.launcher.version={VERSION}"));
+    command.push(format!("-Dgamble.antiScreenshare={anti_screenshare}"));
+    if let Some(ticket) = launch_ticket_file {
+        command.push(format!("-Dgamble.launchTicketFile={}", display_path(ticket)));
+    }
+    if profile_id == "gamble-client" && !build.is_empty() {
+        command.push(format!("-Dgamble.launchBuild={build}"));
+    }
+    if let Some(payload) = payload {
+        command.push(format!("-Dfabric.addMods={}", display_path(payload)));
+    }
+    if profile_id != "vanilla" && !profile.client_version_id.is_empty() {
+        let jar = game_dir.join("versions").join(&profile.client_version_id).join(format!("{}.jar", profile.client_version_id));
+        command.push(format!("-Dfabric.gameJarPath={}", display_path(&jar)));
+    }
+    for arg in &profile.jvm_arguments {
+        if !is_launcher_managed_jvm_arg(arg) {
+            command.push(replace_jvm_placeholders(arg, game_dir, classpath, natives, version_id));
+        }
+    }
+    command.extend(split_args(extra_java_args)?);
+    command.push("-cp".to_string());
+    command.push(join_classpath(classpath));
+    command.push(profile.main_class.clone());
+
+    for arg in &profile.game_arguments {
+        command.push(
+            arg.replace("${auth_player_name}", &identity.name)
+                .replace("${version_name}", &format!("Gamble Client {MINECRAFT_VERSION}"))
+                .replace("${game_directory}", &display_path(game_dir))
+                .replace("${assets_root}", &display_path(&game_dir.join("assets")))
+                .replace("${assets_index_name}", &profile.asset_index_id)
+                .replace("${auth_uuid}", &identity.uuid)
+                .replace("${auth_access_token}", &identity.access_token)
+                .replace("${clientid}", MICROSOFT_CLIENT_ID)
+                .replace("${auth_xuid}", &identity.xuid)
+                .replace("${user_type}", "msa")
+                .replace("${version_type}", "release")
+                .replace("${user_properties}", "{}")
+                .replace("${profile_properties}", "{}")
+                .replace("${quickPlayPath}", "")
+                .replace("${quickPlaySingleplayer}", "")
+                .replace("${quickPlayMultiplayer}", "")
+                .replace("${quickPlayRealms}", "")
+                .replace("${classpath}", &join_classpath(classpath))
+                .replace("${natives_directory}", &display_path(natives))
+                .replace("${launcher_name}", "GambleClientLauncher")
+                .replace("${launcher_version}", VERSION),
+        );
+    }
+    Ok(command)
+}
+
+fn download_file(url: &str, path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(error_text)?;
+    }
+    let bytes = http_client()?.get(url).send().map_err(error_text)?.error_for_status().map_err(error_text)?.bytes().map_err(error_text)?;
+    fs::write(path, bytes).map_err(error_text)
+}
+
+fn unzip_natives(zip_path: &Path, target: &Path) -> Result<(), String> {
+    let file = File::open(zip_path).map_err(error_text)?;
+    let mut archive = ZipArchive::new(file).map_err(error_text)?;
+    for i in 0..archive.len() {
+        let mut item = archive.by_index(i).map_err(error_text)?;
+        let name = item.name().to_string();
+        if item.is_dir() || name.starts_with("META-INF/") || name.contains("..") {
+            continue;
+        }
+        let Some(file_name) = Path::new(&name).file_name() else {
+            continue;
+        };
+        let out = target.join(file_name);
+        let mut output = File::create(out).map_err(error_text)?;
+        io::copy(&mut item, &mut output).map_err(error_text)?;
+    }
+    Ok(())
+}
+
+fn native_artifact(library: &Library) -> Option<(String, String)> {
+    if library.natives.is_empty() {
+        return None;
+    }
+    let classifier = library
+        .natives
+        .get(os_name())
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .replace("${arch}", if is_64_bit() { "64" } else { "32" });
+    if classifier.is_empty() {
+        return None;
+    }
+    let path = library.classifier_paths.get(&classifier).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let url = library.classifier_urls.get(&classifier).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if path.is_empty() {
+        None
+    } else {
+        Some((path, url))
+    }
+}
+
+fn rules_allow(rules: &[serde_json::Value]) -> bool {
+    if rules.is_empty() {
+        return true;
+    }
+    let mut allowed = false;
+    for rule in rules {
+        if !rule_applies(rule) {
+            continue;
+        }
+        let action = json_string(rule, "action");
+        if action == "allow" {
+            allowed = true;
+        } else if action == "disallow" {
+            allowed = false;
+        }
+    }
+    allowed
+}
+
+fn rule_applies(rule: &serde_json::Value) -> bool {
+    if let Some(os) = rule.get("os") {
+        let name = json_string(os, "name");
+        if !name.is_empty() && name != os_name() {
+            return false;
+        }
+    }
+    if let Some(features) = rule.get("features").and_then(|v| v.as_object()) {
+        for value in features.values() {
+            if value.as_bool().unwrap_or(false) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn maven_artifact_path(name: &str) -> String {
+    let (coordinate, extension) = name.split_once('@').map(|(a, b)| (a, b)).unwrap_or((name, "jar"));
+    let parts = coordinate.split(':').collect::<Vec<_>>();
+    if parts.len() < 3 {
+        return String::new();
+    }
+    let group = parts[0].replace('.', "/");
+    let artifact = parts[1];
+    let version = parts[2];
+    let classifier = if parts.len() >= 4 && !parts[3].is_empty() {
+        format!("-{}", parts[3])
+    } else {
+        String::new()
+    };
+    format!("{group}/{artifact}/{version}/{artifact}-{version}{classifier}.{extension}")
+}
+
+fn maven_artifact_url(base: &str, artifact_path: &str) -> String {
+    if base.trim().is_empty() || artifact_path.is_empty() {
+        return String::new();
+    }
+    format!("{}/{}", base.trim_end_matches('/'), artifact_path)
+}
+
+fn is_launcher_managed_jvm_arg(arg: &str) -> bool {
+    arg.trim().is_empty()
+        || arg.starts_with("-Djava.library.path=")
+        || arg.starts_with("-Dminecraft.launcher.brand=")
+        || arg.starts_with("-Dminecraft.launcher.version=")
+        || arg.starts_with("-Dgamble.")
+        || arg == "-DFabricMcEmu="
+        || arg == "-cp"
+        || arg == "-classpath"
+        || arg.contains("${classpath}")
+        || arg.contains("${natives_directory}")
+        || arg == "net.minecraft.client.main.Main"
+        || arg.ends_with(".KnotClient")
+}
+
+fn replace_jvm_placeholders(arg: &str, game_dir: &Path, classpath: &[PathBuf], natives: &Path, version_id: &str) -> String {
+    arg.replace("${natives_directory}", &display_path(natives))
+        .replace("${launcher_name}", "GambleClientLauncher")
+        .replace("${launcher_version}", VERSION)
+        .replace("${classpath}", &join_classpath(classpath))
+        .replace("${game_directory}", &display_path(game_dir))
+        .replace("${version_name}", version_id)
+}
+
+fn split_args(value: &str) -> Result<Vec<String>, String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut single = false;
+    let mut double = false;
+    let mut escaping = false;
+    for ch in value.chars() {
+        if escaping {
+            current.push(ch);
+            escaping = false;
+            continue;
+        }
+        if ch == '\\' && !single {
+            escaping = true;
+            continue;
+        }
+        if ch == '\'' && !double {
+            single = !single;
+            continue;
+        }
+        if ch == '"' && !single {
+            double = !double;
+            continue;
+        }
+        if ch.is_whitespace() && !single && !double {
+            if !current.is_empty() {
+                args.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        current.push(ch);
+    }
+    if single || double {
+        return Err("Close the quote in JVM args before launching.".to_string());
+    }
+    if escaping {
+        current.push('\\');
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    for arg in &args {
+        if arg == "net.minecraft.client.main.Main" || arg.ends_with(".KnotClient") {
+            return Err(format!("JVM Args should not include the Minecraft main class: {arg}"));
+        }
+    }
+    Ok(args)
+}
+
+fn join_classpath(classpath: &[PathBuf]) -> String {
+    let separator = if env::consts::OS == "windows" { ";" } else { ":" };
+    classpath.iter().map(|path| display_path(path)).collect::<Vec<_>>().join(separator)
+}
+
+fn java_executable() -> String {
+    if let Ok(home) = env::var("JAVA_HOME") {
+        let candidate = PathBuf::from(home).join("bin").join(if env::consts::OS == "windows" { "java.exe" } else { "java" });
+        if candidate.is_file() {
+            return display_path(&candidate);
+        }
+    }
+    "java".to_string()
+}
+
+fn os_name() -> &'static str {
+    match env::consts::OS {
+        "windows" => "windows",
+        "macos" => "osx",
+        _ => "linux",
+    }
+}
+
+fn is_64_bit() -> bool {
+    env::consts::ARCH.contains("64")
+}
+
+fn process_id() -> u32 {
+    std::process::id()
+}
+
+fn redacted_command(command: &[String]) -> String {
+    command
+        .iter()
+        .map(|arg| {
+            if arg.starts_with("-Dgamble.launchTicket") {
+                "-Dgamble.launchTicketFile=<redacted>".to_string()
+            } else if arg.len() > 60 && !arg.starts_with('-') {
+                "<token-or-path>".to_string()
+            } else {
+                arg.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
@@ -632,7 +1348,7 @@ fn main() {
             open_profile_folder,
             diagnostics,
             install_client_manifest,
-            launch_game_placeholder,
+            launch_game,
             open_url
         ])
         .run(tauri::generate_context!())
@@ -890,6 +1606,7 @@ fn exchange_microsoft_for_minecraft(microsoft_access_token: &str) -> Result<Mine
     let minecraft = request_minecraft_token(&xsts.user_hash, &xsts.token)?;
     let mut profile = request_minecraft_profile(&minecraft.access_token)?;
     profile.xuid = if xsts.xuid.trim().is_empty() { xbox.xuid } else { xsts.xuid };
+    profile.access_token = minecraft.access_token;
     Ok(profile)
 }
 
@@ -973,6 +1690,7 @@ fn request_minecraft_profile(minecraft_access_token: &str) -> Result<MinecraftPr
         uuid,
         name,
         xuid: String::new(),
+        access_token: String::new(),
     })
 }
 
