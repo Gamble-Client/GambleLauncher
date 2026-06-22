@@ -27,6 +27,7 @@ const state = {
   version: null,
   token: "",
   account: null,
+  microsoft: null,
   ads: null,
   selectedProfile: "gamble-client",
   selectedBuild: "ad_tier",
@@ -37,6 +38,9 @@ const state = {
   busy: false,
   signIn: null,
   signInError: "",
+  microsoftSignIn: null,
+  microsoftError: "",
+  microsoftPollCancelled: false,
   sponsor: null,
   mods: [],
   packs: [],
@@ -62,7 +66,7 @@ function render() {
           <div class="brand-mark">GC</div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.60")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.61")}</span>
           </div>
         </div>
         <nav>
@@ -93,6 +97,7 @@ function render() {
         ${state.view === "packs" ? fileView("packs", profile, state.packs) : ""}
         ${state.view === "diagnostics" ? diagnosticsView() : ""}
         ${state.signIn ? signInPanel() : ""}
+        ${state.microsoftSignIn ? microsoftPanel() : ""}
       </section>
     </section>
   `;
@@ -125,7 +130,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
         <h2>${escapeHtml(selectedBuild.label)}</h2>
         <p>${escapeHtml(playCopy(profile, signedIn))}</p>
       </div>
-      <button class="launch-button" type="button" data-action="launch" ${state.busy ? "disabled" : ""}>Launch</button>
+      <button class="launch-button" type="button" data-action="launch" ${state.busy ? "disabled" : ""}>${state.microsoft ? "Launch" : "Microsoft Sign In"}</button>
     </section>
 
     <section class="control-grid">
@@ -158,6 +163,11 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
         <span>Client</span>
         <strong>${escapeHtml(state.manifest ? displayManifest(state.manifest) : "Not checked")}</strong>
         <button type="button" data-action="install" ${!canInstall || state.busy ? "disabled" : ""}>Update</button>
+      </article>
+      <article>
+        <span>Game account</span>
+        <strong>${escapeHtml(microsoftTitle())}</strong>
+        <button type="button" data-action="${state.microsoft ? "switch-microsoft" : "microsoft"}" ${state.busy ? "disabled" : ""}>${state.microsoft ? "Switch" : "Sign in"}</button>
       </article>
       <article>
         <span>Sponsor</span>
@@ -194,6 +204,24 @@ function signInPanel() {
         <button class="ghost" type="button" data-action="open-signin-link">Open</button>
         <button class="ghost" type="button" data-action="copy-signin-link">Copy</button>
         <button class="ghost" type="button" data-action="cancel-signin">Cancel</button>
+      </div>
+    </section>
+  `;
+}
+
+function microsoftPanel() {
+  return `
+    <section class="signin-panel">
+      <div>
+        <span class="eyebrow">Microsoft sign-in</span>
+        <h2>${escapeHtml(state.microsoftSignIn.userCode || "Code")}</h2>
+        <p>${escapeHtml(state.microsoftError || state.microsoftSignIn.message || "Open Microsoft sign-in and enter the code.")}</p>
+        <code>${escapeHtml(state.microsoftSignIn.verificationUriComplete || state.microsoftSignIn.verificationUri || "")}</code>
+      </div>
+      <div class="top-actions">
+        <button class="ghost" type="button" data-action="open-microsoft-link">Open</button>
+        <button class="ghost" type="button" data-action="copy-microsoft-code">Copy Code</button>
+        <button class="ghost" type="button" data-action="cancel-microsoft">Cancel</button>
       </div>
     </section>
   `;
@@ -313,6 +341,12 @@ function accountMeta() {
   return `${plan.replaceAll("_", " ")} · ${status.replaceAll("_", " ")}`;
 }
 
+function microsoftTitle() {
+  if (state.microsoft?.name) return state.microsoft.name;
+  if (state.microsoftSignIn?.userCode) return `Code ${state.microsoftSignIn.userCode}`;
+  return "Microsoft required";
+}
+
 function adTierOnly() {
   return state.account && (state.account.selectedPlan === "ad_tier" || state.account.accessStatus === "ad_tier") && !state.account.ownerAccess;
 }
@@ -362,6 +396,7 @@ async function boot() {
   }
 
   state.token = localStorage.getItem(TOKEN_KEY) || await invoke("read_launcher_token").catch(() => "");
+  state.microsoft = await invoke("read_microsoft_account").catch(() => null);
   await Promise.allSettled([refreshVersion(), refreshFiles(), restoreSession()]);
   await invoke("ensure_profile", { profile: state.selectedProfile }).catch(() => {});
   render();
@@ -406,6 +441,7 @@ function applyAccount(body) {
   state.account = body.user || null;
   state.ads = body.ads || body.adReward || null;
   if (adTierOnly()) state.selectedBuild = "ad_tier";
+  if (!adTierOnly() && state.selectedBuild === "ad_tier") state.selectedBuild = "release";
 }
 
 async function startSignIn() {
@@ -533,6 +569,58 @@ async function startSponsor() {
   }
 }
 
+async function startMicrosoftSignIn() {
+  setBusy(true, "Starting Microsoft sign-in");
+  try {
+    const start = await invoke("microsoft_device_start", { forceAccountPicker: true });
+    state.microsoftSignIn = start;
+    state.microsoftError = "";
+    state.microsoftPollCancelled = false;
+    const url = start.verificationUriComplete || start.verificationUri;
+    if (url) await invoke("open_url", { url }).catch((error) => {
+      state.microsoftError = `Could not open Microsoft automatically: ${error}`;
+    });
+    log(`Microsoft sign-in code: ${start.userCode}`);
+    render();
+    await pollMicrosoftSignIn(start);
+  } catch (error) {
+    state.microsoftError = String(error?.message || error);
+    log(`Microsoft sign-in failed: ${state.microsoftError}`);
+    render();
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function pollMicrosoftSignIn(start) {
+  const interval = Math.max(2, Number(start.intervalSeconds || 5));
+  const expiresAt = Date.now() + Math.max(60, Number(start.expiresInSeconds || 900)) * 1000;
+  while (!state.microsoftPollCancelled && Date.now() < expiresAt) {
+    await sleep(interval * 1000);
+    if (state.microsoftPollCancelled) return;
+    const result = await invoke("microsoft_device_poll", { deviceCode: start.deviceCode });
+    if (result.status === "pending") {
+      state.status = `Waiting for Microsoft ${formatDuration(Math.ceil((expiresAt - Date.now()) / 1000))}`;
+      render();
+      continue;
+    }
+    if (result.status === "ready" && result.account) {
+      state.microsoft = result.account;
+      state.username = result.account.name || state.username;
+      state.microsoftSignIn = null;
+      state.microsoftError = "";
+      log(`Microsoft account linked: ${state.microsoft.name}`);
+      render();
+      return;
+    }
+  }
+  if (!state.microsoftPollCancelled) {
+    state.microsoftError = "Microsoft sign-in expired. Try again.";
+    log(state.microsoftError);
+    render();
+  }
+}
+
 async function refreshFiles() {
   await invoke("ensure_profile", { profile: state.selectedProfile }).catch(() => {});
   const [mods, packs] = await Promise.all([
@@ -605,9 +693,31 @@ app.addEventListener("click", async (event) => {
   } else if (action === "install") {
     await installSelected();
   } else if (action === "launch") {
-    const hasMicrosoft = false;
+    if (!state.microsoft) {
+      await startMicrosoftSignIn();
+      return;
+    }
+    const hasMicrosoft = true;
     const message = await invoke("launch_game_placeholder", { hasMicrosoft });
     log(message);
+    render();
+  } else if (action === "microsoft" || action === "switch-microsoft") {
+    await startMicrosoftSignIn();
+  } else if (action === "open-microsoft-link") {
+    const url = state.microsoftSignIn?.verificationUriComplete || state.microsoftSignIn?.verificationUri;
+    if (url) await invoke("open_url", { url }).catch((error) => log(`Open failed: ${error}`));
+  } else if (action === "copy-microsoft-code") {
+    if (state.microsoftSignIn?.userCode) {
+      await navigator.clipboard.writeText(state.microsoftSignIn.userCode).catch(() => {});
+      log("Copied Microsoft code.");
+      render();
+    }
+  } else if (action === "cancel-microsoft") {
+    state.microsoftPollCancelled = true;
+    state.microsoftSignIn = null;
+    state.microsoftError = "";
+    state.busy = false;
+    log("Microsoft sign-in cancelled.");
     render();
   } else if (action === "sponsor") {
     await startSponsor();

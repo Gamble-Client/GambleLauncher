@@ -12,9 +12,17 @@ use std::{
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
-const VERSION: &str = "0.1.60";
+const VERSION: &str = "0.1.61";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
+const MICROSOFT_DEVICE_CODE_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
+const MICROSOFT_TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
+const MICROSOFT_SCOPE: &str = "XboxLive.signin offline_access";
+const MICROSOFT_CLIENT_ID: &str = "8eea0ae2-d0a9-4af1-88b9-f66bd96c94bd";
+const XBOX_AUTH_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
+const XSTS_AUTH_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
+const MINECRAFT_LOGIN_URL: &str = "https://api.minecraftservices.com/launcher/login";
+const MINECRAFT_PROFILE_URL: &str = "https://api.minecraftservices.com/minecraft/profile";
 
 #[derive(Serialize)]
 struct LauncherInfo {
@@ -56,6 +64,56 @@ struct InstallResult {
     sha256: String,
     updated: bool,
     message: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+struct MicrosoftAccount {
+    name: String,
+    uuid: String,
+    xuid: String,
+    #[serde(rename = "refreshToken")]
+    refresh_token: String,
+    #[serde(rename = "minecraftExpiresAt")]
+    minecraft_expires_at: u64,
+}
+
+#[derive(Serialize)]
+struct MicrosoftDeviceStart {
+    #[serde(rename = "deviceCode")]
+    device_code: String,
+    #[serde(rename = "userCode")]
+    user_code: String,
+    #[serde(rename = "verificationUri")]
+    verification_uri: String,
+    #[serde(rename = "verificationUriComplete")]
+    verification_uri_complete: String,
+    message: String,
+    #[serde(rename = "intervalSeconds")]
+    interval_seconds: u64,
+    #[serde(rename = "expiresInSeconds")]
+    expires_in_seconds: u64,
+}
+
+struct MicrosoftToken {
+    access_token: String,
+    refresh_token: String,
+    expires_in_seconds: u64,
+}
+
+struct XboxToken {
+    token: String,
+    user_hash: String,
+    xuid: String,
+}
+
+struct MinecraftToken {
+    access_token: String,
+}
+
+struct MinecraftProfile {
+    uuid: String,
+    name: String,
+    xuid: String,
 }
 
 #[derive(Deserialize)]
@@ -163,6 +221,112 @@ fn delete_launcher_token() -> Result<(), String> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error_text(error)),
     }
+}
+
+#[tauri::command]
+fn read_microsoft_account() -> Result<Option<MicrosoftAccount>, String> {
+    let path = microsoft_account_file();
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(path).map_err(error_text)?;
+    let account = serde_json::from_str::<MicrosoftAccount>(&text).map_err(error_text)?;
+    if account.refresh_token.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(account))
+}
+
+#[tauri::command]
+fn delete_microsoft_account() -> Result<(), String> {
+    match fs::remove_file(microsoft_account_file()) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error_text(error)),
+    }
+}
+
+#[tauri::command]
+fn microsoft_device_start(force_account_picker: bool) -> Result<MicrosoftDeviceStart, String> {
+    let mut params = vec![
+        ("client_id", MICROSOFT_CLIENT_ID.to_string()),
+        ("scope", MICROSOFT_SCOPE.to_string()),
+    ];
+    if force_account_picker {
+        params.push(("prompt", "select_account".to_string()));
+    }
+    let body = http_client()?
+        .post(MICROSOFT_DEVICE_CODE_URL)
+        .form(&params)
+        .send()
+        .map_err(error_text)?
+        .error_for_status()
+        .map_err(error_text)?
+        .json::<serde_json::Value>()
+        .map_err(error_text)?;
+
+    Ok(MicrosoftDeviceStart {
+        device_code: json_string(&body, "device_code"),
+        user_code: json_string(&body, "user_code"),
+        verification_uri: json_string(&body, "verification_uri"),
+        verification_uri_complete: json_string(&body, "verification_uri_complete"),
+        message: json_string(&body, "message"),
+        interval_seconds: json_u64(&body, "interval").max(2),
+        expires_in_seconds: json_u64(&body, "expires_in").max(60),
+    })
+}
+
+#[tauri::command]
+fn microsoft_device_poll(device_code: String) -> Result<serde_json::Value, String> {
+    let params = [
+        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code".to_string()),
+        ("client_id", MICROSOFT_CLIENT_ID.to_string()),
+        ("device_code", device_code),
+    ];
+    let response = http_client()?
+        .post(MICROSOFT_TOKEN_URL)
+        .form(&params)
+        .send()
+        .map_err(error_text)?;
+    let status = response.status();
+    let body = response.json::<serde_json::Value>().map_err(error_text)?;
+
+    if status.as_u16() == 400 {
+        let error = json_string(&body, "error");
+        if error == "authorization_pending" {
+            return Ok(json!({ "status": "pending" }));
+        }
+        if error == "slow_down" {
+            return Ok(json!({ "status": "pending", "slowDown": true }));
+        }
+        if error == "authorization_declined" {
+            return Err("Microsoft sign-in was declined.".to_string());
+        }
+        if error == "expired_token" {
+            return Err("Microsoft sign-in code expired.".to_string());
+        }
+        let description = json_string(&body, "error_description");
+        return Err(if description.trim().is_empty() {
+            format!("Microsoft sign-in failed: {error}")
+        } else {
+            description
+        });
+    }
+    if !status.is_success() {
+        return Err(format!("Microsoft returned HTTP {}", status.as_u16()));
+    }
+
+    let token = parse_microsoft_token(&body)?;
+    let profile = exchange_microsoft_for_minecraft(&token.access_token)?;
+    let account = MicrosoftAccount {
+        name: profile.name,
+        uuid: profile.uuid,
+        xuid: profile.xuid,
+        refresh_token: token.refresh_token,
+        minecraft_expires_at: unix_millis() + token.expires_in_seconds.max(300) * 1000,
+    };
+    save_microsoft_account(&account)?;
+    Ok(json!({ "status": "ready", "account": account }))
 }
 
 #[tauri::command]
@@ -408,6 +572,9 @@ fn open_url(url: String) -> Result<(), String> {
         "https://admin.gamble-client.store",
         "https://profile.gamble-client.store",
         "https://discord.gg",
+        "https://login.microsoftonline.com",
+        "https://www.microsoft.com",
+        "https://microsoft.com",
     ];
 
     if !allowed.iter().any(|prefix| url.starts_with(prefix)) {
@@ -425,6 +592,10 @@ fn main() {
             read_launcher_token,
             save_launcher_token,
             delete_launcher_token,
+            read_microsoft_account,
+            delete_microsoft_account,
+            microsoft_device_start,
+            microsoft_device_poll,
             ensure_profile,
             list_local_files,
             toggle_local_file,
@@ -664,6 +835,143 @@ fn write_install_marker(profile: &str, build: &str, manifest: &ManifestResponse,
     .map_err(error_text)
 }
 
+fn save_microsoft_account(account: &MicrosoftAccount) -> Result<(), String> {
+    fs::create_dir_all(launcher_data_folder()).map_err(error_text)?;
+    fs::write(
+        microsoft_account_file(),
+        serde_json::to_string_pretty(account).map_err(error_text)? + "\n",
+    )
+    .map_err(error_text)
+}
+
+fn parse_microsoft_token(body: &serde_json::Value) -> Result<MicrosoftToken, String> {
+    let access_token = json_string(body, "access_token");
+    if access_token.trim().is_empty() {
+        return Err("Microsoft did not return an access token.".to_string());
+    }
+    Ok(MicrosoftToken {
+        access_token,
+        refresh_token: json_string(body, "refresh_token"),
+        expires_in_seconds: json_u64(body, "expires_in"),
+    })
+}
+
+fn exchange_microsoft_for_minecraft(microsoft_access_token: &str) -> Result<MinecraftProfile, String> {
+    let xbox = request_xbox_token(microsoft_access_token)?;
+    let xsts = request_xsts_token(&xbox.token)?;
+    let minecraft = request_minecraft_token(&xsts.user_hash, &xsts.token)?;
+    let mut profile = request_minecraft_profile(&minecraft.access_token)?;
+    profile.xuid = if xsts.xuid.trim().is_empty() { xbox.xuid } else { xsts.xuid };
+    Ok(profile)
+}
+
+fn request_xbox_token(microsoft_access_token: &str) -> Result<XboxToken, String> {
+    let body = json!({
+        "Properties": {
+            "AuthMethod": "RPS",
+            "SiteName": "user.auth.xboxlive.com",
+            "RpsTicket": format!("d={microsoft_access_token}")
+        },
+        "RelyingParty": "http://auth.xboxlive.com",
+        "TokenType": "JWT"
+    });
+    parse_xbox_token(post_json(XBOX_AUTH_URL, &body, "")?, "Xbox Live")
+}
+
+fn request_xsts_token(xbox_token: &str) -> Result<XboxToken, String> {
+    let body = json!({
+        "Properties": {
+            "SandboxId": "RETAIL",
+            "UserTokens": [xbox_token]
+        },
+        "RelyingParty": "rp://api.minecraftservices.com/",
+        "TokenType": "JWT"
+    });
+    parse_xbox_token(post_json(XSTS_AUTH_URL, &body, "")?, "Xbox XSTS")
+}
+
+fn parse_xbox_token(body: serde_json::Value, label: &str) -> Result<XboxToken, String> {
+    let token = json_string(&body, "Token");
+    let first_xui = body
+        .get("DisplayClaims")
+        .and_then(|claims| claims.get("xui"))
+        .and_then(|xui| xui.as_array())
+        .and_then(|items| items.first())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let user_hash = json_string(&first_xui, "uhs");
+    let xuid = json_string(&first_xui, "xid");
+    if token.trim().is_empty() || user_hash.trim().is_empty() {
+        return Err(format!("{label} did not return a usable token."));
+    }
+    Ok(XboxToken { token, user_hash, xuid })
+}
+
+fn request_minecraft_token(user_hash: &str, xsts_token: &str) -> Result<MinecraftToken, String> {
+    let body = json!({
+        "xtoken": format!("XBL3.0 x={user_hash};{xsts_token}"),
+        "platform": "PC_LAUNCHER"
+    });
+    let response = post_json(MINECRAFT_LOGIN_URL, &body, "")?;
+    let access_token = json_string(&response, "access_token");
+    if access_token.trim().is_empty() {
+        return Err("Minecraft did not return an access token.".to_string());
+    }
+    Ok(MinecraftToken { access_token })
+}
+
+fn request_minecraft_profile(minecraft_access_token: &str) -> Result<MinecraftProfile, String> {
+    let response = http_client()?
+        .get(MINECRAFT_PROFILE_URL)
+        .bearer_auth(minecraft_access_token)
+        .send()
+        .map_err(error_text)?;
+    let status = response.status();
+    let body = response.json::<serde_json::Value>().map_err(error_text)?;
+    if !status.is_success() {
+        let message = json_string(&body, "message");
+        return Err(if message.trim().is_empty() {
+            format!("Minecraft profile returned HTTP {}", status.as_u16())
+        } else {
+            message
+        });
+    }
+    let uuid = json_string(&body, "id").replace('-', "");
+    let name = json_string(&body, "name");
+    if uuid.trim().is_empty() || name.trim().is_empty() {
+        return Err("This Microsoft account does not have a Minecraft Java profile.".to_string());
+    }
+    Ok(MinecraftProfile {
+        uuid,
+        name,
+        xuid: String::new(),
+    })
+}
+
+fn post_json(url: &str, body: &serde_json::Value, bearer_token: &str) -> Result<serde_json::Value, String> {
+    let mut request = http_client()?.post(url).json(body);
+    if !bearer_token.trim().is_empty() {
+        request = request.bearer_auth(bearer_token.trim());
+    }
+    let response = request.send().map_err(error_text)?;
+    let status = response.status();
+    let text = response.text().map_err(error_text)?;
+    let body = if text.trim().is_empty() {
+        json!({})
+    } else {
+        serde_json::from_str::<serde_json::Value>(&text).unwrap_or_else(|_| json!({ "message": text }))
+    };
+    if !status.is_success() {
+        let message = json_string(&body, "message");
+        return Err(if message.trim().is_empty() {
+            format!("Backend returned HTTP {}", status.as_u16())
+        } else {
+            message
+        });
+    }
+    Ok(body)
+}
+
 fn verify_file(path: &Path, expected_size: u64, expected_sha: &str) -> Result<(), String> {
     let metadata = path.metadata().map_err(error_text)?;
     if expected_size > 0 && metadata.len() != expected_size {
@@ -694,6 +1002,26 @@ fn sha256_hex(data: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn http_client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .user_agent(format!("GambleClientLauncher/{VERSION}"))
+        .build()
+        .map_err(error_text)
+}
+
+fn json_string(body: &serde_json::Value, key: &str) -> String {
+    body.get(key)
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+fn json_u64(body: &serde_json::Value, key: &str) -> u64 {
+    body.get(key)
+        .and_then(|value| value.as_u64().or_else(|| value.as_i64().map(|v| v.max(0) as u64)))
+        .unwrap_or(0)
+}
+
 fn push_check(checks: &mut Vec<DiagnosticCheck>, label: &str, ok: bool, detail: String) {
     checks.push(DiagnosticCheck {
         label: label.to_string(),
@@ -711,6 +1039,13 @@ fn timestamp() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_secs().to_string())
         .unwrap_or_else(|_| "0".to_string())
+}
+
+fn unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn display_path(path: &Path) -> String {
