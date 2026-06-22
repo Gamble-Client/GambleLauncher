@@ -120,7 +120,8 @@ nav {
 article,
 .log-card,
 .screen-band,
-.sponsor-panel {
+.sponsor-panel,
+.signin-panel {
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.055);
@@ -210,10 +211,11 @@ article button,
 .launch-button {
   min-width: 142px;
   padding: 18px 24px;
-  background: #34d399;
-  color: #07120e;
+  background: #e13d3d;
+  color: white;
   font-size: 1.04rem;
   font-weight: 900;
+  box-shadow: 0 14px 34px rgba(225, 61, 61, 0.22);
 }
 
 .control-grid {
@@ -232,8 +234,16 @@ select,
 input {
   width: 100%;
   padding: 12px 12px;
-  background: rgba(0, 0, 0, 0.24);
+  color-scheme: dark;
+  appearance: none;
+  background: #111827;
   border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #eef3f7;
+}
+
+option {
+  background: #111827;
+  color: #eef3f7;
 }
 
 .grid {
@@ -307,13 +317,27 @@ article button {
   background: rgba(255, 255, 255, 0.05);
 }
 
-.sponsor-panel {
+.sponsor-panel,
+.signin-panel {
   display: grid;
   grid-template-columns: 1fr 360px;
   align-items: center;
   gap: 18px;
   margin-top: 16px;
   padding: 18px;
+}
+
+.signin-panel code {
+  display: block;
+  margin-top: 12px;
+  max-width: 100%;
+  padding: 11px 12px;
+  overflow: auto;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.32);
+  color: #dbeafe;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 0.8rem;
 }
 
 .sponsor-panel video,

@@ -36,6 +36,7 @@ const state = {
   status: "Starting",
   busy: false,
   signIn: null,
+  signInError: "",
   sponsor: null,
   mods: [],
   packs: [],
@@ -61,7 +62,7 @@ function render() {
           <div class="brand-mark">GC</div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.59")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.60")}</span>
           </div>
         </div>
         <nav>
@@ -91,6 +92,7 @@ function render() {
         ${state.view === "mods" ? fileView("mods", profile, state.mods) : ""}
         ${state.view === "packs" ? fileView("packs", profile, state.packs) : ""}
         ${state.view === "diagnostics" ? diagnosticsView() : ""}
+        ${state.signIn ? signInPanel() : ""}
       </section>
     </section>
   `;
@@ -176,6 +178,24 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
 
     ${state.sponsor ? sponsorOverlay() : ""}
     ${logView()}
+  `;
+}
+
+function signInPanel() {
+  return `
+    <section class="signin-panel">
+      <div>
+        <span class="eyebrow">Browser sign-in</span>
+        <h2>${escapeHtml(state.signInError ? "Open this link" : "Waiting for sign-in")}</h2>
+        <p>${escapeHtml(state.signInError || "Finish sign-in in your browser. This window will update automatically.")}</p>
+        <code>${escapeHtml(state.signIn.loginUrl || "")}</code>
+      </div>
+      <div class="top-actions">
+        <button class="ghost" type="button" data-action="open-signin-link">Open</button>
+        <button class="ghost" type="button" data-action="copy-signin-link">Copy</button>
+        <button class="ghost" type="button" data-action="cancel-signin">Cancel</button>
+      </div>
+    </section>
   `;
 }
 
@@ -321,16 +341,16 @@ function log(message) {
 }
 
 async function api(path, options = {}) {
-  const headers = {
-    Accept: "application/json",
-    ...(options.body ? { "Content-Type": "application/json" } : {}),
-    ...(state.token ? { Authorization: `Bearer ${state.token}` } : {})
-  };
-  const response = await fetch(`${SITE}${path}`, { ...options, headers });
-  const text = await response.text();
-  const body = text ? JSON.parse(text) : {};
-  if (!response.ok) throw new Error(body.message || `HTTP ${response.status}`);
-  return body;
+  const method = String(options.method || "GET").toUpperCase();
+  const body = options.body ? JSON.parse(options.body) : {};
+  return await invoke("launcher_api", {
+    input: {
+      method,
+      path,
+      token: state.token || "",
+      body
+    }
+  });
 }
 
 async function boot() {
@@ -393,12 +413,21 @@ async function startSignIn() {
   try {
     const start = await api("/api/launcher/start", { method: "POST", body: "{}" });
     state.signIn = start;
-    await invoke("open_url", { url: start.loginUrl });
+    state.signInError = "";
+    try {
+      await invoke("open_url", { url: start.loginUrl });
+    } catch (error) {
+      state.signInError = `Could not open the browser automatically: ${error}`;
+    }
     log("Waiting for browser sign-in.");
     render();
     await pollSignIn(start);
   } catch (error) {
     log(`Sign-in failed: ${error.message}`);
+    if (state.signIn?.loginUrl) {
+      state.signInError = error.message || "Sign-in failed. Open or copy the link below.";
+      render();
+    }
   } finally {
     setBusy(false);
   }
@@ -407,24 +436,36 @@ async function startSignIn() {
 async function pollSignIn(start) {
   while (Date.now() / 1000 < Number(start.expiresAt || 0)) {
     await sleep(2000);
-    const poll = await fetch(`${SITE}/api/launcher/poll`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ code: start.code })
-    });
-    const body = await poll.json();
-    if (poll.status === 202) {
+    let body;
+    try {
+      body = await invoke("launcher_api", {
+        input: {
+          method: "POST",
+          path: "/api/launcher/poll",
+          token: "",
+          body: { code: start.code }
+        }
+      });
+    } catch (error) {
+      if (String(error).includes("HTTP 202")) {
+        body = { status: "pending" };
+      } else {
+        throw new Error(String(error));
+      }
+    }
+    if (body.status === "pending") {
       state.status = `Waiting ${formatDuration(Math.max(0, start.expiresAt - Math.floor(Date.now() / 1000)))}`;
       render();
       continue;
     }
-    if (!poll.ok) throw new Error(body.message || `HTTP ${poll.status}`);
     if (body.status === "ready" && body.token) {
       state.token = body.token;
       localStorage.setItem(TOKEN_KEY, state.token);
       await invoke("save_launcher_token", { token: state.token });
       applyAccount(body);
       log(`Signed in as ${accountTitle()}`);
+      state.signIn = null;
+      state.signInError = "";
       await refreshManifest();
       return;
     }
@@ -539,6 +580,20 @@ app.addEventListener("click", async (event) => {
     setBusy(false, "Ready");
   } else if (action === "signin") {
     await startSignIn();
+  } else if (action === "open-signin-link") {
+    if (state.signIn?.loginUrl) await invoke("open_url", { url: state.signIn.loginUrl }).catch((error) => log(`Open failed: ${error}`));
+  } else if (action === "copy-signin-link") {
+    if (state.signIn?.loginUrl) {
+      await navigator.clipboard.writeText(state.signIn.loginUrl).catch(() => {});
+      log("Copied sign-in link.");
+      render();
+    }
+  } else if (action === "cancel-signin") {
+    state.signIn = null;
+    state.signInError = "";
+    state.busy = false;
+    log("Sign-in cancelled.");
+    render();
   } else if (action === "signout") {
     state.token = "";
     state.account = null;

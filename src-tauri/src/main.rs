@@ -12,7 +12,7 @@ use std::{
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
-const VERSION: &str = "0.1.59";
+const VERSION: &str = "0.1.60";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 
@@ -59,6 +59,16 @@ struct InstallResult {
 }
 
 #[derive(Deserialize)]
+struct ApiCommandBody {
+    method: String,
+    path: String,
+    #[serde(default)]
+    token: String,
+    #[serde(default)]
+    body: serde_json::Value,
+}
+
+#[derive(Deserialize)]
 struct ManifestResponse {
     #[serde(default)]
     build: String,
@@ -85,6 +95,50 @@ fn launcher_info() -> Result<LauncherInfo, String> {
         session_file: display_path(&launcher_session_file()),
         os: env::consts::OS.to_string(),
     })
+}
+
+#[tauri::command]
+fn launcher_api(input: ApiCommandBody) -> Result<serde_json::Value, String> {
+    let method = input.method.trim().to_uppercase();
+    let path = input.path.trim();
+    if !path.starts_with("/api/launcher/") {
+        return Err("Launcher API path is not allowed.".to_string());
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(format!("GambleClientLauncher/{VERSION}"))
+        .build()
+        .map_err(error_text)?;
+    let url = format!("{SITE_URL}{path}");
+    let mut request = match method.as_str() {
+        "GET" => client.get(&url),
+        "POST" => client.post(&url),
+        _ => return Err("Launcher API method is not allowed.".to_string()),
+    };
+    if !input.token.trim().is_empty() {
+        request = request.bearer_auth(input.token.trim());
+    }
+    if method == "POST" {
+        request = request.json(&input.body);
+    }
+
+    let response = request.send().map_err(error_text)?;
+    let status = response.status();
+    let text = response.text().map_err(error_text)?;
+    let body = if text.trim().is_empty() {
+        serde_json::Value::Object(Default::default())
+    } else {
+        serde_json::from_str::<serde_json::Value>(&text).unwrap_or_else(|_| json!({ "message": text }))
+    };
+    if !status.is_success() {
+        let message = body
+            .get("message")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| status.canonical_reason().unwrap_or("Launcher API failed"));
+        return Err(format!("{message} (HTTP {})", status.as_u16()));
+    }
+    Ok(body)
 }
 
 #[tauri::command]
@@ -367,6 +421,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             launcher_info,
+            launcher_api,
             read_launcher_token,
             save_launcher_token,
             delete_launcher_token,
