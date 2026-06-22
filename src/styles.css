@@ -27,8 +27,9 @@ body {
   min-width: 980px;
   min-height: 640px;
   background:
-    linear-gradient(120deg, rgba(239, 63, 69, 0.18), transparent 36%),
-    linear-gradient(155deg, rgba(24, 200, 181, 0.12), transparent 48%),
+    linear-gradient(90deg, rgba(8, 11, 16, 0.94) 0%, rgba(8, 11, 16, 0.72) 48%, rgba(8, 11, 16, 0.9) 100%),
+    linear-gradient(180deg, rgba(8, 11, 16, 0.18), rgba(8, 11, 16, 0.94)),
+    url("./assets/launcher-scene.png") center / cover fixed,
     var(--bg);
 }
 
@@ -62,7 +63,8 @@ select:disabled {
   flex-direction: column;
   gap: 18px;
   padding: 22px 16px;
-  background: rgba(9, 13, 19, 0.96);
+  background: rgba(7, 10, 15, 0.92);
+  backdrop-filter: blur(18px);
   border-right: 1px solid var(--line);
 }
 
@@ -249,7 +251,7 @@ p {
 
 .command-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 316px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 316px);
   gap: 16px;
   margin-top: 22px;
 }
@@ -265,9 +267,10 @@ p {
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
   background:
-    linear-gradient(90deg, rgba(9, 12, 17, 0), rgba(9, 12, 17, 0.5)),
-    linear-gradient(135deg, rgba(239, 63, 69, 0.55), rgba(24, 200, 181, 0.24)),
-    #151d27;
+    linear-gradient(90deg, rgba(14, 18, 25, 0.86), rgba(14, 18, 25, 0.66)),
+    linear-gradient(135deg, rgba(239, 63, 69, 0.32), rgba(24, 200, 181, 0.14)),
+    rgba(18, 25, 35, 0.82);
+  backdrop-filter: blur(16px);
 }
 
 .launch-panel::after {
@@ -276,8 +279,8 @@ p {
   inset: 0;
   pointer-events: none;
   background:
-    repeating-linear-gradient(115deg, transparent 0 22px, rgba(255, 255, 255, 0.04) 22px 23px),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 35%);
+    radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.08), transparent 28%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 38%);
 }
 
 .launch-copy,
@@ -365,15 +368,45 @@ p {
   align-content: start;
   gap: 12px;
   padding: 18px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent),
-    #101720;
+  background: rgba(16, 23, 32, 0.86);
+  backdrop-filter: blur(16px);
 }
 
-.panel-head strong {
+.identity-card {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-height: 76px;
+}
+
+.identity-card strong {
   display: block;
-  margin-top: 6px;
-  font-size: 1.32rem;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+  font-size: 1.14rem;
+}
+
+.identity-card small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(239, 63, 69, 0.85), rgba(24, 200, 181, 0.38)),
+    #151d27;
+  background-position: center;
+  background-size: cover;
+  color: white;
+  font-weight: 950;
 }
 
 .account-row {
@@ -416,7 +449,16 @@ p {
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(8, 12, 18, 0.72);
+  background: rgba(8, 12, 18, 0.78);
+  backdrop-filter: blur(12px);
+}
+
+.wide-field {
+  grid-column: span 3;
+}
+
+.privacy-field {
+  grid-column: span 1;
 }
 
 label {
@@ -436,6 +478,48 @@ input {
   color: var(--text);
 }
 
+.toggle-button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 46px;
+  width: 100%;
+  padding: 10px 12px;
+  background: #101720;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--text);
+}
+
+.toggle-button b {
+  display: block;
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  position: relative;
+}
+
+.toggle-button b::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: white;
+  transition: transform 0.16s ease;
+}
+
+.toggle-button.on b {
+  background: rgba(24, 200, 181, 0.58);
+}
+
+.toggle-button.on b::after {
+  transform: translateX(14px);
+}
+
 select:focus,
 input:focus,
 button:focus-visible {
@@ -450,7 +534,7 @@ option {
 
 .tile-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   margin-top: 16px;
 }
@@ -589,9 +673,13 @@ pre {
     align-items: stretch;
   }
 
-  .account-panel .panel-head,
+  .account-panel .identity-card,
   .account-panel .subtle-button {
     grid-column: 1 / -1;
+  }
+
+  .tile-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -619,5 +707,10 @@ pre {
   .tune-strip,
   .tile-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .wide-field,
+  .privacy-field {
+    grid-column: span 2;
   }
 }

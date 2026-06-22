@@ -12,7 +12,7 @@ use std::{
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
-const VERSION: &str = "0.1.63";
+const VERSION: &str = "0.1.64";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MICROSOFT_DEVICE_CODE_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
@@ -573,11 +573,23 @@ fn install_client_manifest(profile: String, build: String, token: String) -> Res
 }
 
 #[tauri::command]
-fn launch_game_placeholder(has_microsoft: bool) -> Result<String, String> {
+fn launch_game_placeholder(has_microsoft: bool, java_args: String, anti_screenshare: bool) -> Result<String, String> {
     if !has_microsoft {
         return Ok("Launching without a Microsoft account is not enabled in this Tauri test build yet. Add/select Microsoft in the Java launcher for real game launches while this native launch path is being ported.".to_string());
     }
-    Ok("Native Minecraft process launching is still being ported. Install/update, account checks, mods, resource packs, ads, and diagnostics are available in this RPM test.".to_string())
+    let mut details = Vec::new();
+    if anti_screenshare {
+        details.push("anti-screenshare requested".to_string());
+    }
+    if !java_args.trim().is_empty() {
+        details.push(format!("custom JVM args saved: {}", java_args.trim()));
+    }
+    let suffix = if details.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", details.join(", "))
+    };
+    Ok(format!("Native Minecraft process launching is still being ported. Install/update, account checks, mods, resource packs, ads, and diagnostics are available in this RPM test.{suffix}"))
 }
 
 #[tauri::command]

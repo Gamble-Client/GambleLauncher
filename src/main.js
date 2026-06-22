@@ -34,7 +34,8 @@ const state = {
   selectedBuild: "ad_tier",
   memory: "4",
   username: defaultUsername(),
-  javaArgs: "",
+  javaArgs: defaultJavaArgs(),
+  antiScreenshare: defaultAntiScreenshare(),
   status: "Starting",
   busy: false,
   signIn: null,
@@ -55,6 +56,14 @@ function defaultUsername() {
   return value || "Player";
 }
 
+function defaultJavaArgs() {
+  return (globalThis.localStorage?.getItem("gamble.launcher.javaArgs") || "").trim();
+}
+
+function defaultAntiScreenshare() {
+  return globalThis.localStorage?.getItem("gamble.launcher.antiScreenshare") === "true";
+}
+
 async function invoke(command, args = {}) {
   if (!PREVIEW) return await tauriInvoke(command, args);
   return mockInvoke(command, args);
@@ -69,7 +78,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(40);
   if (command === "launcher_info") {
     return {
-      version: "0.1.63",
+      version: "0.1.64",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client",
       session_file: "/home/theac/.local/share/gamble-client/launcher-session.json",
@@ -77,13 +86,13 @@ async function mockInvoke(command, args = {}) {
     };
   }
   if (command === "read_launcher_token") return "preview-token";
-  if (command === "read_microsoft_account") return { name: "BaseToucher", uuid: "preview", xuid: "preview" };
+  if (command === "read_microsoft_account") return { name: "BaseToucher", uuid: "8667ba71b85a4004af54457a9734eed7", xuid: "preview" };
   if (command === "save_launcher_token" || command === "ensure_profile" || command === "open_url") return "";
   if (command === "delete_launcher_token" || command === "delete_microsoft_account") return null;
   if (command === "launcher_api") {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
-      return { version: "0.1.63", minVersion: "0.1.63" };
+      return { version: "0.1.64", minVersion: "0.1.64" };
     }
     if (path === "/api/launcher/session" || path === "/api/launcher/account") {
       return {
@@ -138,7 +147,7 @@ function render() {
           <div class="brand-mark">GC</div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.63")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.64")}</span>
           </div>
         </div>
         <nav>
@@ -235,9 +244,13 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
       </section>
 
       <aside class="account-panel">
-        <div class="panel-head">
-          <span class="eyebrow">Accounts</span>
-          <strong>${escapeHtml(signedIn ? "Ready" : "Needs sign-in")}</strong>
+        <div class="identity-card">
+          <div class="avatar" style="${escapeAttr(avatarStyle())}">${escapeHtml(avatarInitials())}</div>
+          <div>
+            <span class="eyebrow">Active identity</span>
+            <strong>${escapeHtml(state.microsoft?.name || accountTitle())}</strong>
+            <small>${escapeHtml(state.microsoft ? "Microsoft Java profile linked" : "Connect Microsoft before launching")}</small>
+          </div>
         </div>
         ${accountRow("Launcher", accountTitle(), accountMeta(), signedIn ? "Signed in" : "Required")}
         ${accountRow("Minecraft", microsoftTitle(), state.microsoft ? "Java profile linked" : "Required for launch", state.microsoft ? "Linked" : "Required")}
@@ -268,6 +281,17 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
         <span>Username</span>
         <input data-field="username" value="${escapeAttr(state.username)}" placeholder="Offline name">
       </label>
+      <label class="wide-field">
+        <span>JVM Args</span>
+        <input data-field="javaArgs" value="${escapeAttr(state.javaArgs)}" placeholder="-XX:+UseZGC">
+      </label>
+      <label class="privacy-field">
+        <span>Privacy</span>
+        <button class="toggle-button ${state.antiScreenshare ? "on" : ""}" type="button" data-action="toggle-anti">
+          <b></b>
+          ${state.antiScreenshare ? "Anti-screenshare on" : "Anti-screenshare off"}
+        </button>
+      </label>
     </section>
 
     <section class="tile-grid">
@@ -291,6 +315,11 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
         <strong>${enabledPacks} enabled</strong>
         <button type="button" data-view="packs">Manage</button>
       </article>
+      <article class="action-tile">
+        <span>Privacy</span>
+        <strong>${state.antiScreenshare ? "Anti-screenshare on" : "Standard capture"}</strong>
+        <button type="button" data-action="toggle-anti">${state.antiScreenshare ? "Disable" : "Enable"}</button>
+      </article>
     </section>
 
     ${state.sponsor ? sponsorOverlay() : ""}
@@ -309,6 +338,17 @@ function accountRow(label, title, meta, badge) {
       <b>${escapeHtml(badge)}</b>
     </div>
   `;
+}
+
+function avatarStyle() {
+  const uuid = String(state.microsoft?.uuid || "").replaceAll("-", "").trim();
+  if (!/^[a-f0-9]{32}$/i.test(uuid)) return "";
+  return `background-image:linear-gradient(135deg, rgba(239, 63, 69, 0.2), rgba(24, 200, 181, 0.15)), url(https://crafatar.com/avatars/${uuid}?overlay&size=128);`;
+}
+
+function avatarInitials() {
+  const source = state.microsoft?.name || accountTitle() || "GC";
+  return source.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "GC";
 }
 
 function signInPanel() {
@@ -841,11 +881,20 @@ app.addEventListener("click", async (event) => {
       return;
     }
     const hasMicrosoft = true;
-    const message = await invoke("launch_game_placeholder", { hasMicrosoft });
+    const message = await invoke("launch_game_placeholder", {
+      hasMicrosoft,
+      javaArgs: state.javaArgs,
+      antiScreenshare: state.antiScreenshare
+    });
     log(message);
     render();
   } else if (action === "microsoft" || action === "switch-microsoft") {
     await startMicrosoftSignIn();
+  } else if (action === "toggle-anti") {
+    state.antiScreenshare = !state.antiScreenshare;
+    localStorage.setItem("gamble.launcher.antiScreenshare", String(state.antiScreenshare));
+    log(`Anti-screenshare ${state.antiScreenshare ? "enabled" : "disabled"}.`);
+    render();
   } else if (action === "open-microsoft-link") {
     const url = microsoftVerificationUrl(state.microsoftSignIn);
     if (url) await invoke("open_url", { url }).catch((error) => log(`Open failed: ${error}`));
@@ -916,6 +965,7 @@ app.addEventListener("change", async (event) => {
   if (!field) return;
   state[field] = event.target.value;
   if (field === "username") localStorage.setItem("gamble.launcher.username", state.username);
+  if (field === "javaArgs") localStorage.setItem("gamble.launcher.javaArgs", state.javaArgs);
   if (field === "selectedProfile") await refreshFiles();
   if (field === "selectedBuild") state.manifest = null;
   render();
@@ -926,6 +976,7 @@ app.addEventListener("input", (event) => {
   if (!field) return;
   state[field] = event.target.value;
   if (field === "username") localStorage.setItem("gamble.launcher.username", state.username);
+  if (field === "javaArgs") localStorage.setItem("gamble.launcher.javaArgs", state.javaArgs);
 });
 
 function escapeHtml(value) {
