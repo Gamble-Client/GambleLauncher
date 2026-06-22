@@ -107,3 +107,61 @@ tasks.register<Exec>("packageWindowsExe") {
         )
     }
 }
+
+tasks.register<Exec>("packageLinuxRpm") {
+    group = "distribution"
+    description = "Builds a Linux .rpm package for the current OS using jpackage."
+    dependsOn(tasks.jar)
+    onlyIf {
+        System.getProperty("os.name").lowercase().contains("linux") && file("/usr/bin/rpmbuild").exists()
+    }
+
+    doFirst {
+        val output = nativeOutputDir.get().asFile
+        output.mkdirs()
+        commandLine(
+            jpackageExecutable(),
+            "--type", "rpm",
+            "--name", "GambleClientLauncher",
+            "--app-version", project.version.toString(),
+            "--input", launcherJar.get().asFile.parentFile.absolutePath,
+            "--main-jar", launcherJar.get().asFile.name,
+            "--main-class", application.mainClass.get(),
+            "--dest", output.absolutePath,
+            "--linux-app-category", "Game",
+            "--linux-shortcut"
+        )
+    }
+}
+
+tasks.register<Exec>("packageLinuxDeb") {
+    group = "distribution"
+    description = "Builds a Linux .deb package for the current OS using jpackage."
+    dependsOn(tasks.jar)
+    onlyIf {
+        System.getProperty("os.name").lowercase().contains("linux") && file("/usr/bin/dpkg-deb").exists()
+    }
+
+    doFirst {
+        val output = nativeOutputDir.get().asFile
+        output.mkdirs()
+        commandLine(
+            jpackageExecutable(),
+            "--type", "deb",
+            "--name", "GambleClientLauncher",
+            "--app-version", project.version.toString(),
+            "--input", launcherJar.get().asFile.parentFile.absolutePath,
+            "--main-jar", launcherJar.get().asFile.name,
+            "--main-class", application.mainClass.get(),
+            "--dest", output.absolutePath,
+            "--linux-app-category", "Game",
+            "--linux-shortcut"
+        )
+    }
+}
+
+tasks.register("packageNativeInstallers") {
+    group = "distribution"
+    description = "Builds native launcher packages supported by the current OS."
+    dependsOn("packageNativeImage", "packageLinuxRpm", "packageLinuxDeb", "packageWindowsExe")
+}
