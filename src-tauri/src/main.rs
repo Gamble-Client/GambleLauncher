@@ -12,7 +12,7 @@ use std::{
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
-const VERSION: &str = "0.1.61";
+const VERSION: &str = "0.1.62";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MICROSOFT_DEVICE_CODE_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
@@ -278,6 +278,10 @@ fn microsoft_device_start(force_account_picker: bool) -> Result<MicrosoftDeviceS
 
 #[tauri::command]
 fn microsoft_device_poll(device_code: String) -> Result<serde_json::Value, String> {
+    let device_code = device_code.trim().to_string();
+    if device_code.is_empty() {
+        return Err("Microsoft device code was missing before polling. Start sign-in again.".to_string());
+    }
     let params = [
         ("grant_type", "urn:ietf:params:oauth:grant-type:device_code".to_string()),
         ("client_id", MICROSOFT_CLIENT_ID.to_string()),
