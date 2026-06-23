@@ -1,22 +1,21 @@
 :root {
   color: #f5f7fb;
-  background: #07090d;
+  background: #080b10;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 16px;
   letter-spacing: 0;
-  --bg: #07090d;
-  --rail: #0a0f15;
-  --panel: #121821;
-  --panel-2: #18212c;
+  --bg: #080b10;
+  --rail: #0c1118;
+  --panel: #121923;
+  --panel-2: #17202b;
   --line: rgba(255, 255, 255, 0.1);
   --line-strong: rgba(255, 255, 255, 0.16);
-  --muted: #9aa7b8;
+  --muted: #92a0b4;
   --text: #f5f7fb;
   --red: #ef3f45;
   --red-dark: #992228;
   --teal: #18c8b5;
   --amber: #f5b84b;
-  --green: #8bd66f;
   --surface: rgba(10, 14, 20, 0.76);
   --surface-strong: rgba(16, 22, 31, 0.94);
 }
@@ -31,9 +30,7 @@ body {
   min-height: 640px;
   overflow: hidden;
   background:
-    linear-gradient(90deg, rgba(6, 8, 12, 0.98) 0%, rgba(6, 8, 12, 0.82) 45%, rgba(6, 8, 12, 0.96) 100%),
-    linear-gradient(180deg, rgba(8, 11, 16, 0.22), rgba(8, 11, 16, 0.96)),
-    url("./assets/launcher-scene.png") center / cover fixed,
+    linear-gradient(180deg, rgba(11, 16, 23, 0.98), rgba(6, 8, 12, 1)),
     var(--bg);
 }
 
@@ -151,7 +148,7 @@ nav {
 
 .nav-item:hover,
 .nav-item.active {
-  background: linear-gradient(90deg, rgba(239, 63, 69, 0.18), rgba(24, 200, 181, 0.08));
+  background: #19222e;
   color: white;
 }
 
@@ -170,7 +167,6 @@ nav {
 .action-tile,
 .log-card,
 .screen-band,
-.status-chip,
 .sponsor-panel,
 .signin-panel {
   border: 1px solid var(--line);
@@ -273,96 +269,27 @@ p {
   font-weight: 900;
 }
 
-.status-strip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 12px;
-}
-
-.status-chip {
-  position: relative;
-  min-height: 72px;
-  padding: 13px 14px 12px;
-  overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent),
-    rgba(12, 17, 24, 0.78);
-}
-
-.status-chip::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: rgba(255, 255, 255, 0.22);
-}
-
-.status-chip.good::before {
-  background: var(--teal);
-}
-
-.status-chip.warn::before {
-  background: var(--amber);
-}
-
-.status-chip.live::before {
-  background: var(--red);
-}
-
-.status-chip span,
-.status-chip strong,
-.status-chip small {
-  display: block;
-}
-
-.status-chip span {
-  color: var(--muted);
-  font-size: 0.7rem;
-  font-weight: 850;
-  text-transform: uppercase;
-}
-
-.status-chip strong {
-  margin-top: 7px;
-  overflow-wrap: anywhere;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.status-chip small {
-  margin-top: 5px;
-  color: #a8b4c5;
-  font-size: 0.78rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .play-stage {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(250px, 310px);
   gap: 12px;
-  margin-top: 12px;
+  margin-top: 18px;
 }
 
 .launch-panel {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(310px, 0.78fr) minmax(250px, 0.55fr) auto;
+  grid-template-columns: minmax(0, 1fr) 150px;
   align-items: end;
-  min-height: 292px;
+  min-height: 250px;
   gap: 18px;
   padding: 24px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--line);
   border-radius: 8px;
   background:
-    linear-gradient(90deg, rgba(8, 11, 16, 0.96) 0%, rgba(8, 11, 16, 0.74) 54%, rgba(8, 11, 16, 0.24) 100%),
-    url("./assets/launcher-scene.png") center / cover,
-    rgba(18, 25, 35, 0.82);
-  backdrop-filter: blur(16px);
+    linear-gradient(135deg, rgba(239, 63, 69, 0.12), transparent 42%),
+    linear-gradient(180deg, rgba(18, 25, 35, 0.96), rgba(12, 17, 24, 0.96));
 }
 
 .launch-panel::after {
@@ -371,12 +298,10 @@ p {
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 22%),
-    linear-gradient(90deg, rgba(239, 63, 69, 0.18), transparent 44%, rgba(24, 200, 181, 0.16));
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent 28%);
 }
 
 .launch-copy,
-.scene-card,
 .launch-button {
   position: relative;
   z-index: 1;
@@ -400,8 +325,7 @@ p {
   padding: 10px;
   border: 1px solid rgba(255, 255, 255, 0.13);
   border-radius: 6px;
-  background: rgba(7, 11, 16, 0.56);
-  backdrop-filter: blur(8px);
+  background: rgba(7, 11, 16, 0.5);
 }
 
 .launch-facts span {
@@ -419,53 +343,17 @@ p {
   font-size: 0.92rem;
 }
 
-.scene-card {
-  align-self: stretch;
-  min-height: 210px;
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: 8px;
-  overflow: hidden;
-  background:
-    linear-gradient(180deg, transparent 0%, rgba(6, 8, 12, 0.4) 54%, rgba(6, 8, 12, 0.82) 100%),
-    url("./assets/launcher-scene.png") center / cover;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
-}
-
-.scene-glass {
-  display: grid;
-  align-content: end;
-  min-height: 100%;
-  padding: 14px;
-}
-
-.scene-glass span,
-.scene-glass strong {
-  display: block;
-}
-
-.scene-glass span {
-  color: #c8d2df;
-  font-size: 0.72rem;
-  font-weight: 850;
-  text-transform: uppercase;
-}
-
-.scene-glass strong {
-  margin-top: 6px;
-  color: white;
-}
-
 .launch-button {
-  min-width: 136px;
-  min-height: 210px;
+  align-self: end;
+  min-width: 150px;
+  min-height: 64px;
   padding: 18px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.17), transparent 38%),
-    linear-gradient(180deg, #f04449, #a52127);
+    linear-gradient(180deg, #f04449, #b92b31);
   color: white;
   font-size: 1.05rem;
   font-weight: 950;
-  box-shadow: 0 18px 42px rgba(239, 63, 69, 0.32);
+  box-shadow: 0 14px 30px rgba(239, 63, 69, 0.22);
 }
 
 .launch-button:hover {
@@ -809,10 +697,6 @@ pre {
     padding: 22px;
   }
 
-  .status-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .play-stage {
     grid-template-columns: 1fr;
   }
@@ -822,13 +706,9 @@ pre {
     min-height: 0;
   }
 
-  .scene-card {
-    display: none;
-  }
-
   .launch-button {
     align-self: stretch;
-    min-height: 168px;
+    min-height: 64px;
   }
 
   .launch-facts,
