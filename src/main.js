@@ -179,6 +179,7 @@ function render() {
 
       <section class="content">
         ${topbar(signedIn)}
+        ${statusStrip(signedIn)}
         ${state.view === "play" ? playView(profile, selectedBuild, canInstall, signedIn) : ""}
         ${state.view === "mods" ? fileView("mods", profile, state.mods) : ""}
         ${state.view === "packs" ? fileView("packs", profile, state.packs) : ""}
@@ -209,6 +210,27 @@ function topbar(signedIn) {
   `;
 }
 
+function statusStrip(signedIn) {
+  return `
+    <section class="status-strip">
+      ${statusChip("Access", signedIn ? accountTitle() : "Sign in required", accountMeta(), signedIn ? "good" : "warn")}
+      ${statusChip("Microsoft", state.microsoft?.name || "Not linked", state.microsoft ? "Ready to launch" : "Required for Minecraft", state.microsoft ? "good" : "warn")}
+      ${statusChip("Minecraft", state.minecraftRunning ? "Running" : "Stopped", state.minecraftRunning ? "Kill button available" : "No active process", state.minecraftRunning ? "live" : "")}
+      ${statusChip("Sponsor", sponsorTitle(), state.ads?.required ? "Ad tier timer" : "No break required", state.ads?.required ? "warn" : "good")}
+    </section>
+  `;
+}
+
+function statusChip(label, title, detail, tone = "") {
+  return `
+    <article class="status-chip ${tone}">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(title)}</strong>
+      <small>${escapeHtml(detail)}</small>
+    </article>
+  `;
+}
+
 function playView(profile, selectedBuild, canInstall, signedIn) {
   const launchLabel = state.minecraftRunning ? "Stop Minecraft" : state.microsoft ? "Launch" : "Microsoft Sign In";
   const clientStatus = state.manifest ? displayManifest(state.manifest) : "Not checked";
@@ -218,7 +240,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
     <section class="play-stage">
       <section class="launch-panel">
         <div class="launch-copy">
-          <span class="eyebrow">Ready room</span>
+          <span class="eyebrow">Launch bay</span>
           <h2>${escapeHtml(selectedBuild.label)}</h2>
           <p>${escapeHtml(playCopy(profile, signedIn))}</p>
           <div class="launch-facts">
@@ -234,6 +256,12 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
               <span>Payload</span>
               <strong>${escapeHtml(clientStatus)}</strong>
             </div>
+          </div>
+        </div>
+        <div class="scene-card" aria-hidden="true">
+          <div class="scene-glass">
+            <span>Gamble Client</span>
+            <strong>${escapeHtml(state.manifest ? "Payload synced" : "Payload pending")}</strong>
           </div>
         </div>
         <button class="launch-button" type="button" data-action="launch" ${state.busy ? "disabled" : ""}>${escapeHtml(launchLabel)}</button>
@@ -311,6 +339,11 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           <span>Resource packs</span>
           <strong>${enabledPacks} enabled</strong>
           <button type="button" data-view="packs">Manage</button>
+        </article>
+        <article class="action-tile process-tile">
+          <span>Process</span>
+          <strong>${state.minecraftRunning ? "Minecraft running" : "No active game"}</strong>
+          <button type="button" data-action="launch" ${!state.minecraftRunning || state.busy ? "disabled" : ""}>Kill</button>
         </article>
       </section>
     </section>
