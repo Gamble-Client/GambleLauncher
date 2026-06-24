@@ -140,6 +140,19 @@ nav {
   transition: background 0.14s ease, color 0.14s ease, transform 0.14s ease;
 }
 
+.nav-action {
+  margin-top: 6px;
+  border: 1px solid var(--line);
+  background: #101010;
+  text-align: center;
+  font-weight: 850;
+}
+
+.nav-action:hover {
+  border-color: var(--line-strong);
+  background: #1a1a1a;
+}
+
 .nav-item:hover,
 .nav-item.active {
   background: #19222e;

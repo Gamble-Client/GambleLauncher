@@ -13,7 +13,7 @@ use std::{
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.67";
+const VERSION: &str = "0.1.68";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -322,11 +322,21 @@ fn microsoft_device_start(_force_account_picker: bool) -> Result<MicrosoftDevice
         return Err("Microsoft did not return a usable device sign-in code.".to_string());
     }
 
+    let verification_uri = json_string(&body, "verification_uri");
+    let mut verification_uri_complete = json_string(&body, "verification_uri_complete");
+    if verification_uri_complete.trim().is_empty()
+        && !verification_uri.trim().is_empty()
+        && !user_code.trim().is_empty()
+    {
+        let separator = if verification_uri.contains('?') { "&" } else { "?" };
+        verification_uri_complete = format!("{verification_uri}{separator}otc={user_code}");
+    }
+
     Ok(MicrosoftDeviceStart {
         device_code,
         user_code,
-        verification_uri: json_string(&body, "verification_uri"),
-        verification_uri_complete: json_string(&body, "verification_uri_complete"),
+        verification_uri,
+        verification_uri_complete,
         message: json_string(&body, "message"),
         interval_seconds: json_u64(&body, "interval").max(2),
         expires_in_seconds: json_u64(&body, "expires_in").max(60),

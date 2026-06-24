@@ -159,9 +159,8 @@ function render() {
           ${navButton("mods", "Mods")}
           ${navButton("packs", "Resource Packs")}
           ${navButton("diagnostics", "Diagnostics")}
-          <button class="nav-item" type="button" data-open="${DASH}/dashboard.html">Dashboard</button>
-          <button class="nav-item" type="button" data-open="${SITE}/download">Downloads</button>
-          <button class="nav-item" type="button" data-open="https://discord.gg/YPescfEt">Discord</button>
+          <button class="nav-item nav-action" type="button" data-open="${DASH}/dashboard.html">Dashboard</button>
+          <button class="nav-item nav-action" type="button" data-open="https://discord.gg/YPescfEt">Discord</button>
         </nav>
         <div class="rail-status">
           <div class="rail-card">
@@ -321,7 +320,6 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
     </section>
 
     ${state.sponsor ? sponsorOverlay() : ""}
-    ${logView()}
   `;
 }
 
@@ -368,19 +366,15 @@ function signInPanel() {
 }
 
 function microsoftPanel() {
-  const userCode = microsoftUserCode(state.microsoftSignIn);
-  const url = microsoftVerificationUrl(state.microsoftSignIn);
   return `
     <section class="signin-panel">
       <div>
         <span class="eyebrow">Microsoft sign-in</span>
-        <h2>${escapeHtml(userCode || "Code")}</h2>
-        <p>${escapeHtml(state.microsoftError || state.microsoftSignIn.message || "Open Microsoft sign-in and enter the code.")}</p>
-        <code>${escapeHtml(url)}</code>
+        <h2>Open Microsoft sign-in</h2>
+        <p>${escapeHtml(state.microsoftError || "Finish sign-in in your browser. This window will update automatically.")}</p>
       </div>
       <div class="top-actions">
-        <button class="ghost" type="button" data-action="open-microsoft-link">Open</button>
-        <button class="ghost" type="button" data-action="copy-microsoft-code">Copy Code</button>
+        <button class="ghost" type="button" data-action="open-microsoft-link">Open Link</button>
         <button class="ghost" type="button" data-action="cancel-microsoft">Cancel</button>
       </div>
     </section>
@@ -406,7 +400,6 @@ function fileView(kind, profile, files) {
     <section class="file-list">
       ${files.length ? files.map((file) => fileRow(kind, file)).join("") : `<p class="empty">${isPacks ? "No resource packs yet." : "No mod jars yet."}</p>`}
     </section>
-    ${logView()}
   `;
 }
 
@@ -503,8 +496,7 @@ function accountMeta() {
 
 function microsoftTitle() {
   if (state.microsoft?.name) return state.microsoft.name;
-  const userCode = microsoftUserCode(state.microsoftSignIn);
-  if (userCode) return `Code ${userCode}`;
+  if (state.microsoftSignIn) return "Sign-in pending";
   return "Microsoft required";
 }
 
@@ -743,7 +735,7 @@ async function startMicrosoftSignIn() {
     if (url) await invoke("open_url", { url }).catch((error) => {
       state.microsoftError = `Could not open Microsoft automatically: ${error}`;
     });
-    log(`Microsoft sign-in code: ${microsoftUserCode(start)}`);
+    log("Opened Microsoft sign-in link.");
     render();
     await pollMicrosoftSignIn(start, deviceCode);
   } catch (error) {
@@ -913,13 +905,6 @@ app.addEventListener("click", async (event) => {
   } else if (action === "open-microsoft-link") {
     const url = microsoftVerificationUrl(state.microsoftSignIn);
     if (url) await invoke("open_url", { url }).catch((error) => log(`Open failed: ${error}`));
-  } else if (action === "copy-microsoft-code") {
-    const userCode = microsoftUserCode(state.microsoftSignIn);
-    if (userCode) {
-      await navigator.clipboard.writeText(userCode).catch(() => {});
-      log("Copied Microsoft code.");
-      render();
-    }
   } else if (action === "cancel-microsoft") {
     state.microsoftPollCancelled = true;
     state.microsoftSignIn = null;
