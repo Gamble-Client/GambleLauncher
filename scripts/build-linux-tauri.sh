@@ -19,7 +19,7 @@ if npm run tauri -- build --bundles appimage; then
 fi
 
 APPDIR="$ROOT/src-tauri/target/release/bundle/appimage/Gamble Client Launcher.AppDir"
-APPIMAGE="$ROOT/src-tauri/target/release/bundle/appimage/Gamble Client Launcher_0.1.66_amd64.AppImage"
+APPIMAGE="$ROOT/src-tauri/target/release/bundle/appimage/Gamble Client Launcher_0.1.67_amd64.AppImage"
 ICON="$APPDIR/Gamble Client Launcher.png"
 PLUGIN="$HOME/.cache/tauri/linuxdeploy-plugin-appimage.AppImage"
 
@@ -30,6 +30,6 @@ fi
 
 cp "$ICON" "$APPDIR/gamble-client-launcher.png"
 ARCH=x86_64 \
-  LINUXDEPLOY_OUTPUT_VERSION=0.1.66 \
+  LINUXDEPLOY_OUTPUT_VERSION=0.1.67 \
   LDAI_OUTPUT="$APPIMAGE" \
   "$PLUGIN" --appimage-extract-and-run --appdir "$APPDIR"
