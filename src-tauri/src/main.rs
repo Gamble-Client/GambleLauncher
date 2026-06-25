@@ -8,12 +8,12 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.68";
+const VERSION: &str = "0.1.69";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -29,6 +29,16 @@ const XBOX_AUTH_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
 const XSTS_AUTH_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
 const MINECRAFT_LOGIN_URL: &str = "https://api.minecraftservices.com/launcher/login";
 const MINECRAFT_PROFILE_URL: &str = "https://api.minecraftservices.com/minecraft/profile";
+const ANTISCREENSHARE_CORE_ON: &[&str] = &["antiscreenshare"];
+const ANTISCREENSHARE_SCOREBOARD_ON: &[&str] = &["hide-scoreboard"];
+const ANTISCREENSHARE_SCOREBOARD_OFF: &[&str] = &["fake-scoreboard"];
+const ANTISCREENSHARE_HUD_OFF: &[&str] = &["hud", "jamble-hud", "better-tab", "discord-presence", "big-spender-net-hud"];
+const ANTISCREENSHARE_VISUAL_OFF: &[&str] = &[
+    "player-esp", "storage-esp", "block-esp", "item-esp", "trident-esp", "invis-esp",
+    "chams", "nametags", "logout-spots", "trail", "tracers", "light-finder",
+    "hole-tunnel-stair-esp", "tunnel-esp", "base-digger", "base-finder",
+    "block-debug-finder", "block-update-finder",
+];
 static MINECRAFT_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 
 #[derive(Serialize)]
@@ -58,6 +68,18 @@ struct LocalFile {
 #[derive(Serialize)]
 struct Diagnostics {
     checks: Vec<DiagnosticCheck>,
+}
+
+#[derive(Serialize)]
+struct AntiScreenshareStatus {
+    enabled: bool,
+    available: bool,
+    #[serde(rename = "bridgeOnline")]
+    bridge_online: bool,
+    source: String,
+    message: String,
+    #[serde(rename = "modulesPath")]
+    modules_path: String,
 }
 
 #[derive(Serialize)]
@@ -550,6 +572,63 @@ fn diagnostics(profile: String) -> Result<Diagnostics, String> {
 }
 
 #[tauri::command]
+fn anti_screenshare_status(profile: String) -> Result<AntiScreenshareStatus, String> {
+    anti_screenshare_status_for(profile_id(&profile), None)
+}
+
+#[tauri::command]
+fn set_anti_screenshare(profile: String, enabled: bool) -> Result<AntiScreenshareStatus, String> {
+    let profile = profile_id(&profile);
+    ensure_profile_folders(profile)?;
+    write_launcher_preferences(profile, enabled)?;
+
+    let message = match toggle_anti_screenshare_bridge_module("antiscreenshare", enabled) {
+        Ok(_) => format!("AntiScreenshare {} in the live client.", if enabled { "enabled" } else { "disabled" }),
+        Err(_) => update_anti_screenshare_config(
+            profile,
+            &[("antiscreenshare", enabled)],
+            &format!("AntiScreenshare {}", if enabled { "enabled" } else { "disabled" }),
+        )?,
+    };
+
+    anti_screenshare_status_for(profile, Some(message))
+}
+
+#[tauri::command]
+fn apply_anti_screenshare_clean_view(profile: String) -> Result<AntiScreenshareStatus, String> {
+    let profile = profile_id(&profile);
+    ensure_profile_folders(profile)?;
+    write_launcher_preferences(profile, true)?;
+
+    let mut changes = Vec::new();
+    add_anti_screenshare_changes(&mut changes, ANTISCREENSHARE_CORE_ON, true);
+    add_anti_screenshare_changes(&mut changes, ANTISCREENSHARE_SCOREBOARD_ON, true);
+    add_anti_screenshare_changes(&mut changes, ANTISCREENSHARE_SCOREBOARD_OFF, false);
+    add_anti_screenshare_changes(&mut changes, ANTISCREENSHARE_HUD_OFF, false);
+    add_anti_screenshare_changes(&mut changes, ANTISCREENSHARE_VISUAL_OFF, false);
+
+    let live_count = apply_anti_screenshare_bridge_changes(&changes);
+    let message = if live_count > 0 {
+        format!("Clean View applied in the live client for {live_count} modules.")
+    } else {
+        update_anti_screenshare_config(profile, &changes, "Clean View applied")?
+    };
+
+    anti_screenshare_status_for(profile, Some(message))
+}
+
+#[tauri::command]
+fn open_anti_screenshare_obs() -> Result<String, String> {
+    match read_anti_screenshare_bridge("/health", "GET") {
+        Ok(_) => {
+            open_external("http://127.0.0.1:18765/public")?;
+            Ok("Opened OBS Browser Source view. Use http://127.0.0.1:18765/public in OBS.".to_string())
+        }
+        Err(_) => Ok("Client bridge is not running. Launch Gamble Client, then add http://127.0.0.1:18765/public as an OBS Browser Source.".to_string()),
+    }
+}
+
+#[tauri::command]
 fn install_client_manifest(profile: String, build: String, token: String) -> Result<InstallResult, String> {
     let profile = profile_id(&profile);
     if token.trim().is_empty() {
@@ -791,6 +870,215 @@ fn write_launcher_preferences(profile: &str, anti_screenshare: bool) -> Result<(
         "updatedAt": timestamp()
     });
     fs::write(folder.join("launcher-settings.json"), serde_json::to_string_pretty(&body).map_err(error_text)? + "\n").map_err(error_text)
+}
+
+fn read_launcher_anti_preference(profile: &str) -> Option<bool> {
+    let path = profile_data_folder(profile).join("launcher-settings.json");
+    let text = fs::read_to_string(path).ok()?;
+    let body = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+    body.get("antiScreenshare").and_then(|value| value.as_bool())
+}
+
+fn anti_screenshare_status_for(profile: &str, override_message: Option<String>) -> Result<AntiScreenshareStatus, String> {
+    let modules_path = anti_screenshare_modules_file(profile);
+    if let Ok(modules) = read_anti_screenshare_bridge_modules() {
+        let enabled = bridge_module_active(&modules, "antiscreenshare").unwrap_or(true);
+        return Ok(AntiScreenshareStatus {
+            enabled,
+            available: true,
+            bridge_online: true,
+            source: "Live client".to_string(),
+            message: override_message.unwrap_or_else(|| {
+                format!("Live client bridge connected. Core module is {}.", if enabled { "on" } else { "off" })
+            }),
+            modules_path: display_path(&modules_path),
+        });
+    }
+
+    if modules_path.is_file() {
+        let text = fs::read_to_string(&modules_path).map_err(error_text)?;
+        let active = module_active_state(&text, "antiscreenshare");
+        let enabled = active.unwrap_or_else(|| read_launcher_anti_preference(profile).unwrap_or(false));
+        return Ok(AntiScreenshareStatus {
+            enabled,
+            available: active.is_some(),
+            bridge_online: false,
+            source: "Saved config".to_string(),
+            message: override_message.unwrap_or_else(|| {
+                if active.is_some() {
+                    format!("Client is offline. Saved profile config has AntiScreenshare {}.", if enabled { "on" } else { "off" })
+                } else {
+                    "Client is offline. modules.txt exists, but AntiScreenshare was not found in this profile.".to_string()
+                }
+            }),
+            modules_path: display_path(&modules_path),
+        });
+    }
+
+    let enabled = read_launcher_anti_preference(profile).unwrap_or(false);
+    Ok(AntiScreenshareStatus {
+        enabled,
+        available: false,
+        bridge_online: false,
+        source: "Launcher preference".to_string(),
+        message: override_message.unwrap_or_else(|| {
+            if enabled {
+                "Saved for the next launch. Launch Gamble Client once before editing live modules.".to_string()
+            } else {
+                "Launch Gamble Client once before AntiScreenshare can edit module config.".to_string()
+            }
+        }),
+        modules_path: display_path(&modules_path),
+    })
+}
+
+fn add_anti_screenshare_changes(changes: &mut Vec<(&'static str, bool)>, modules: &'static [&'static str], active: bool) {
+    for module in modules {
+        changes.push((*module, active));
+    }
+}
+
+fn apply_anti_screenshare_bridge_changes(changes: &[(&str, bool)]) -> usize {
+    if read_anti_screenshare_bridge("/health", "GET").is_err() {
+        return 0;
+    }
+
+    changes
+        .iter()
+        .filter(|(module, active)| toggle_anti_screenshare_bridge_module(module, *active).is_ok())
+        .count()
+}
+
+fn update_anti_screenshare_config(profile: &str, changes: &[(&str, bool)], message: &str) -> Result<String, String> {
+    let modules = anti_screenshare_modules_file(profile);
+    if !modules.is_file() {
+        return Ok("Saved for the next launch. Launch Gamble Client once before module config can be edited.".to_string());
+    }
+
+    let mut text = fs::read_to_string(&modules).map_err(error_text)?;
+    let mut touched = 0usize;
+    let mut missing = Vec::new();
+    for (module, active) in changes {
+        match set_module_active_text(&text, module, *active) {
+            Some(updated) => {
+                if updated != text {
+                    touched += 1;
+                    text = updated;
+                }
+            }
+            None => missing.push((*module).to_string()),
+        }
+    }
+
+    if touched == 0 {
+        return Ok(if missing.is_empty() {
+            format!("{message}; selected modules were already in that state.")
+        } else {
+            format!("{message}; no matching modules found in this build.")
+        });
+    }
+
+    let backup = backup_anti_screenshare_modules(&modules)?;
+    fs::write(&modules, text).map_err(error_text)?;
+    let mut result = format!("{message} for {touched} modules. Backup: {}.", backup.file_name().and_then(|value| value.to_str()).unwrap_or("modules backup"));
+    if !missing.is_empty() {
+        result.push_str(&format!(" Missing in this build: {}.", missing.join(", ")));
+    }
+    Ok(result)
+}
+
+fn backup_anti_screenshare_modules(modules: &Path) -> Result<PathBuf, String> {
+    let backup = modules
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!("modules.txt.backup-antiscreenshare-{}.txt", timestamp()));
+    fs::copy(modules, &backup).map_err(error_text)?;
+    Ok(backup)
+}
+
+fn module_active_state(text: &str, module: &str) -> Option<bool> {
+    let active_index = module_active_value_index(text, module)?;
+    match text.as_bytes().get(active_index).copied() {
+        Some(b'1') => Some(true),
+        Some(b'0') => Some(false),
+        _ => None,
+    }
+}
+
+fn set_module_active_text(text: &str, module: &str, active: bool) -> Option<String> {
+    let active_index = module_active_value_index(text, module)?;
+    let current = *text.as_bytes().get(active_index)?;
+    if current != b'0' && current != b'1' {
+        return None;
+    }
+    let mut updated = text.to_string();
+    updated.replace_range(active_index..active_index + 1, if active { "1" } else { "0" });
+    Some(updated)
+}
+
+fn module_active_value_index(text: &str, module: &str) -> Option<usize> {
+    let name_index = text.find(&format!("name:\"{module}\""))?;
+    let active_prefix = "{active:";
+    let active_index = text[..name_index].rfind(active_prefix)? + active_prefix.len();
+    Some(active_index)
+}
+
+fn read_anti_screenshare_bridge_modules() -> Result<Vec<serde_json::Value>, String> {
+    let root = read_anti_screenshare_bridge("/modules", "GET")?;
+    root.get("modules")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .ok_or_else(|| "AntiScreenshare bridge did not return modules.".to_string())
+}
+
+fn bridge_module_active(modules: &[serde_json::Value], name: &str) -> Option<bool> {
+    modules.iter().find_map(|module| {
+        let module_name = module.get("name").and_then(|value| value.as_str())?;
+        if module_name.eq_ignore_ascii_case(name) {
+            Some(json_bool_value(module.get("active").unwrap_or(&serde_json::Value::Bool(false))))
+        } else {
+            None
+        }
+    })
+}
+
+fn toggle_anti_screenshare_bridge_module(module: &str, active: bool) -> Result<(), String> {
+    let path = format!(
+        "/toggle?name={}&state={}",
+        url_encode_component(module),
+        if active { "on" } else { "off" },
+    );
+    let root = read_anti_screenshare_bridge(&path, "POST")?;
+    if json_bool_value(root.get("ok").unwrap_or(&serde_json::Value::Bool(false))) {
+        Ok(())
+    } else {
+        Err(json_string(&root, "error"))
+    }
+}
+
+fn read_anti_screenshare_bridge(path: &str, method: &str) -> Result<serde_json::Value, String> {
+    let url = format!("http://127.0.0.1:18765{path}");
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(format!("GambleClientLauncher/{VERSION}"))
+        .connect_timeout(Duration::from_millis(900))
+        .timeout(Duration::from_millis(1800))
+        .build()
+        .map_err(error_text)?;
+    let request = if method == "POST" { client.post(url) } else { client.get(url) };
+    let response = request.send().map_err(error_text)?;
+    let status = response.status();
+    let text = response.text().map_err(error_text)?;
+    if !status.is_success() {
+        return Err(if text.trim().is_empty() {
+            format!("AntiScreenshare bridge returned HTTP {}", status.as_u16())
+        } else {
+            text
+        });
+    }
+    if text.trim().is_empty() {
+        return Ok(json!({}));
+    }
+    Ok(serde_json::from_str(&text).unwrap_or_else(|_| json!({ "ok": true, "body": text })))
 }
 
 fn write_launch_ticket_file(profile: &str, token: &str, build: &str) -> Result<PathBuf, String> {
@@ -1381,6 +1669,10 @@ fn main() {
             open_path,
             open_profile_folder,
             diagnostics,
+            anti_screenshare_status,
+            set_anti_screenshare,
+            apply_anti_screenshare_clean_view,
+            open_anti_screenshare_obs,
             install_client_manifest,
             launch_game,
             minecraft_status,
@@ -1452,6 +1744,10 @@ fn resource_packs_folder(profile: &str) -> PathBuf {
 
 fn profile_data_folder(profile: &str) -> PathBuf {
     minecraft_folder(profile).join("cg-mod")
+}
+
+fn anti_screenshare_modules_file(profile: &str) -> PathBuf {
+    profile_data_folder(profile).join("modules.txt")
 }
 
 fn payloads_folder(profile: &str) -> PathBuf {
@@ -1801,6 +2097,26 @@ fn json_u64(body: &serde_json::Value, key: &str) -> u64 {
     body.get(key)
         .and_then(|value| value.as_u64().or_else(|| value.as_i64().map(|v| v.max(0) as u64)))
         .unwrap_or(0)
+}
+
+fn json_bool_value(value: &serde_json::Value) -> bool {
+    value
+        .as_bool()
+        .or_else(|| value.as_i64().map(|number| number != 0))
+        .or_else(|| value.as_str().map(|text| matches!(text.to_ascii_lowercase().as_str(), "true" | "1" | "on" | "yes")))
+        .unwrap_or(false)
+}
+
+fn url_encode_component(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
 }
 
 fn push_check(checks: &mut Vec<DiagnosticCheck>, label: &str, ok: bool, detail: String) {

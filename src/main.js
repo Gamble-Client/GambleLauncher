@@ -47,6 +47,7 @@ const state = {
   mods: [],
   packs: [],
   diagnostics: [],
+  antiStatus: null,
   manifest: null,
   minecraftRunning: false,
   minecraftPid: null,
@@ -80,7 +81,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(40);
   if (command === "launcher_info") {
     return {
-      version: "0.1.65",
+      version: "0.1.69",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client",
       session_file: "/home/theac/.local/share/gamble-client/launcher-session.json",
@@ -94,7 +95,7 @@ async function mockInvoke(command, args = {}) {
   if (command === "launcher_api") {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
-      return { version: "0.1.65", minVersion: "0.1.65" };
+      return { version: "0.1.69", minVersion: "0.1.69" };
     }
     if (path === "/api/launcher/session" || path === "/api/launcher/account") {
       return {
@@ -131,6 +132,39 @@ async function mockInvoke(command, args = {}) {
       ]
     };
   }
+  if (command === "anti_screenshare_status") {
+    return {
+      enabled: state.antiScreenshare,
+      available: true,
+      bridgeOnline: false,
+      source: "Preview config",
+      message: state.antiScreenshare ? "Preview saved config has AntiScreenshare on." : "Preview saved config has AntiScreenshare off.",
+      modulesPath: "/preview/cg-mod/modules.txt"
+    };
+  }
+  if (command === "set_anti_screenshare") {
+    state.antiScreenshare = Boolean(args.enabled);
+    return {
+      enabled: state.antiScreenshare,
+      available: true,
+      bridgeOnline: false,
+      source: "Preview config",
+      message: `AntiScreenshare ${state.antiScreenshare ? "enabled" : "disabled"} in preview config.`,
+      modulesPath: "/preview/cg-mod/modules.txt"
+    };
+  }
+  if (command === "apply_anti_screenshare_clean_view") {
+    state.antiScreenshare = true;
+    return {
+      enabled: true,
+      available: true,
+      bridgeOnline: false,
+      source: "Preview config",
+      message: "Clean View applied for preview modules.",
+      modulesPath: "/preview/cg-mod/modules.txt"
+    };
+  }
+  if (command === "open_anti_screenshare_obs") return "Opened OBS Browser Source view.";
   if (command === "install_client_manifest") {
     return { buildVersion: "1.21.11", fileName: "cg-client-1.21.11.jar", message: "Updated managed client payload to: 1.21.11" };
   }
@@ -156,7 +190,7 @@ function render() {
           <div class="brand-mark">GC</div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.65")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.69")}</span>
           </div>
         </div>
         <nav>
@@ -259,7 +293,8 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
     </section>
 
     <section class="launcher-deck">
-      <section class="tune-strip">
+      <div class="control-column">
+        <section class="tune-strip">
         <label>
           <span>Profile</span>
           <select data-field="selectedProfile">
@@ -286,14 +321,9 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           <span>JVM Args</span>
           <input data-field="javaArgs" value="${escapeAttr(state.javaArgs)}" placeholder="-XX:+UseZGC">
         </label>
-        <label class="privacy-field">
-          <span>Privacy</span>
-          <button class="toggle-button ${state.antiScreenshare ? "on" : ""}" type="button" data-action="toggle-anti">
-            <b></b>
-            ${state.antiScreenshare ? "AntiScreenshare on" : "AntiScreenshare off"}
-          </button>
-        </label>
-      </section>
+        </section>
+        ${antiScreensharePanel()}
+      </div>
 
       <section class="quick-grid">
         <article class="action-tile">
@@ -325,6 +355,30 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
     </section>
 
     ${state.sponsor ? sponsorOverlay() : ""}
+  `;
+}
+
+function antiScreensharePanel() {
+  const status = state.antiStatus || {};
+  const enabled = Boolean(status.enabled ?? state.antiScreenshare);
+  const source = status.bridgeOnline ? "Live client" : status.source || "Launcher";
+  const message = status.message || "Launch Gamble Client once before editing live modules.";
+  return `
+    <section class="privacy-panel ${enabled ? "on" : ""}">
+      <div class="privacy-copy">
+        <span class="eyebrow">Privacy</span>
+        <strong>AntiScreenshare ${enabled ? "on" : "off"}</strong>
+        <small>${escapeHtml(source)} · ${escapeHtml(message)}</small>
+      </div>
+      <div class="privacy-actions">
+        <button class="toggle-button ${enabled ? "on" : ""}" type="button" data-action="toggle-anti">
+          <b></b>
+          ${enabled ? "Turn off" : "Turn on"}
+        </button>
+        <button class="ghost" type="button" data-action="anti-clean">Clean View</button>
+        <button class="ghost" type="button" data-action="anti-obs">OBS View</button>
+      </div>
+    </section>
   `;
 }
 
@@ -581,6 +635,7 @@ async function boot() {
   state.microsoft = await invoke("read_microsoft_account").catch(() => null);
   await Promise.allSettled([refreshVersion(), refreshFiles(), restoreSession()]);
   await invoke("ensure_profile", { profile: state.selectedProfile }).catch(() => {});
+  await refreshAntiScreenshareStatus();
   await refreshMinecraftStatus();
   setInterval(refreshMinecraftStatus, 3500);
   render();
@@ -850,6 +905,28 @@ async function refreshFiles() {
   state.packs = packs;
 }
 
+async function refreshAntiScreenshareStatus() {
+  try {
+    const status = await invoke("anti_screenshare_status", { profile: state.selectedProfile });
+    state.antiStatus = status;
+    if (status?.available || status?.bridgeOnline || status?.enabled) {
+      state.antiScreenshare = Boolean(status.enabled);
+    } else {
+      state.antiStatus.enabled = state.antiScreenshare;
+    }
+    localStorage.setItem("gamble.launcher.antiScreenshare", String(state.antiScreenshare));
+  } catch (error) {
+    state.antiStatus = {
+      enabled: state.antiScreenshare,
+      available: false,
+      bridgeOnline: false,
+      source: "Launcher",
+      message: `AntiScreenshare status failed: ${error.message || error}`,
+      modulesPath: ""
+    };
+  }
+}
+
 async function runDiagnostics() {
   const result = await invoke("diagnostics", { profile: state.selectedProfile });
   state.diagnostics = result.checks || [];
@@ -883,7 +960,7 @@ app.addEventListener("click", async (event) => {
 
   if (action === "refresh") {
     setBusy(true, "Refreshing");
-    await Promise.allSettled([refreshVersion(), refreshAccount(), refreshManifest(), refreshFiles()]);
+    await Promise.allSettled([refreshVersion(), refreshAccount(), refreshManifest(), refreshFiles(), refreshAntiScreenshareStatus()]);
     setBusy(false, "Ready");
   } else if (action === "signin") {
     await startSignIn();
@@ -950,9 +1027,35 @@ app.addEventListener("click", async (event) => {
   } else if (action === "microsoft" || action === "switch-microsoft") {
     await startMicrosoftSignIn();
   } else if (action === "toggle-anti") {
-    state.antiScreenshare = !state.antiScreenshare;
-    localStorage.setItem("gamble.launcher.antiScreenshare", String(state.antiScreenshare));
-    log(`AntiScreenshare ${state.antiScreenshare ? "enabled" : "disabled"} for the next launch.`);
+    setBusy(true, "Updating AntiScreenshare");
+    try {
+      const next = !Boolean(state.antiStatus?.enabled ?? state.antiScreenshare);
+      const status = await invoke("set_anti_screenshare", { profile: state.selectedProfile, enabled: next });
+      state.antiStatus = status;
+      state.antiScreenshare = Boolean(status.enabled);
+      localStorage.setItem("gamble.launcher.antiScreenshare", String(state.antiScreenshare));
+      log(status.message || `AntiScreenshare ${state.antiScreenshare ? "enabled" : "disabled"}.`);
+    } catch (error) {
+      log(`AntiScreenshare update failed: ${error.message || error}`);
+    } finally {
+      setBusy(false);
+    }
+  } else if (action === "anti-clean") {
+    setBusy(true, "Applying Clean View");
+    try {
+      const status = await invoke("apply_anti_screenshare_clean_view", { profile: state.selectedProfile });
+      state.antiStatus = status;
+      state.antiScreenshare = Boolean(status.enabled);
+      localStorage.setItem("gamble.launcher.antiScreenshare", "true");
+      log(status.message || "Clean View applied.");
+    } catch (error) {
+      log(`Clean View failed: ${error.message || error}`);
+    } finally {
+      setBusy(false);
+    }
+  } else if (action === "anti-obs") {
+    const message = await invoke("open_anti_screenshare_obs").catch((error) => `OBS view failed: ${error.message || error}`);
+    log(message);
     render();
   } else if (action === "open-microsoft-link") {
     const url = microsoftVerificationUrl(state.microsoftSignIn);
@@ -1018,7 +1121,10 @@ app.addEventListener("change", async (event) => {
   state[field] = event.target.value;
   if (field === "username") localStorage.setItem("gamble.launcher.username", state.username);
   if (field === "javaArgs") localStorage.setItem("gamble.launcher.javaArgs", state.javaArgs);
-  if (field === "selectedProfile") await refreshFiles();
+  if (field === "selectedProfile") {
+    await refreshFiles();
+    await refreshAntiScreenshareStatus();
+  }
   if (field === "selectedBuild") state.manifest = null;
   render();
 });
