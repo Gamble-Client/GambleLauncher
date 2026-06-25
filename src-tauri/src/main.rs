@@ -41,6 +41,12 @@ struct LauncherInfo {
 }
 
 #[derive(Serialize)]
+struct MinecraftStatus {
+    running: bool,
+    pid: Option<u32>,
+}
+
+#[derive(Serialize)]
 struct LocalFile {
     name: String,
     path: String,
@@ -716,6 +722,24 @@ fn launch_game(input: LaunchRequest) -> Result<String, String> {
     Ok(format!("Minecraft process started (pid {pid}). Latest launch log: {}", display_path(&log_file)))
 }
 
+#[tauri::command]
+fn minecraft_status() -> Result<MinecraftStatus, String> {
+    let mut running = MINECRAFT_PROCESS.lock().map_err(error_text)?;
+    if let Some(child) = running.as_mut() {
+        if child.try_wait().map_err(error_text)?.is_none() {
+            return Ok(MinecraftStatus {
+                running: true,
+                pid: Some(child.id()),
+            });
+        }
+        *running = None;
+    }
+    Ok(MinecraftStatus {
+        running: false,
+        pid: None,
+    })
+}
+
 fn refresh_minecraft_identity(account: MicrosoftAccount) -> Result<MinecraftProfile, String> {
     let token = refresh_microsoft_token(&account.refresh_token)?;
     let profile = exchange_microsoft_for_minecraft(&token.access_token)?;
@@ -1359,6 +1383,7 @@ fn main() {
             diagnostics,
             install_client_manifest,
             launch_game,
+            minecraft_status,
             open_url
         ])
         .run(tauri::generate_context!())

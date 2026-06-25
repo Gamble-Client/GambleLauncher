@@ -31,7 +31,7 @@ const state = {
   microsoft: null,
   ads: null,
   selectedProfile: "gamble-client",
-  selectedBuild: "ad_tier",
+  selectedBuild: "release",
   memory: "4",
   username: defaultUsername(),
   javaArgs: defaultJavaArgs(),
@@ -49,6 +49,7 @@ const state = {
   diagnostics: [],
   manifest: null,
   minecraftRunning: false,
+  minecraftPid: null,
   log: []
 };
 
@@ -134,8 +135,12 @@ async function mockInvoke(command, args = {}) {
     return { buildVersion: "1.21.11", fileName: "cg-client-1.21.11.jar", message: "Updated managed client payload to: 1.21.11" };
   }
   if (command === "launch_game") {
+    state.minecraftRunning = !state.minecraftRunning;
+    state.minecraftPid = state.minecraftRunning ? 4242 : null;
+    if (!state.minecraftRunning) return "Minecraft stop signal sent.";
     return "Minecraft process started (pid 4242). Latest launch log: /preview/latest-launch.log";
   }
+  if (command === "minecraft_status") return { running: state.minecraftRunning, pid: state.minecraftPid };
   return null;
 }
 
@@ -313,7 +318,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
         </article>
         <article class="action-tile process-tile">
           <span>Process</span>
-          <strong>${state.minecraftRunning ? "Minecraft running" : "No active game"}</strong>
+          <strong>${state.minecraftRunning ? `Running${state.minecraftPid ? ` #${state.minecraftPid}` : ""}` : "No active game"}</strong>
           <button type="button" data-action="launch" ${!state.minecraftRunning || state.busy ? "disabled" : ""}>Kill</button>
         </article>
       </section>
@@ -501,12 +506,36 @@ function microsoftTitle() {
 }
 
 function adTierOnly() {
-  return state.account && (state.account.selectedPlan === "ad_tier" || state.account.accessStatus === "ad_tier") && !state.account.ownerAccess;
+  if (!state.account) return false;
+  return preferredBuildForAccount(state.account) === "ad_tier";
 }
 
 function buildForAccount() {
-  if (adTierOnly()) return builds.find((item) => item.id === "ad_tier");
+  if (!canUseBuild(state.selectedBuild)) state.selectedBuild = preferredBuildForAccount();
   return builds.find((item) => item.id === state.selectedBuild) || builds[0];
+}
+
+function preferredBuildForAccount(account = state.account) {
+  if (!account) return "release";
+  if (account.ownerAccess || account.mediaAccess || account.testerAccess || hasPlanOrStatus(account, ["owner", "media", "tester"])) return "media";
+  if (account.betaAccess || hasPlanOrStatus(account, ["beta_plus", "lifetime_beta"])) return "beta_plus";
+  if (hasPlanOrStatus(account, ["weekly", "monthly", "yearly", "lifetime", "owned"])) return "release";
+  return "ad_tier";
+}
+
+function canUseBuild(buildId, account = state.account) {
+  if (!account) return buildId === "release";
+  if (buildId === "ad_tier") return true;
+  if (buildId === "release") return preferredBuildForAccount(account) !== "ad_tier";
+  if (buildId === "beta_plus") return ["beta_plus", "media"].includes(preferredBuildForAccount(account));
+  if (buildId === "media") return preferredBuildForAccount(account) === "media";
+  return false;
+}
+
+function hasPlanOrStatus(account, values) {
+  const plan = String(account?.selectedPlan || "").toLowerCase();
+  const status = String(account?.accessStatus || "").toLowerCase();
+  return values.includes(plan) || values.includes(status);
 }
 
 function sponsorTitle() {
@@ -552,6 +581,8 @@ async function boot() {
   state.microsoft = await invoke("read_microsoft_account").catch(() => null);
   await Promise.allSettled([refreshVersion(), refreshFiles(), restoreSession()]);
   await invoke("ensure_profile", { profile: state.selectedProfile }).catch(() => {});
+  await refreshMinecraftStatus();
+  setInterval(refreshMinecraftStatus, 3500);
   render();
 }
 
@@ -593,8 +624,23 @@ async function refreshAccount() {
 function applyAccount(body) {
   state.account = body.user || null;
   state.ads = body.ads || body.adReward || null;
-  if (adTierOnly()) state.selectedBuild = "ad_tier";
-  if (!adTierOnly() && state.selectedBuild === "ad_tier") state.selectedBuild = "release";
+  state.selectedBuild = preferredBuildForAccount();
+  state.manifest = null;
+}
+
+async function refreshMinecraftStatus(options = {}) {
+  try {
+    const status = await invoke("minecraft_status");
+    const wasRunning = state.minecraftRunning;
+    state.minecraftRunning = Boolean(status?.running);
+    state.minecraftPid = status?.pid || null;
+    if (wasRunning && !state.minecraftRunning && options.logExit !== false) {
+      log("Minecraft is no longer running.");
+    }
+    if (options.render !== false) render();
+  } catch (error) {
+    if (options.logError) log(`Process status failed: ${error.message || error}`);
+  }
 }
 
 async function startSignIn() {
@@ -866,7 +912,8 @@ app.addEventListener("click", async (event) => {
   } else if (action === "install") {
     await installSelected();
   } else if (action === "launch") {
-    if (!state.microsoft) {
+    await refreshMinecraftStatus({ render: false, logExit: false });
+    if (!state.minecraftRunning && !state.microsoft) {
       await startMicrosoftSignIn();
       return;
     }
@@ -886,12 +933,17 @@ app.addEventListener("click", async (event) => {
       });
       if (String(message).toLowerCase().includes("stop signal")) {
         state.minecraftRunning = false;
+        state.minecraftPid = null;
       } else if (String(message).toLowerCase().includes("process started")) {
         state.minecraftRunning = true;
+        const match = String(message).match(/pid\s+(\d+)/i);
+        state.minecraftPid = match ? Number(match[1]) : state.minecraftPid;
       }
       log(message);
+      await refreshMinecraftStatus({ render: false, logExit: false });
     } catch (error) {
       log(`Launch failed: ${error.message || error}`);
+      await refreshMinecraftStatus({ render: false, logExit: false });
     } finally {
       setBusy(false);
     }
