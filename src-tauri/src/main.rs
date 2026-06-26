@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -13,7 +15,7 @@ use std::{
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.71";
+const VERSION: &str = "0.1.72";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -784,14 +786,16 @@ fn client_install_status(profile: String, build: String, token: String) -> Resul
 
     ensure_profile_folders(&profile)?;
     let manifest = fetch_client_manifest(&build, &token)?;
-    let installed = payload_file(&profile, &manifest.file_name);
-    let current = installed.is_file() && verify_file(&installed, manifest.size, &manifest.sha256).is_ok();
+    let installed = find_verified_client_install(&profile, &manifest);
+    let expected_install = managed_client_mod_file(&profile, &manifest);
+    let installed_path = installed.as_deref().unwrap_or(expected_install.as_path());
+    let current = installed.is_some();
     Ok(ClientInstallStatus {
         file_name: manifest.file_name.clone(),
         build: manifest.build.clone(),
         build_version: manifest.build_version.clone(),
-        path: display_path(&installed),
-        size: installed.metadata().map(|metadata| metadata.len()).unwrap_or(0),
+        path: display_path(installed_path),
+        size: installed_path.metadata().map(|metadata| metadata.len()).unwrap_or(0),
         sha256: manifest.sha256.clone(),
         installed: current,
         update_available: !current,
@@ -851,47 +855,39 @@ fn install_client_manifest(profile: String, build: String, token: String) -> Res
         return Err("Backend manifest did not include a jar download.".to_string());
     }
 
-    let client_jar = payload_file(&profile, &manifest.file_name);
-    if client_jar.is_file() && verify_file(&client_jar, manifest.size, &manifest.sha256).is_ok() {
-        cleanup_managed_mod_jars(&profile)?;
-        ensure_loader_jar(&profile)?;
-        ensure_fabric_api(&profile)?;
-        write_install_marker(&profile, &build, &manifest, &client_jar)?;
-        return Ok(InstallResult {
-            file_name: manifest.file_name.clone(),
-            build: manifest.build.clone(),
-            build_version: manifest.build_version.clone(),
-            path: display_path(&client_jar),
-            size: client_jar.metadata().map(|m| m.len()).unwrap_or(0),
-            sha256: manifest.sha256.clone(),
-            updated: false,
-            message: format!("Latest managed client verified: {}", display_version(&manifest)),
-        });
-    }
-
-    let bytes = client
-        .get(&manifest.download_url)
-        .send()
-        .map_err(error_text)?
-        .error_for_status()
-        .map_err(error_text)?
-        .bytes()
-        .map_err(error_text)?;
+    let existing = find_verified_client_install(&profile, &manifest);
+    let (bytes, downloaded) = if let Some(path) = existing {
+        (fs::read(path).map_err(error_text)?, false)
+    } else {
+        (
+            client
+                .get(&manifest.download_url)
+                .send()
+                .map_err(error_text)?
+                .error_for_status()
+                .map_err(error_text)?
+                .bytes()
+                .map_err(error_text)?
+                .to_vec(),
+            true,
+        )
+    };
 
     if manifest.size > 0 && bytes.len() as u64 != manifest.size {
         return Err(format!("Expected {} bytes but found {} bytes.", manifest.size, bytes.len()));
     }
     if !manifest.sha256.trim().is_empty() {
-        let actual = sha256_hex(bytes.as_ref());
+        let actual = sha256_hex(&bytes);
         if !actual.eq_ignore_ascii_case(manifest.sha256.trim()) {
             return Err(format!("Expected SHA-256 {} but found {}.", manifest.sha256, actual));
         }
     }
 
-    fs::create_dir_all(payloads_folder(&profile)).map_err(error_text)?;
     cleanup_managed_mod_jars(&profile)?;
+    cleanup_payload_client_jars(&profile)?;
     ensure_loader_jar(&profile)?;
     ensure_fabric_api(&profile)?;
+    let client_jar = managed_client_mod_file(&profile, &manifest);
     fs::write(&client_jar, bytes).map_err(error_text)?;
     write_install_marker(&profile, &build, &manifest, &client_jar)?;
 
@@ -902,8 +898,12 @@ fn install_client_manifest(profile: String, build: String, token: String) -> Res
         path: display_path(&client_jar),
         size: client_jar.metadata().map(|m| m.len()).unwrap_or(0),
         sha256: manifest.sha256.clone(),
-        updated: true,
-        message: format!("Updated managed client to: {}", display_version(&manifest)),
+        updated: downloaded,
+        message: if downloaded {
+            format!("Updated managed client to: {}", display_version(&manifest))
+        } else {
+            format!("Refreshed managed client in this profile: {}", display_version(&manifest))
+        },
     })
 }
 
@@ -1551,7 +1551,7 @@ fn build_minecraft_command(
     if profile_id == "gamble-client" && !build.is_empty() {
         command.push(format!("-Dgamble.launchBuild={build}"));
     }
-    if let Some(payload) = payload {
+    if let Some(payload) = payload.filter(|path| path.parent() != Some(&game_dir.join("mods"))) {
         command.push(format!("-Dfabric.addMods={}", display_path(payload)));
     }
     if profile_id != "vanilla" && !profile.client_version_id.is_empty() {
@@ -2001,6 +2001,10 @@ fn payload_file(profile: &str, file_name: &str) -> PathBuf {
     payloads_folder(profile).join(file_name)
 }
 
+fn managed_client_mod_file(profile: &str, manifest: &ManifestResponse) -> PathBuf {
+    mods_folder(profile).join(&manifest.file_name)
+}
+
 fn ensure_profile_folders(profile: &str) -> Result<PathBuf, String> {
     let root = minecraft_folder(profile);
     fs::create_dir_all(&root).map_err(error_text)?;
@@ -2109,13 +2113,31 @@ fn cleanup_managed_mod_jars(profile: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn cleanup_payload_client_jars(profile: &str) -> Result<(), String> {
+    let payloads = payloads_folder(profile);
+    if !payloads.is_dir() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(&payloads).map_err(error_text)? {
+        let entry = entry.map_err(error_text)?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if name.starts_with("cg-client") && name.ends_with(".jar") {
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    Ok(())
+}
+
 fn ensure_loader_jar(profile: &str) -> Result<(), String> {
     let mods = mods_folder(profile);
     fs::create_dir_all(&mods).map_err(error_text)?;
     let loader = mods.join(LOADER_JAR_NAME);
-    if loader.is_file() {
-        return Ok(());
-    }
 
     let mut buffer = Cursor::new(Vec::new());
     {
@@ -2130,6 +2152,19 @@ fn ensure_loader_jar(profile: &str) -> Result<(), String> {
         zip.finish().map_err(error_text)?;
     }
     fs::write(loader, buffer.into_inner()).map_err(error_text)
+}
+
+fn find_verified_client_install(profile: &str, manifest: &ManifestResponse) -> Option<PathBuf> {
+    client_install_candidates(profile, manifest)
+        .into_iter()
+        .find(|path| path.is_file() && verify_file(path, manifest.size, &manifest.sha256).is_ok())
+}
+
+fn client_install_candidates(profile: &str, manifest: &ManifestResponse) -> Vec<PathBuf> {
+    vec![
+        managed_client_mod_file(profile, manifest),
+        payload_file(profile, &manifest.file_name),
+    ]
 }
 
 fn ensure_fabric_api(profile: &str) -> Result<(), String> {

@@ -131,7 +131,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(35);
   if (command === "launcher_info") {
     return {
-      version: "0.1.71",
+      version: "0.1.72",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
       session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
@@ -159,13 +159,13 @@ async function mockInvoke(command, args = {}) {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
       return {
-        version: "0.1.71",
-        minVersion: "0.1.71",
+        version: "0.1.72",
+        minVersion: "0.1.72",
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.71-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.71-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.71_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.72-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.72-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.72_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -191,9 +191,9 @@ async function mockInvoke(command, args = {}) {
   }
   if (command === "download_launcher_update") {
     return {
-      version: "0.1.71",
-      fileName: "Gamble-Client-Launcher_0.1.71_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.71_amd64.deb",
+      version: "0.1.72",
+      fileName: "Gamble-Client-Launcher_0.1.72_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.72_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -332,7 +332,7 @@ function render() {
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.71")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.72")}</span>
           </div>
         </div>
         <nav>
@@ -1166,7 +1166,8 @@ function adTierOnly() {
 }
 
 function buildForAccount() {
-  if (!canUseBuild(state.selectedBuild)) state.selectedBuild = preferredBuildForAccount();
+  const preferred = preferredBuildForAccount();
+  if (!canUseBuild(state.selectedBuild) || buildRank(state.selectedBuild) < buildRank(preferred)) state.selectedBuild = preferred;
   return builds.find((item) => item.id === state.selectedBuild) || builds[0];
 }
 
@@ -1185,6 +1186,10 @@ function canUseBuild(buildId, account = state.account) {
   if (buildId === "beta_plus") return ["beta_plus", "media"].includes(preferredBuildForAccount(account));
   if (buildId === "media") return preferredBuildForAccount(account) === "media";
   return false;
+}
+
+function buildRank(buildId) {
+  return { ad_tier: 0, release: 1, beta_plus: 2, media: 3 }[buildId] ?? -1;
 }
 
 function hasPlanOrStatus(account, values) {
@@ -1341,7 +1346,10 @@ async function refreshAccount() {
 function applyAccount(body) {
   state.account = body.user || null;
   state.ads = body.ads || body.adReward || null;
-  if (!canUseBuild(state.selectedBuild, state.account)) state.selectedBuild = preferredBuildForAccount();
+  const preferred = preferredBuildForAccount(state.account);
+  if (!canUseBuild(state.selectedBuild, state.account) || buildRank(state.selectedBuild) < buildRank(preferred)) {
+    state.selectedBuild = preferred;
+  }
   state.manifest = null;
   state.clientStatus = null;
   state.spotify = null;
