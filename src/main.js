@@ -1,12 +1,17 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { open as tauriOpenDialog } from "@tauri-apps/plugin-dialog";
 import "./styles.css";
+import logoUrl from "./assets/cg-mod-icon.png";
 
 const SITE = "https://gamble-client.store";
 const DASH = "https://dash.gamble-client.store";
 const TOKEN_KEY = "gamble.launcher.token";
 const LAUNCHER_DISMISS_KEY = "gamble.launcher.dismissedLauncherVersion";
 const CLIENT_DISMISS_KEY = "gamble.launcher.dismissedClientVersion";
+const CUSTOM_PROFILES_KEY = "gamble.launcher.customProfiles";
+const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
+const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
+const UPDATE_CHECK_TTL_MS = 45000;
 const PREVIEW = !("__TAURI_INTERNALS__" in window);
 
 const app = document.querySelector("#app");
@@ -33,12 +38,18 @@ const state = {
   microsoft: null,
   microsoftAccounts: [],
   ads: null,
+  social: null,
+  friendUsername: "",
   selectedProfile: "gamble-client",
   selectedBuild: "release",
+  customProfiles: normalizeStoredProfiles(readJsonStorage(CUSTOM_PROFILES_KEY, [])),
+  profileAccountOverrides: normalizeStoredObject(readJsonStorage(PROFILE_ACCOUNTS_KEY, {})),
+  newProfileName: "",
   memory: defaultMemory(),
   username: defaultUsername(),
   javaArgs: defaultJavaArgs(),
   antiScreenshare: defaultAntiScreenshare(),
+  showAdvancedSettings: defaultAdvancedSettings(),
   status: "Starting",
   busy: false,
   signIn: null,
@@ -55,6 +66,10 @@ const state = {
   clientStatus: null,
   minecraftRunning: false,
   minecraftPid: null,
+  popup: null,
+  spotify: null,
+  lastVersionCheckAt: 0,
+  lastManifestCheckAt: 0,
   dismissedLauncherVersion: readStorage(LAUNCHER_DISMISS_KEY),
   dismissedClientVersion: readStorage(CLIENT_DISMISS_KEY),
   log: []
@@ -62,6 +77,24 @@ const state = {
 
 function readStorage(key, fallback = "") {
   return (globalThis.localStorage?.getItem(key) || fallback).trim();
+}
+
+function readJsonStorage(key, fallback) {
+  try {
+    const value = globalThis.localStorage?.getItem(key);
+    if (!value) return fallback;
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeStoredProfiles(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function normalizeStoredObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
 function defaultUsername() {
@@ -80,6 +113,10 @@ function defaultAntiScreenshare() {
   return globalThis.localStorage?.getItem("gamble.launcher.antiScreenshare") === "true";
 }
 
+function defaultAdvancedSettings() {
+  return globalThis.localStorage?.getItem(ADVANCED_SETTINGS_KEY) === "true";
+}
+
 async function invoke(command, args = {}) {
   if (!PREVIEW) return await tauriInvoke(command, args);
   return mockInvoke(command, args);
@@ -94,7 +131,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(35);
   if (command === "launcher_info") {
     return {
-      version: "0.1.70",
+      version: "0.1.71",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
       session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
@@ -122,13 +159,13 @@ async function mockInvoke(command, args = {}) {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
       return {
-        version: "0.1.70",
-        minVersion: "0.1.70",
+        version: "0.1.71",
+        minVersion: "0.1.71",
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.70-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.70-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.70_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.71-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.71-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.71_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -154,9 +191,9 @@ async function mockInvoke(command, args = {}) {
   }
   if (command === "download_launcher_update") {
     return {
-      version: "0.1.70",
-      fileName: "Gamble-Client-Launcher_0.1.70_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.70_amd64.deb",
+      version: "0.1.71",
+      fileName: "Gamble-Client-Launcher_0.1.71_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.71_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -284,7 +321,7 @@ function cssEscape(value) {
 function render() {
   const scrollState = captureScrollState();
   const preserveScroll = scrollState && renderedView === state.view;
-  const profile = profiles.find((item) => item.id === state.selectedProfile) || profiles[0];
+  const profile = currentProfile();
   const signedIn = Boolean(state.account && state.token);
   const selectedBuild = buildForAccount();
   const canInstall = signedIn && profile.client;
@@ -292,21 +329,17 @@ function render() {
     <section class="shell">
       <aside class="rail">
         <div class="brand">
-          <div class="brand-mark">GC</div>
+          <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.70")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.71")}</span>
           </div>
         </div>
         <nav>
           ${navButton("play", "Play")}
           ${navButton("accounts", "Accounts")}
           ${navButton("updates", "Updates")}
-          ${navButton("settings", "Settings")}
-          ${navButton("privacy", "AntiScreenshare")}
-          ${navButton("mods", "Mods")}
-          ${navButton("packs", "Resource Packs")}
-          ${navButton("diagnostics", "Diagnostics")}
+          ${navButton("profiles", "Profiles")}
           <button class="nav-item nav-action" type="button" data-open="${DASH}/dashboard.html">Dashboard</button>
           <button class="nav-item nav-action" type="button" data-open="https://discord.gg/YPescfEt">Discord</button>
         </nav>
@@ -329,11 +362,8 @@ function render() {
         ${state.view === "play" ? playView(profile, selectedBuild, canInstall, signedIn) : ""}
         ${state.view === "accounts" ? accountsView(signedIn) : ""}
         ${state.view === "updates" ? updatesView(profile, selectedBuild, canInstall, signedIn) : ""}
+        ${state.view === "profiles" ? profilesView(profile, selectedBuild) : ""}
         ${state.view === "settings" ? settingsView(profile, selectedBuild) : ""}
-        ${state.view === "privacy" ? privacyView() : ""}
-        ${state.view === "mods" ? fileView("mods", profile, state.mods) : ""}
-        ${state.view === "packs" ? fileView("packs", profile, state.packs) : ""}
-        ${state.view === "diagnostics" ? diagnosticsView() : ""}
         ${state.signIn ? signInPanel() : ""}
         ${state.microsoftSignIn ? microsoftPanel() : ""}
       </section>
@@ -349,6 +379,40 @@ function navButton(id, label) {
   return `<button class="nav-item ${state.view === id ? "active" : ""}" type="button" data-view="${id}">${escapeHtml(label)}</button>`;
 }
 
+function allProfiles() {
+  const custom = Array.isArray(state.customProfiles) ? state.customProfiles : [];
+  return [...profiles, ...custom.filter((profile) => profile?.id && profile?.label)];
+}
+
+function currentProfile() {
+  return allProfiles().find((item) => item.id === state.selectedProfile) || profiles[0];
+}
+
+function profileById(id) {
+  return allProfiles().find((item) => item.id === id) || null;
+}
+
+function saveCustomProfiles() {
+  localStorage.setItem(CUSTOM_PROFILES_KEY, JSON.stringify(state.customProfiles || []));
+}
+
+function saveProfileAccountOverrides() {
+  localStorage.setItem(PROFILE_ACCOUNTS_KEY, JSON.stringify(state.profileAccountOverrides || {}));
+}
+
+function profileAccount(profile = currentProfile()) {
+  const uuid = String(state.profileAccountOverrides?.[profile.id] || "").replaceAll("-", "").toLowerCase();
+  if (!uuid) return state.microsoft;
+  return state.microsoftAccounts.find((account) => String(account.uuid || "").replaceAll("-", "").toLowerCase() === uuid) || state.microsoft;
+}
+
+function profileAccountLabel(profile = currentProfile()) {
+  const account = profileAccount(profile);
+  if (!account) return "Global default";
+  const hasOverride = Boolean(state.profileAccountOverrides?.[profile.id]);
+  return `${account.name || "Microsoft"}${hasOverride ? "" : " (global)"}`;
+}
+
 function topbar(signedIn) {
   return `
     <header class="topbar">
@@ -358,6 +422,7 @@ function topbar(signedIn) {
       </div>
       <div class="top-actions">
         <button class="ghost" type="button" data-action="refresh" ${state.busy ? "disabled" : ""}>Refresh</button>
+        <button class="icon-button ${state.view === "settings" ? "active" : ""}" type="button" data-view="settings" aria-label="Settings" title="Settings">⚙</button>
         <button class="${signedIn ? "ghost" : "primary-small"}" type="button" data-action="${signedIn ? "signout" : "signin"}" ${state.busy ? "disabled" : ""}>${signedIn ? "Sign out" : "Sign in"}</button>
       </div>
     </header>
@@ -369,13 +434,13 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
   const clientStatus = clientStatusLabel();
   const enabledMods = state.mods.filter((item) => item.enabled).length;
   const enabledPacks = state.packs.filter((item) => item.enabled).length;
+  const activeMicrosoft = profileAccount(profile);
   return `
     <section class="play-stage">
       <section class="launch-panel">
         <div class="launch-copy">
-          <span class="eyebrow">Ready room</span>
+          <span class="eyebrow">Gamble Client</span>
           <h2>${escapeHtml(selectedBuild.label)}</h2>
-          <p>${escapeHtml(playCopy(profile, signedIn))}</p>
           <div class="launch-facts">
             <div>
               <span>Profile</span>
@@ -393,21 +458,21 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
         </div>
         <div class="launch-stack">
           <button class="launch-button" type="button" data-action="launch" ${state.busy ? "disabled" : ""}>${escapeHtml(launchLabel)}</button>
-          ${state.microsoft ? "" : `<p class="launch-warning">No Microsoft account linked. Launch opens Microsoft sign-in first.</p>`}
+          ${activeMicrosoft ? "" : `<p class="launch-warning">No Microsoft account linked. Launch opens Microsoft sign-in first.</p>`}
         </div>
       </section>
 
       <aside class="account-panel">
         <div class="identity-card">
-          <div class="avatar" style="${escapeAttr(avatarStyle())}">${escapeHtml(avatarInitials())}</div>
+          <div class="avatar" style="${escapeAttr(avatarStyle(activeMicrosoft))}">${escapeHtml(avatarInitials(activeMicrosoft?.name))}</div>
           <div>
             <span class="eyebrow">Active identity</span>
-            <strong>${escapeHtml(state.microsoft?.name || accountTitle())}</strong>
-            <small>${escapeHtml(state.microsoft ? "Microsoft Java profile linked" : "Connect Microsoft before launching")}</small>
+            <strong>${escapeHtml(activeMicrosoft?.name || accountTitle())}</strong>
+            <small>${escapeHtml(activeMicrosoft ? `Launching with ${profileAccountLabel(profile)}` : "Connect Microsoft before launching")}</small>
           </div>
         </div>
-        ${accountRow("Launcher", accountTitle(), accountMeta(), signedIn ? "Signed in" : "Required")}
-        ${accountRow("Minecraft", microsoftTitle(), state.microsoft ? `${state.microsoftAccounts.length || 1} saved account${(state.microsoftAccounts.length || 1) === 1 ? "" : "s"}` : "Required for launch", state.microsoft ? "Linked" : "Required")}
+        ${accountRow("Launcher", accountTitle(), accountMeta(), signedIn ? "Signed in" : "Required", launcherAvatarStyle())}
+        ${accountRow("Minecraft", microsoftTitle(), state.microsoft ? `${state.microsoftAccounts.length || 1} saved account${(state.microsoftAccounts.length || 1) === 1 ? "" : "s"}` : "Required for launch", state.microsoft ? "Linked" : "Required", avatarStyle(state.microsoft), avatarInitials(state.microsoft?.name))}
         <div class="split-actions">
           <button class="subtle-button" type="button" data-view="accounts">Accounts</button>
           <button class="subtle-button" type="button" data-action="microsoft" ${state.busy ? "disabled" : ""}>Add Microsoft</button>
@@ -434,12 +499,17 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
       <article class="action-tile">
         <span>Mods</span>
         <strong>${profile.fabric ? `${enabledMods} enabled` : "Vanilla"}</strong>
-        <button type="button" data-view="mods">Manage</button>
+        <button type="button" data-view="profiles">Manage</button>
       </article>
       <article class="action-tile">
         <span>Resource packs</span>
         <strong>${enabledPacks} enabled</strong>
-        <button type="button" data-view="packs">Manage</button>
+        <button type="button" data-view="profiles">Manage</button>
+      </article>
+      <article class="action-tile spotify-tile">
+        <span>Spotify</span>
+        <strong>${escapeHtml(spotifyTitle())}</strong>
+        <button type="button" data-open="${DASH}/dashboard.html#spotify">Open Dashboard</button>
       </article>
       <article class="action-tile process-tile">
         <span>Process</span>
@@ -466,6 +536,7 @@ function accountsView(signedIn) {
     <section class="account-list">
       ${state.microsoftAccounts.length ? state.microsoftAccounts.map(accountCard).join("") : `<p class="empty">No Microsoft accounts saved on this device.</p>`}
     </section>
+    ${friendsPanel()}
   `;
 }
 
@@ -484,6 +555,71 @@ function accountCard(account) {
       <div class="top-actions">
         <button class="ghost" type="button" data-action="select-microsoft" data-uuid="${escapeAttr(account.uuid)}" ${active || state.busy ? "disabled" : ""}>Use</button>
         <button class="ghost danger" type="button" data-action="remove-microsoft" data-uuid="${escapeAttr(account.uuid)}" ${state.busy ? "disabled" : ""}>Remove</button>
+      </div>
+    </article>
+  `;
+}
+
+function friendsPanel() {
+  const social = state.social || {};
+  const friends = social.friends || [];
+  const incoming = social.incomingRequests || [];
+  const outgoing = social.outgoingRequests || [];
+  return `
+    <section class="friends-panel">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">Social</span>
+          <h3>Friends</h3>
+        </div>
+        <div class="top-actions">
+          <input class="inline-input" data-field="friendUsername" value="${escapeAttr(state.friendUsername)}" placeholder="Username">
+          <button class="primary-small" type="button" data-action="send-friend" ${!state.token || state.busy ? "disabled" : ""}>Add</button>
+        </div>
+      </div>
+      ${social.message ? `<p class="empty">${escapeHtml(social.message)}</p>` : ""}
+      ${incoming.length ? `
+        <div class="friend-group">
+          <span class="eyebrow">Incoming</span>
+          ${incoming.map((request) => friendRequestRow(request)).join("")}
+        </div>
+      ` : ""}
+      <div class="friend-group">
+        <span class="eyebrow">Friends</span>
+        ${friends.length ? friends.map(friendRow).join("") : `<p class="empty">No friends added yet.</p>`}
+      </div>
+      ${outgoing.length ? `
+        <div class="friend-group">
+          <span class="eyebrow">Outgoing</span>
+          ${outgoing.map((request) => `<article class="friend-row"><strong>${escapeHtml(request.username)}</strong><small>Pending</small></article>`).join("")}
+        </div>
+      ` : ""}
+    </section>
+  `;
+}
+
+function friendRow(friend) {
+  return `
+    <article class="friend-row">
+      <div>
+        <strong>${escapeHtml(friend.username)}</strong>
+        <small>${friend.access?.owner ? "Owner" : friend.access?.media ? "Media" : friend.access?.beta ? "Beta" : "Friend"}</small>
+      </div>
+      <button class="ghost danger" type="button" data-action="remove-friend" data-username="${escapeAttr(friend.username)}">Remove</button>
+    </article>
+  `;
+}
+
+function friendRequestRow(request) {
+  return `
+    <article class="friend-row">
+      <div>
+        <strong>${escapeHtml(request.username)}</strong>
+        <small>Wants to add you</small>
+      </div>
+      <div class="top-actions">
+        <button class="primary-small" type="button" data-action="accept-friend" data-request="${escapeAttr(request.id)}">Accept</button>
+        <button class="ghost" type="button" data-action="decline-friend" data-request="${escapeAttr(request.id)}">Decline</button>
       </div>
     </article>
   `;
@@ -517,7 +653,7 @@ function updatesView(profile, selectedBuild, canInstall, signedIn) {
         <span>Required mods</span>
         <strong>Fabric API managed</strong>
         <p>Fabric API and the Gamble loader stay enabled and locked in Fabric profiles.</p>
-        <button class="ghost" type="button" data-view="mods">View Mods</button>
+        <button class="ghost" type="button" data-view="profiles">View Mods</button>
       </article>
       <article class="update-card">
         <span>Access</span>
@@ -526,7 +662,72 @@ function updatesView(profile, selectedBuild, canInstall, signedIn) {
         <button class="ghost" type="button" data-action="${signedIn ? "refresh" : "signin"}">${signedIn ? "Refresh" : "Sign in"}</button>
       </article>
     </section>
-    ${logView()}
+  `;
+}
+
+function profilesView(profile, selectedBuild) {
+  const profilesList = allProfiles();
+  const custom = Boolean(profile.custom);
+  return `
+    <section class="screen-band">
+      <div>
+        <span class="eyebrow">Launch folders</span>
+        <h2>Profiles</h2>
+      </div>
+      <div class="top-actions">
+        <input class="inline-input" data-field="newProfileName" value="${escapeAttr(state.newProfileName)}" placeholder="New profile name">
+        <button class="primary-small" type="button" data-action="create-profile" ${state.busy ? "disabled" : ""}>Create</button>
+      </div>
+    </section>
+    <section class="profiles-layout">
+      <div class="profile-list">
+        ${profilesList.map((item) => `
+          <article class="profile-card ${item.id === profile.id ? "active" : ""}">
+            <div>
+              <span>${escapeHtml(item.client ? "Gamble Client" : item.fabric ? "Fabric" : "Vanilla")}</span>
+              <strong>${escapeHtml(item.label)}</strong>
+              <small>${escapeHtml(profileAccountLabel(item))}</small>
+            </div>
+            <button class="ghost" type="button" data-action="select-profile" data-profile="${escapeAttr(item.id)}" ${item.id === profile.id ? "disabled" : ""}>Use</button>
+          </article>
+        `).join("")}
+      </div>
+      <div class="profile-editor">
+        <section class="settings-grid compact-grid">
+          ${custom ? `
+            <label>
+              <span>Profile name</span>
+              <input data-field="selectedProfileLabel" value="${escapeAttr(profile.label)}" placeholder="Profile name">
+            </label>
+          ` : `
+            <div class="setting-note">
+              <span>Profile name</span>
+              <strong>${escapeHtml(profile.label)}</strong>
+              <small>Built-in profiles keep their default names.</small>
+            </div>
+          `}
+          <label>
+            <span>Microsoft account</span>
+            <select data-field="profileAccount">
+              <option value="" ${state.profileAccountOverrides?.[profile.id] ? "" : "selected"}>Global default${state.microsoft?.name ? ` (${escapeHtml(state.microsoft.name)})` : ""}</option>
+              ${state.microsoftAccounts.map((account) => {
+                const uuid = String(account.uuid || "").replaceAll("-", "").toLowerCase();
+                const selected = String(state.profileAccountOverrides?.[profile.id] || "").replaceAll("-", "").toLowerCase() === uuid;
+                return `<option value="${escapeAttr(uuid)}" ${selected ? "selected" : ""}>${escapeHtml(account.name || "Microsoft")}</option>`;
+              }).join("")}
+            </select>
+          </label>
+          <label>
+            <span>Build</span>
+            <select data-field="selectedBuild" ${!profile.client || adTierOnly() ? "disabled" : ""}>
+              ${builds.map((item) => `<option value="${item.id}" ${item.id === selectedBuild.id ? "selected" : ""}>${item.label}</option>`).join("")}
+            </select>
+          </label>
+        </section>
+        ${fileSection("mods", profile, state.mods)}
+        ${fileSection("packs", profile, state.packs)}
+      </div>
+    </section>
   `;
 }
 
@@ -534,32 +735,15 @@ function settingsView(profile, selectedBuild) {
   return `
     <section class="screen-band">
       <div>
-        <span class="eyebrow">Launch</span>
+        <span class="eyebrow">Launcher</span>
         <h2>Settings</h2>
       </div>
       <div class="top-actions">
+        <button class="ghost" type="button" data-action="toggle-advanced">${state.showAdvancedSettings ? "Hide Advanced" : "Show Advanced"}</button>
         <button class="ghost" type="button" data-action="open-data">Data Folder</button>
       </div>
     </section>
     <section class="settings-grid">
-      <label>
-        <span>Profile</span>
-        <select data-field="selectedProfile">
-          ${profiles.map((item) => `<option value="${item.id}" ${item.id === state.selectedProfile ? "selected" : ""}>${item.label}</option>`).join("")}
-        </select>
-      </label>
-      <label>
-        <span>Build</span>
-        <select data-field="selectedBuild" ${!profile.client || adTierOnly() ? "disabled" : ""}>
-          ${builds.map((item) => `<option value="${item.id}" ${item.id === selectedBuild.id ? "selected" : ""}>${item.label}</option>`).join("")}
-        </select>
-      </label>
-      <label>
-        <span>Memory</span>
-        <select data-field="memory">
-          ${["2", "3", "4", "5", "6", "7", "8", "10", "12", "16"].map((item) => `<option value="${item}" ${item === state.memory ? "selected" : ""}>${item} GB</option>`).join("")}
-        </select>
-      </label>
       ${state.microsoft ? `
         <div class="setting-note">
           <span>Offline username</span>
@@ -572,11 +756,38 @@ function settingsView(profile, selectedBuild) {
           <input data-field="username" value="${escapeAttr(state.username)}" placeholder="Offline name">
         </label>
       `}
-      <label class="wide-field">
-        <span>Java Args</span>
-        <input data-field="javaArgs" value="${escapeAttr(state.javaArgs)}" placeholder="-XX:+UseZGC">
-      </label>
+      <div class="setting-note">
+        <span>Privacy defaults</span>
+        <strong>Friends stay private</strong>
+        <small>Friend data is not included in shared configs.</small>
+      </div>
+      ${privacyToggle("allowFriendRequests", "Friend requests", state.social?.settings?.allowFriendRequests !== false)}
+      ${privacyToggle("showServerToFriends", "Show server to friends", Boolean(state.social?.settings?.showServerToFriends))}
+      ${privacyToggle("shareSpotifyToFriends", "Share Spotify with friends", Boolean(state.social?.settings?.shareSpotifyToFriends))}
+      ${state.showAdvancedSettings ? `
+        <label>
+          <span>Memory</span>
+          <select data-field="memory">
+            ${["2", "3", "4", "5", "6", "7", "8", "10", "12", "16"].map((item) => `<option value="${item}" ${item === state.memory ? "selected" : ""}>${item} GB</option>`).join("")}
+          </select>
+        </label>
+        <label class="wide-field">
+          <span>Java Args</span>
+          <input data-field="javaArgs" value="${escapeAttr(state.javaArgs)}" placeholder="-XX:+UseZGC">
+        </label>
+      ` : ""}
     </section>
+    ${antiScreensharePanel()}
+    ${diagnosticsPanel()}
+  `;
+}
+
+function privacyToggle(field, label, checked) {
+  return `
+    <label class="checkbox-setting">
+      <span>${escapeHtml(label)}</span>
+      <input type="checkbox" data-privacy-field="${escapeAttr(field)}" ${checked ? "checked" : ""}>
+    </label>
   `;
 }
 
@@ -620,6 +831,20 @@ function antiScreensharePanel() {
 }
 
 function updatePopup() {
+  if (state.popup) {
+    return `
+      <section class="modal-scrim">
+        <article class="update-modal">
+          <span class="eyebrow">${escapeHtml(state.popup.kind || "Launcher")}</span>
+          <h2>${escapeHtml(state.popup.title || "Launcher notice")}</h2>
+          <p>${escapeHtml(state.popup.message || "")}</p>
+          <div class="top-actions">
+            <button class="primary-small" type="button" data-action="dismiss-popup">OK</button>
+          </div>
+        </article>
+      </section>
+    `;
+  }
   if (launcherNeedsUpdate() && state.dismissedLauncherVersion !== latestLauncherVersion()) {
     return `
       <section class="modal-scrim">
@@ -654,9 +879,10 @@ function updatePopup() {
   return "";
 }
 
-function accountRow(label, title, meta, badge) {
+function accountRow(label, title, meta, badge, imageStyle = "", initials = "") {
   return `
     <div class="account-row">
+      <div class="mini-avatar" style="${escapeAttr(imageStyle)}">${escapeHtml(initials || avatarInitials(title))}</div>
       <div>
         <span>${escapeHtml(label)}</span>
         <strong>${escapeHtml(title)}</strong>
@@ -670,11 +896,25 @@ function accountRow(label, title, meta, badge) {
 function avatarStyle(account = state.microsoft) {
   const uuid = String(account?.uuid || "").replaceAll("-", "").trim();
   if (!/^[a-f0-9]{32}$/i.test(uuid)) return "";
-  return `background-image:linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(90, 170, 255, 0.14)), url(https://crafatar.com/avatars/${uuid}?overlay&size=128);`;
+  return `background-image:linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(90, 170, 255, 0.14)), url(https://mc-heads.net/avatar/${uuid}/128);`;
+}
+
+function launcherAvatarStyle() {
+  const avatar = state.account?.avatarUrl || state.account?.avatar || state.account?.discordAvatar || "";
+  if (!avatar) return "";
+  return `background-image:linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(90, 170, 255, 0.14)), url(${avatar});`;
 }
 
 function avatarInitials(source = state.microsoft?.name || accountTitle() || "GC") {
   return String(source).split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "GC";
+}
+
+function spotifyTitle() {
+  if (!state.token) return "Not connected";
+  if (!state.spotify) return "Checking";
+  if (!state.spotify.configured) return "Not available";
+  if (!state.spotify.connected) return "Not connected";
+  return state.spotify.displayName ? `Connected: ${state.spotify.displayName}` : "Connected";
 }
 
 function signInPanel() {
@@ -733,6 +973,30 @@ function fileView(kind, profile, files) {
   `;
 }
 
+function fileSection(kind, profile, files) {
+  const isPacks = kind === "packs";
+  const disabled = kind === "mods" && !profile.fabric;
+  return `
+    <section class="profile-file-section">
+      <div class="section-head">
+        <div>
+          <span class="eyebrow">${escapeHtml(profile.label)}</span>
+          <h3>${isPacks ? "Resource Packs" : "Mods"}</h3>
+        </div>
+        <div class="top-actions">
+          ${isPacks ? `<button class="ghost" type="button" data-action="add-packs">Add</button>` : ""}
+          <button class="ghost" type="button" data-action="open-${isPacks ? "packs" : "mods"}">Open Folder</button>
+          <button class="ghost" type="button" data-action="reload-files">Refresh</button>
+        </div>
+      </div>
+      ${disabled ? `<p class="empty">Vanilla has no mods folder. Switch to a Fabric profile to manage jar files.</p>` : ""}
+      <section class="file-list" data-scroll-key="${kind}-file-list">
+        ${files.length ? files.map((file) => fileRow(kind, file)).join("") : `<p class="empty">${isPacks ? "No resource packs yet." : "No mod jars yet."}</p>`}
+      </section>
+    </section>
+  `;
+}
+
 function fileRow(kind, file) {
   return `
     <article class="file-row">
@@ -754,6 +1018,29 @@ function diagnosticsView() {
       </div>
       <div class="top-actions">
         <button class="ghost" type="button" data-action="open-data">Data Folder</button>
+        <button class="ghost" type="button" data-action="run-diagnostics">Run</button>
+      </div>
+    </section>
+    <section class="diagnostics-list" data-scroll-key="diagnostics-list">
+      ${state.diagnostics.length ? state.diagnostics.map((check) => `
+        <article class="diagnostic-row ${check.ok ? "ok" : "warn"}">
+          <strong>${escapeHtml(check.label)}</strong>
+          <span>${escapeHtml(check.detail)}</span>
+        </article>
+      `).join("") : `<p class="empty">Run diagnostics to check folders, session files, Microsoft cache, Java, and latest launch log.</p>`}
+    </section>
+    ${logView()}
+  `;
+}
+
+function diagnosticsPanel() {
+  return `
+    <section class="screen-band">
+      <div>
+        <span class="eyebrow">Local checks</span>
+        <h2>Diagnostics</h2>
+      </div>
+      <div class="top-actions">
         <button class="ghost" type="button" data-action="run-diagnostics">Run</button>
       </div>
     </section>
@@ -798,16 +1085,13 @@ function logView() {
 function viewTitle() {
   if (state.view === "accounts") return "Accounts";
   if (state.view === "updates") return "Update Center";
+  if (state.view === "profiles") return "Profiles";
   if (state.view === "settings") return "Launcher Settings";
-  if (state.view === "privacy") return "AntiScreenshare";
-  if (state.view === "mods") return "Manage Mods";
-  if (state.view === "packs") return "Manage Resource Packs";
-  if (state.view === "diagnostics") return "Launcher Diagnostics";
   return "Launch Gamble Client";
 }
 
 function profileLabel() {
-  return (profiles.find((item) => item.id === state.selectedProfile) || profiles[0]).label;
+  return currentProfile().label;
 }
 
 function playCopy(profile, signedIn) {
@@ -876,7 +1160,7 @@ function sponsorTitle() {
 }
 
 function clientStatusLabel() {
-  if (!profiles.find((item) => item.id === state.selectedProfile)?.client) return "No client jar";
+  if (!currentProfile().client) return "No client jar";
   if (!state.clientStatus && !state.manifest) return "Not checked";
   const status = state.clientStatus || state.manifest;
   if (status.updateAvailable) return "Update available";
@@ -920,6 +1204,20 @@ function log(message) {
   state.status = message;
 }
 
+function showPopup(title, message, kind = "notice") {
+  state.popup = { title, message, kind };
+  render();
+}
+
+function knownLaunchMessage(error) {
+  const text = String(error?.message || error || "Minecraft could not launch.");
+  const lower = text.toLowerCase();
+  if (lower.includes("update") || lower.includes("outdated")) return "Update the client or launcher, then launch again.";
+  if (lower.includes("microsoft") || lower.includes("account") || lower.includes("auth")) return "Link or refresh your Microsoft account, then launch again.";
+  if (lower.includes("java")) return "Java failed during launch. Run diagnostics from Settings for the exact local check.";
+  return text;
+}
+
 async function api(path, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
   const body = options.body ? JSON.parse(options.body) : {};
@@ -947,6 +1245,8 @@ async function boot() {
   await invoke("ensure_profile", { profile: state.selectedProfile }).catch(() => {});
   await refreshAntiScreenshareStatus();
   await refreshManifest();
+  await refreshSpotifyStatus();
+  await refreshSocial();
   await refreshMinecraftStatus({ render: false });
   setInterval(() => refreshMinecraftStatus({ render: true }), 3500);
   render();
@@ -981,6 +1281,7 @@ async function restoreSession() {
 async function refreshVersion() {
   try {
     state.version = await api("/api/launcher/version");
+    state.lastVersionCheckAt = Date.now();
     log(`Launcher latest: ${latestLauncherVersion() || "unknown"}`);
   } catch (error) {
     log(`Version check failed: ${error.message || error}`);
@@ -991,6 +1292,8 @@ async function refreshAccount() {
   if (!state.token) return;
   const body = await api("/api/launcher/account");
   applyAccount(body);
+  await refreshSpotifyStatus();
+  await refreshSocial();
 }
 
 function applyAccount(body) {
@@ -999,6 +1302,43 @@ function applyAccount(body) {
   if (!canUseBuild(state.selectedBuild, state.account)) state.selectedBuild = preferredBuildForAccount();
   state.manifest = null;
   state.clientStatus = null;
+  state.spotify = null;
+}
+
+function createProfile() {
+  const label = String(state.newProfileName || "").trim();
+  if (!label) {
+    showPopup("Profile name needed", "Enter a profile name before creating it.", "profile");
+    return;
+  }
+
+  const id = uniqueProfileId(label);
+  const profile = { id, label, fabric: true, client: true, custom: true };
+  state.customProfiles = [...(state.customProfiles || []), profile];
+  state.selectedProfile = id;
+  state.newProfileName = "";
+  saveCustomProfiles();
+  log(`Created profile: ${label}`);
+}
+
+function uniqueProfileId(label) {
+  const base = `custom-${label.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "profile"}`;
+  const used = new Set(allProfiles().map((profile) => profile.id));
+  if (!used.has(base)) return base;
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${base}-${index}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  return `${base}-${Date.now()}`;
+}
+
+function updateSelectedProfileLabel(label) {
+  const value = String(label || "").trim();
+  if (!value) return;
+  state.customProfiles = (state.customProfiles || []).map((profile) => (
+    profile.id === state.selectedProfile ? { ...profile, label: value } : profile
+  ));
+  saveCustomProfiles();
 }
 
 async function refreshMinecraftStatus(options = {}) {
@@ -1073,6 +1413,8 @@ async function pollSignIn(start) {
       localStorage.setItem(TOKEN_KEY, state.token);
       await invoke("save_launcher_token", { token: state.token });
       applyAccount(body);
+      await refreshSpotifyStatus();
+      await refreshSocial();
       log(`Signed in as ${accountTitle()}`);
       state.signIn = null;
       state.signInError = "";
@@ -1084,7 +1426,7 @@ async function pollSignIn(start) {
 }
 
 async function refreshManifest() {
-  const profile = profiles.find((item) => item.id === state.selectedProfile);
+  const profile = currentProfile();
   if (!state.token || !profile?.client) {
     state.clientStatus = null;
     state.manifest = null;
@@ -1097,7 +1439,100 @@ async function refreshManifest() {
     token: state.token
   });
   state.manifest = state.clientStatus;
+  state.lastManifestCheckAt = Date.now();
   log(state.clientStatus.message || `Client checked: ${clientStatusLabel()}`);
+}
+
+async function refreshUpdatesIfStale(force = false) {
+  const now = Date.now();
+  const checks = [];
+  if (force || now - state.lastVersionCheckAt > UPDATE_CHECK_TTL_MS) checks.push(refreshVersion());
+  if (force || now - state.lastManifestCheckAt > UPDATE_CHECK_TTL_MS) checks.push(refreshManifest());
+  if (checks.length) await Promise.allSettled(checks);
+}
+
+async function refreshSpotifyStatus() {
+  if (!state.token) {
+    state.spotify = null;
+    return;
+  }
+  try {
+    state.spotify = await api("/api/spotify/status");
+  } catch (error) {
+    state.spotify = { configured: false, connected: false, message: String(error.message || error) };
+  }
+}
+
+async function refreshSocial() {
+  if (!state.token) {
+    state.social = null;
+    return;
+  }
+  try {
+    state.social = await api("/api/friends");
+  } catch (error) {
+    state.social = { friends: [], incomingRequests: [], outgoingRequests: [], settings: {}, message: String(error.message || error) };
+  }
+}
+
+async function sendFriendRequest() {
+  const username = String(state.friendUsername || "").trim();
+  if (!username) {
+    showPopup("Friend username needed", "Enter a Gamble Client username first.", "friends");
+    return;
+  }
+  setBusy(true, "Sending friend request");
+  try {
+    await api("/api/friends/request", { method: "POST", body: JSON.stringify({ username }) });
+    state.friendUsername = "";
+    await refreshSocial();
+    log("Friend request sent.");
+  } catch (error) {
+    showPopup("Friend request failed", String(error.message || error), "friends");
+    log(`Friend request failed: ${error.message || error}`);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function respondFriendRequest(requestId, action) {
+  setBusy(true, "Updating friend request");
+  try {
+    await api("/api/friends/respond", { method: "POST", body: JSON.stringify({ requestId, action }) });
+    await refreshSocial();
+    log(`Friend request ${action === "accept" ? "accepted" : "declined"}.`);
+  } catch (error) {
+    showPopup("Friend request failed", String(error.message || error), "friends");
+    log(`Friend request update failed: ${error.message || error}`);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function removeFriend(username) {
+  setBusy(true, "Removing friend");
+  try {
+    await api("/api/friends/remove", { method: "POST", body: JSON.stringify({ username }) });
+    await refreshSocial();
+    log("Friend removed.");
+  } catch (error) {
+    showPopup("Friend remove failed", String(error.message || error), "friends");
+    log(`Friend remove failed: ${error.message || error}`);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function updatePrivacySetting(field, value) {
+  const body = { [field]: Boolean(value) };
+  try {
+    const result = await api("/api/friends/settings", { method: "POST", body: JSON.stringify(body) });
+    state.social = { ...(state.social || {}), settings: result.settings || {} };
+    log("Privacy settings updated.");
+  } catch (error) {
+    showPopup("Privacy update failed", String(error.message || error), "friends");
+    log(`Privacy update failed: ${error.message || error}`);
+  }
 }
 
 async function installSelected() {
@@ -1185,6 +1620,7 @@ async function startMicrosoftSignIn() {
   } catch (error) {
     state.microsoftError = String(error?.message || error);
     log(`Microsoft sign-in failed: ${state.microsoftError}`);
+    showPopup("Microsoft sign-in failed", microsoftAuthMessage(state.microsoftError), "account");
     render();
   } finally {
     setBusy(false);
@@ -1235,6 +1671,15 @@ function microsoftVerificationUrl(value) {
   ).trim();
 }
 
+function microsoftAuthMessage(message) {
+  const text = String(message || "Microsoft sign-in failed.");
+  const lower = text.toLowerCase();
+  if (lower.includes("first party application") || lower.includes("pre-authorization")) {
+    return "Microsoft rejected this app registration before account linking. The launcher is using the configured app id, but the Microsoft app registration needs the Xbox/Minecraft resource consent or pre-authorization fixed.";
+  }
+  return text;
+}
+
 async function refreshFiles() {
   await invoke("ensure_profile", { profile: state.selectedProfile }).catch(() => {});
   const [mods, packs] = await Promise.all([
@@ -1283,9 +1728,9 @@ app.addEventListener("click", async (event) => {
   const view = event.target.closest("[data-view]")?.dataset.view;
   if (view) {
     state.view = view;
-    if (view === "mods" || view === "packs" || view === "play") await refreshFiles();
+    if (view === "profiles" || view === "play") await refreshFiles();
     if (view === "accounts") await loadMicrosoftAccounts();
-    if (view === "updates") await Promise.allSettled([refreshVersion(), refreshManifest()]);
+    if (view === "updates") await refreshUpdatesIfStale();
     render();
     return;
   }
@@ -1302,7 +1747,7 @@ app.addEventListener("click", async (event) => {
 
   if (action === "refresh") {
     setBusy(true, "Refreshing");
-    await Promise.allSettled([refreshVersion(), refreshAccount(), refreshManifest(), refreshFiles(), refreshAntiScreenshareStatus(), loadMicrosoftAccounts()]);
+    await Promise.allSettled([refreshVersion(), refreshAccount(), refreshManifest(), refreshFiles(), refreshAntiScreenshareStatus(), loadMicrosoftAccounts(), refreshSpotifyStatus(), refreshSocial()]);
     setBusy(false, "Ready");
   } else if (action === "signin") {
     await startSignIn();
@@ -1324,6 +1769,8 @@ app.addEventListener("click", async (event) => {
     state.token = "";
     state.account = null;
     state.ads = null;
+    state.spotify = null;
+    state.social = null;
     state.clientStatus = null;
     state.manifest = null;
     localStorage.removeItem(TOKEN_KEY);
@@ -1340,17 +1787,31 @@ app.addEventListener("click", async (event) => {
     state.dismissedClientVersion = clientStatusKey();
     localStorage.setItem(CLIENT_DISMISS_KEY, state.dismissedClientVersion);
     render();
+  } else if (action === "dismiss-popup") {
+    state.popup = null;
+    render();
   } else if (action === "install") {
     await installSelected();
   } else if (action === "launch") {
     await refreshMinecraftStatus({ render: false, logExit: false });
-    if (!state.minecraftRunning && !state.microsoft) {
+    const selectedProfile = currentProfile();
+    const selectedAccount = profileAccount(selectedProfile);
+    if (!state.minecraftRunning && clientNeedsUpdate()) {
+      showPopup("Client update needed", state.clientStatus?.message || "Install the latest managed client build before launching.", "client");
+      return;
+    }
+    if (!state.minecraftRunning && !selectedAccount) {
+      showPopup("Microsoft account needed", "Link a Microsoft account before launching this profile.", "account");
       await startMicrosoftSignIn();
       return;
     }
     setBusy(true, "Preparing Minecraft");
     try {
       const selectedBuild = buildForAccount();
+      if (selectedAccount?.uuid && state.microsoft?.uuid !== selectedAccount.uuid) {
+        state.microsoft = await invoke("select_microsoft_account", { uuid: selectedAccount.uuid });
+        await loadMicrosoftAccounts();
+      }
       const message = await invoke("launch_game", {
         input: {
           profile: state.selectedProfile,
@@ -1374,6 +1835,7 @@ app.addEventListener("click", async (event) => {
       await refreshMinecraftStatus({ render: false, logExit: false });
     } catch (error) {
       log(`Launch failed: ${error.message || error}`);
+      showPopup("Launch failed", knownLaunchMessage(error), "launch");
       await refreshMinecraftStatus({ render: false, logExit: false });
     } finally {
       setBusy(false);
@@ -1449,6 +1911,32 @@ app.addEventListener("click", async (event) => {
     render();
   } else if (action === "sponsor") {
     await startSponsor();
+  } else if (action === "toggle-advanced") {
+    state.showAdvancedSettings = !state.showAdvancedSettings;
+    localStorage.setItem(ADVANCED_SETTINGS_KEY, String(state.showAdvancedSettings));
+    render();
+  } else if (action === "select-profile") {
+    state.selectedProfile = actionEl.dataset.profile || "gamble-client";
+    state.clientStatus = null;
+    state.manifest = null;
+    await refreshFiles();
+    await refreshAntiScreenshareStatus();
+    await refreshManifest().catch(() => {});
+    render();
+  } else if (action === "create-profile") {
+    createProfile();
+    await refreshFiles();
+    await refreshAntiScreenshareStatus();
+    await refreshManifest().catch(() => {});
+    render();
+  } else if (action === "send-friend") {
+    await sendFriendRequest();
+  } else if (action === "accept-friend") {
+    await respondFriendRequest(actionEl.dataset.request, "accept");
+  } else if (action === "decline-friend") {
+    await respondFriendRequest(actionEl.dataset.request, "decline");
+  } else if (action === "remove-friend") {
+    await removeFriend(actionEl.dataset.username);
   } else if (action === "toggle-file") {
     await invoke("toggle_local_file", {
       profile: state.selectedProfile,
@@ -1496,8 +1984,28 @@ app.addEventListener("click", async (event) => {
 });
 
 app.addEventListener("change", async (event) => {
+  const privacyField = event.target.closest("[data-privacy-field]")?.dataset.privacyField;
+  if (privacyField) {
+    await updatePrivacySetting(privacyField, event.target.checked);
+    render();
+    return;
+  }
+
   const field = event.target.closest("[data-field]")?.dataset.field;
   if (!field) return;
+  if (field === "selectedProfileLabel") {
+    updateSelectedProfileLabel(event.target.value);
+    render();
+    return;
+  }
+  if (field === "profileAccount") {
+    const value = String(event.target.value || "").replaceAll("-", "").toLowerCase();
+    if (value) state.profileAccountOverrides[state.selectedProfile] = value;
+    else delete state.profileAccountOverrides[state.selectedProfile];
+    saveProfileAccountOverrides();
+    render();
+    return;
+  }
   state[field] = event.target.value;
   if (field === "username") localStorage.setItem("gamble.launcher.username", state.username);
   if (field === "javaArgs") localStorage.setItem("gamble.launcher.javaArgs", state.javaArgs);
@@ -1520,6 +2028,11 @@ app.addEventListener("change", async (event) => {
 app.addEventListener("input", (event) => {
   const field = event.target.closest("[data-field]")?.dataset.field;
   if (!field) return;
+  if (field === "selectedProfileLabel") {
+    updateSelectedProfileLabel(event.target.value);
+    render();
+    return;
+  }
   state[field] = event.target.value;
   if (field === "username") localStorage.setItem("gamble.launcher.username", state.username);
   if (field === "javaArgs") localStorage.setItem("gamble.launcher.javaArgs", state.javaArgs);

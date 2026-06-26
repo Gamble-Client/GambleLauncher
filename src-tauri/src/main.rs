@@ -13,7 +13,7 @@ use std::{
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.70";
+const VERSION: &str = "0.1.71";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -309,7 +309,7 @@ fn launcher_info() -> Result<LauncherInfo, String> {
 fn launcher_api(input: ApiCommandBody) -> Result<serde_json::Value, String> {
     let method = input.method.trim().to_uppercase();
     let path = input.path.trim();
-    if !path.starts_with("/api/launcher/") {
+    if !path.starts_with("/api/launcher/") && path != "/api/spotify/status" && !path.starts_with("/api/friends") {
         return Err("Launcher API path is not allowed.".to_string());
     }
 
@@ -553,16 +553,17 @@ fn microsoft_device_poll(device_code: String) -> Result<serde_json::Value, Strin
 
 #[tauri::command]
 fn ensure_profile(profile: String) -> Result<String, String> {
-    ensure_profile_folders(profile_id(&profile)).map(|path| display_path(&path))
+    let profile = profile_id(&profile);
+    ensure_profile_folders(&profile).map(|path| display_path(&path))
 }
 
 #[tauri::command]
 fn list_local_files(profile: String, kind: String) -> Result<Vec<LocalFile>, String> {
     let profile = profile_id(&profile);
     let folder = if kind == "resourcepacks" {
-        resource_packs_folder(profile)
+        resource_packs_folder(&profile)
     } else {
-        mods_folder(profile)
+        mods_folder(&profile)
     };
     fs::create_dir_all(&folder).map_err(error_text)?;
 
@@ -617,7 +618,7 @@ fn toggle_local_file(profile: String, kind: String, path: String) -> Result<(), 
     let target = toggle_target(&path)?;
     fs::rename(&path, &target).map_err(error_text)?;
     if kind == "resourcepacks" {
-        set_resource_pack_enabled(profile, &target, !target.to_string_lossy().ends_with(".disabled"))?;
+        set_resource_pack_enabled(&profile, &target, !target.to_string_lossy().ends_with(".disabled"))?;
     }
     Ok(())
 }
@@ -625,7 +626,7 @@ fn toggle_local_file(profile: String, kind: String, path: String) -> Result<(), 
 #[tauri::command]
 fn add_resource_packs(profile: String, paths: Vec<String>) -> Result<usize, String> {
     let profile = profile_id(&profile);
-    let folder = resource_packs_folder(profile);
+    let folder = resource_packs_folder(&profile);
     fs::create_dir_all(&folder).map_err(error_text)?;
     let mut copied = 0;
     for source in paths {
@@ -650,7 +651,7 @@ fn add_resource_packs(profile: String, paths: Vec<String>) -> Result<usize, Stri
         } else {
             fs::copy(&source, &target).map_err(error_text)?;
         }
-        set_resource_pack_enabled(profile, &target, true)?;
+        set_resource_pack_enabled(&profile, &target, true)?;
         copied += 1;
     }
     Ok(copied)
@@ -665,10 +666,10 @@ fn open_path(path: String) -> Result<(), String> {
 fn open_profile_folder(profile: String, kind: String) -> Result<String, String> {
     let profile = profile_id(&profile);
     let path = match kind.as_str() {
-        "mods" => mods_folder(profile),
-        "resourcepacks" => resource_packs_folder(profile),
-        "data" => profile_data_folder(profile),
-        _ => minecraft_folder(profile),
+        "mods" => mods_folder(&profile),
+        "resourcepacks" => resource_packs_folder(&profile),
+        "data" => profile_data_folder(&profile),
+        _ => minecraft_folder(&profile),
     };
     fs::create_dir_all(&path).map_err(error_text)?;
     open_external(&display_path(&path))?;
@@ -680,9 +681,9 @@ fn diagnostics(profile: String) -> Result<Diagnostics, String> {
     let profile = profile_id(&profile);
     let mut checks = Vec::new();
     push_check(&mut checks, "Managed root", managed_root().is_dir(), display_path(&managed_root()));
-    push_check(&mut checks, "Profile folder", minecraft_folder(profile).is_dir(), display_path(&minecraft_folder(profile)));
-    push_check(&mut checks, "Mods folder", mods_folder(profile).is_dir(), display_path(&mods_folder(profile)));
-    push_check(&mut checks, "Resource packs", resource_packs_folder(profile).is_dir(), display_path(&resource_packs_folder(profile)));
+    push_check(&mut checks, "Profile folder", minecraft_folder(&profile).is_dir(), display_path(&minecraft_folder(&profile)));
+    push_check(&mut checks, "Mods folder", mods_folder(&profile).is_dir(), display_path(&mods_folder(&profile)));
+    push_check(&mut checks, "Resource packs", resource_packs_folder(&profile).is_dir(), display_path(&resource_packs_folder(&profile)));
     push_check(&mut checks, "Launcher session", launcher_session_file().is_file(), display_path(&launcher_session_file()));
     let microsoft_saved = read_microsoft_account().map(|account| account.is_some()).unwrap_or(false);
     push_check(
@@ -705,32 +706,33 @@ fn diagnostics(profile: String) -> Result<Diagnostics, String> {
 
 #[tauri::command]
 fn anti_screenshare_status(profile: String) -> Result<AntiScreenshareStatus, String> {
-    anti_screenshare_status_for(profile_id(&profile), None)
+    let profile = profile_id(&profile);
+    anti_screenshare_status_for(&profile, None)
 }
 
 #[tauri::command]
 fn set_anti_screenshare(profile: String, enabled: bool) -> Result<AntiScreenshareStatus, String> {
     let profile = profile_id(&profile);
-    ensure_profile_folders(profile)?;
-    write_launcher_preferences(profile, enabled)?;
+    ensure_profile_folders(&profile)?;
+    write_launcher_preferences(&profile, enabled)?;
 
     let message = match toggle_anti_screenshare_bridge_module("antiscreenshare", enabled) {
         Ok(_) => format!("AntiScreenshare {} in the live client.", if enabled { "enabled" } else { "disabled" }),
         Err(_) => update_anti_screenshare_config(
-            profile,
+            &profile,
             &[("antiscreenshare", enabled)],
             &format!("AntiScreenshare {}", if enabled { "enabled" } else { "disabled" }),
         )?,
     };
 
-    anti_screenshare_status_for(profile, Some(message))
+    anti_screenshare_status_for(&profile, Some(message))
 }
 
 #[tauri::command]
 fn apply_anti_screenshare_clean_view(profile: String) -> Result<AntiScreenshareStatus, String> {
     let profile = profile_id(&profile);
-    ensure_profile_folders(profile)?;
-    write_launcher_preferences(profile, true)?;
+    ensure_profile_folders(&profile)?;
+    write_launcher_preferences(&profile, true)?;
 
     let mut changes = Vec::new();
     add_anti_screenshare_changes(&mut changes, ANTISCREENSHARE_CORE_ON, true);
@@ -743,10 +745,10 @@ fn apply_anti_screenshare_clean_view(profile: String) -> Result<AntiScreenshareS
     let message = if live_count > 0 {
         format!("Clean View applied in the live client for {live_count} modules.")
     } else {
-        update_anti_screenshare_config(profile, &changes, "Clean View applied")?
+        update_anti_screenshare_config(&profile, &changes, "Clean View applied")?
     };
 
-    anti_screenshare_status_for(profile, Some(message))
+    anti_screenshare_status_for(&profile, Some(message))
 }
 
 #[tauri::command]
@@ -763,7 +765,7 @@ fn open_anti_screenshare_obs() -> Result<String, String> {
 #[tauri::command]
 fn client_install_status(profile: String, build: String, token: String) -> Result<ClientInstallStatus, String> {
     let profile = profile_id(&profile);
-    if profile != "gamble-client" {
+    if !profile_installs_client(&profile) {
         return Ok(ClientInstallStatus {
             file_name: String::new(),
             build,
@@ -780,9 +782,9 @@ fn client_install_status(profile: String, build: String, token: String) -> Resul
         return Err("Sign in before checking the client build.".to_string());
     }
 
-    ensure_profile_folders(profile)?;
+    ensure_profile_folders(&profile)?;
     let manifest = fetch_client_manifest(&build, &token)?;
-    let installed = payload_file(profile, &manifest.file_name);
+    let installed = payload_file(&profile, &manifest.file_name);
     let current = installed.is_file() && verify_file(&installed, manifest.size, &manifest.sha256).is_ok();
     Ok(ClientInstallStatus {
         file_name: manifest.file_name.clone(),
@@ -837,10 +839,10 @@ fn install_client_manifest(profile: String, build: String, token: String) -> Res
     if token.trim().is_empty() {
         return Err("Sign in before installing the client.".to_string());
     }
-    if profile != "gamble-client" {
-        return Err("Only the Gamble Client profile installs the managed client jar.".to_string());
+    if !profile_installs_client(&profile) {
+        return Err("Vanilla and plain Fabric profiles do not install the managed client jar.".to_string());
     }
-    ensure_profile_folders(profile)?;
+    ensure_profile_folders(&profile)?;
 
     let client = http_client()?;
     let manifest = fetch_client_manifest(&build, &token)?;
@@ -849,12 +851,12 @@ fn install_client_manifest(profile: String, build: String, token: String) -> Res
         return Err("Backend manifest did not include a jar download.".to_string());
     }
 
-    let client_jar = payload_file(profile, &manifest.file_name);
+    let client_jar = payload_file(&profile, &manifest.file_name);
     if client_jar.is_file() && verify_file(&client_jar, manifest.size, &manifest.sha256).is_ok() {
-        cleanup_managed_mod_jars(profile)?;
-        ensure_loader_jar(profile)?;
-        ensure_fabric_api(profile)?;
-        write_install_marker(profile, &build, &manifest, &client_jar)?;
+        cleanup_managed_mod_jars(&profile)?;
+        ensure_loader_jar(&profile)?;
+        ensure_fabric_api(&profile)?;
+        write_install_marker(&profile, &build, &manifest, &client_jar)?;
         return Ok(InstallResult {
             file_name: manifest.file_name.clone(),
             build: manifest.build.clone(),
@@ -886,12 +888,12 @@ fn install_client_manifest(profile: String, build: String, token: String) -> Res
         }
     }
 
-    fs::create_dir_all(payloads_folder(profile)).map_err(error_text)?;
-    cleanup_managed_mod_jars(profile)?;
-    ensure_loader_jar(profile)?;
-    ensure_fabric_api(profile)?;
+    fs::create_dir_all(payloads_folder(&profile)).map_err(error_text)?;
+    cleanup_managed_mod_jars(&profile)?;
+    ensure_loader_jar(&profile)?;
+    ensure_fabric_api(&profile)?;
     fs::write(&client_jar, bytes).map_err(error_text)?;
-    write_install_marker(profile, &build, &manifest, &client_jar)?;
+    write_install_marker(&profile, &build, &manifest, &client_jar)?;
 
     Ok(InstallResult {
         file_name: manifest.file_name.clone(),
@@ -925,7 +927,7 @@ fn launch_game(input: LaunchRequest) -> Result<String, String> {
     if token.is_empty() {
         return Err("Sign in before launching Minecraft.".to_string());
     }
-    ensure_profile_folders(profile)?;
+    ensure_profile_folders(&profile)?;
 
     let account = read_microsoft_account()?.ok_or_else(|| {
         "Microsoft is linked on the site, but this launcher does not have a local Minecraft token yet. Connect Microsoft in the launcher first.".to_string()
@@ -934,27 +936,27 @@ fn launch_game(input: LaunchRequest) -> Result<String, String> {
     if identity.name.trim().is_empty() && !input.username.trim().is_empty() {
         identity.name = input.username.trim().to_string();
     }
-    let managed_client = if profile == "gamble-client" {
+    let managed_client = if profile_installs_client(&profile) {
         Some(PathBuf::from(install_client_manifest(profile.to_string(), build.to_string(), token.to_string())?.path))
     } else {
         None
     };
 
-    let launch_ticket_file = if profile == "gamble-client" {
-        Some(write_launch_ticket_file(profile, token, build)?)
+    let launch_ticket_file = if profile_installs_client(&profile) {
+        Some(write_launch_ticket_file(&profile, token, build)?)
     } else {
         None
     };
-    write_launcher_preferences(profile, input.anti_screenshare)?;
+    write_launcher_preferences(&profile, input.anti_screenshare)?;
 
-    let profile_dir = minecraft_folder(profile);
+    let profile_dir = minecraft_folder(&profile);
     let version_id = if profile == "vanilla" {
         ensure_vanilla_version_json(&profile_dir, MINECRAFT_VERSION)?;
         MINECRAFT_VERSION.to_string()
     } else {
         ensure_fabric_version_json(&profile_dir)?;
         ensure_vanilla_version_json(&profile_dir, MINECRAFT_VERSION)?;
-        ensure_fabric_api(profile)?;
+        ensure_fabric_api(&profile)?;
         format!("fabric-loader-{FABRIC_LOADER_VERSION}-{MINECRAFT_VERSION}")
     };
     let version = load_version_profile(&profile_dir, &version_id)?;
@@ -965,7 +967,7 @@ fn launch_game(input: LaunchRequest) -> Result<String, String> {
 
     let command = build_minecraft_command(
         &profile_dir,
-        profile,
+        &profile,
         build,
         &version_id,
         &version,
@@ -1881,12 +1883,30 @@ fn main() {
         .expect("error while running Gamble Client Launcher");
 }
 
-fn profile_id(value: &str) -> &'static str {
-    match value {
-        "vanilla" => "vanilla",
-        "fabric" => "fabric",
-        _ => "gamble-client",
+fn profile_id(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed == "vanilla" || trimmed == "fabric" || trimmed == "gamble-client" {
+        return trimmed.to_string();
     }
+
+    let mut sanitized = String::new();
+    for ch in trimmed.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            sanitized.push(ch.to_ascii_lowercase());
+        } else if !sanitized.ends_with('-') {
+            sanitized.push('-');
+        }
+    }
+    let sanitized = sanitized.trim_matches('-').to_string();
+    if sanitized.is_empty() {
+        "gamble-client".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn profile_installs_client(profile: &str) -> bool {
+    profile != "vanilla" && profile != "fabric"
 }
 
 fn managed_root() -> PathBuf {
