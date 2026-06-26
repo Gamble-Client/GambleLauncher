@@ -5,6 +5,8 @@ import "./styles.css";
 const SITE = "https://gamble-client.store";
 const DASH = "https://dash.gamble-client.store";
 const TOKEN_KEY = "gamble.launcher.token";
+const LAUNCHER_DISMISS_KEY = "gamble.launcher.dismissedLauncherVersion";
+const CLIENT_DISMISS_KEY = "gamble.launcher.dismissedClientVersion";
 const PREVIEW = !("__TAURI_INTERNALS__" in window);
 
 const app = document.querySelector("#app");
@@ -29,10 +31,11 @@ const state = {
   token: "",
   account: null,
   microsoft: null,
+  microsoftAccounts: [],
   ads: null,
   selectedProfile: "gamble-client",
   selectedBuild: "release",
-  memory: "4",
+  memory: defaultMemory(),
   username: defaultUsername(),
   javaArgs: defaultJavaArgs(),
   antiScreenshare: defaultAntiScreenshare(),
@@ -49,18 +52,28 @@ const state = {
   diagnostics: [],
   antiStatus: null,
   manifest: null,
+  clientStatus: null,
   minecraftRunning: false,
   minecraftPid: null,
+  dismissedLauncherVersion: readStorage(LAUNCHER_DISMISS_KEY),
+  dismissedClientVersion: readStorage(CLIENT_DISMISS_KEY),
   log: []
 };
 
+function readStorage(key, fallback = "") {
+  return (globalThis.localStorage?.getItem(key) || fallback).trim();
+}
+
 function defaultUsername() {
-  const value = (globalThis.localStorage?.getItem("gamble.launcher.username") || "").trim();
-  return value || "Player";
+  return readStorage("gamble.launcher.username", "Player") || "Player";
+}
+
+function defaultMemory() {
+  return readStorage("gamble.launcher.memory", "4") || "4";
 }
 
 function defaultJavaArgs() {
-  return (globalThis.localStorage?.getItem("gamble.launcher.javaArgs") || "").trim();
+  return readStorage("gamble.launcher.javaArgs");
 }
 
 function defaultAntiScreenshare() {
@@ -78,24 +91,46 @@ async function openDialog(options) {
 }
 
 async function mockInvoke(command, args = {}) {
-  await sleep(40);
+  await sleep(35);
   if (command === "launcher_info") {
     return {
-      version: "0.1.69",
+      version: "0.1.70",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
-      data_folder: "/home/theac/.local/share/gamble-client",
-      session_file: "/home/theac/.local/share/gamble-client/launcher-session.json",
+      data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
+      session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
       os: "linux"
     };
   }
   if (command === "read_launcher_token") return "preview-token";
   if (command === "read_microsoft_account") return { name: "BaseToucher", uuid: "8667ba71b85a4004af54457a9734eed7", xuid: "preview" };
+  if (command === "list_microsoft_accounts") {
+    return {
+      selectedUuid: "8667ba71b85a4004af54457a9734eed7",
+      accounts: [
+        { name: "BaseToucher", uuid: "8667ba71b85a4004af54457a9734eed7", xuid: "preview" },
+        { name: "AltStacker", uuid: "df2c98f29f4a4b29b7ca5a2a43c1f333", xuid: "preview2" }
+      ]
+    };
+  }
+  if (command === "select_microsoft_account") return state.microsoftAccounts.find((account) => account.uuid === args.uuid) || state.microsoft;
+  if (command === "delete_microsoft_account_by_uuid") {
+    return { selectedUuid: state.microsoft?.uuid || "", accounts: state.microsoftAccounts.filter((account) => account.uuid !== args.uuid) };
+  }
   if (command === "save_launcher_token" || command === "ensure_profile" || command === "open_url") return "";
   if (command === "delete_launcher_token" || command === "delete_microsoft_account") return null;
   if (command === "launcher_api") {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
-      return { version: "0.1.69", minVersion: "0.1.69" };
+      return {
+        version: "0.1.70",
+        minVersion: "0.1.70",
+        downloadUrl: "/api/launcher/download",
+        downloads: {
+          windows: { fileName: "Gamble-Client-Launcher-0.1.70-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.70-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.70_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+        }
+      };
     }
     if (path === "/api/launcher/session" || path === "/api/launcher/account") {
       return {
@@ -103,12 +138,27 @@ async function mockInvoke(command, args = {}) {
         ads: { required: false, canWatch: false, remainingSeconds: 0 }
       };
     }
-    if (path === "/api/launcher/manifest") {
-      return { buildVersion: "1.21.11", fileName: "cg-client-1.21.11.jar" };
-    }
     if (path === "/api/launcher/start") {
       return { loginUrl: "https://gamble-client.store/login", expiresAt: Math.floor(Date.now() / 1000) + 120, code: "preview" };
     }
+  }
+  if (command === "client_install_status") {
+    return {
+      fileName: "cg-client-1.21.11.jar",
+      build: args.build || "release",
+      buildVersion: "1.21.11",
+      installed: false,
+      updateAvailable: true,
+      message: "Client update available: 1.21.11"
+    };
+  }
+  if (command === "download_launcher_update") {
+    return {
+      version: "0.1.70",
+      fileName: "Gamble-Client-Launcher_0.1.70_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.70_amd64.deb",
+      message: "Opened the downloaded launcher installer."
+    };
   }
   if (command === "list_local_files") {
     if (args.kind === "resourcepacks") {
@@ -118,9 +168,9 @@ async function mockInvoke(command, args = {}) {
       ];
     }
     return [
-      { name: "fabric-api.jar", path: "/mods/fabric-api.jar", enabled: true, locked: true, size: 7200000 },
-      { name: "modmenu.jar", path: "/mods/modmenu.jar", enabled: true, locked: false, size: 520000 },
-      { name: "sodium.jar", path: "/mods/sodium.jar", enabled: true, locked: false, size: 1100000 }
+      { name: "fabric-api-0.139.5+1.21.11.jar", path: "/mods/fabric-api.jar", enabled: true, locked: true, size: 7200000 },
+      { name: "gamble-client-loader.jar", path: "/mods/gamble-client-loader.jar", enabled: true, locked: true, size: 1800 },
+      { name: "modmenu.jar", path: "/mods/modmenu.jar", enabled: true, locked: false, size: 520000 }
     ];
   }
   if (command === "diagnostics") {
@@ -128,7 +178,7 @@ async function mockInvoke(command, args = {}) {
       checks: [
         { label: "Java", ok: true, detail: "Java 21 available" },
         { label: "Profile folder", ok: true, detail: "Writable" },
-        { label: "Client payload", ok: true, detail: "Ready" }
+        { label: "Client jar", ok: true, detail: "Ready" }
       ]
     };
   }
@@ -138,7 +188,7 @@ async function mockInvoke(command, args = {}) {
       available: true,
       bridgeOnline: false,
       source: "Preview config",
-      message: state.antiScreenshare ? "Preview saved config has AntiScreenshare on." : "Preview saved config has AntiScreenshare off.",
+      message: state.antiScreenshare ? "Saved config has AntiScreenshare on." : "Saved config has AntiScreenshare off.",
       modulesPath: "/preview/cg-mod/modules.txt"
     };
   }
@@ -166,7 +216,13 @@ async function mockInvoke(command, args = {}) {
   }
   if (command === "open_anti_screenshare_obs") return "Opened OBS Browser Source view.";
   if (command === "install_client_manifest") {
-    return { buildVersion: "1.21.11", fileName: "cg-client-1.21.11.jar", message: "Updated managed client payload to: 1.21.11" };
+    return {
+      buildVersion: "1.21.11",
+      fileName: "cg-client-1.21.11.jar",
+      installed: true,
+      updateAvailable: false,
+      message: "Updated managed client to: 1.21.11"
+    };
   }
   if (command === "launch_game") {
     state.minecraftRunning = !state.minecraftRunning;
@@ -178,7 +234,56 @@ async function mockInvoke(command, args = {}) {
   return null;
 }
 
+let renderedView = state.view;
+
+function captureScrollState() {
+  const nodes = Array.from(app.querySelectorAll("[data-scroll-key], .content, .file-list, .diagnostics-list, pre"));
+  const seen = new Set();
+  const entries = [];
+  for (const node of nodes) {
+    const key = scrollKey(node, entries.length);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    entries.push({ key, left: node.scrollLeft, top: node.scrollTop });
+  }
+  return { entries, windowX: window.scrollX, windowY: window.scrollY };
+}
+
+function scrollKey(node, index) {
+  if (node.dataset.scrollKey) return node.dataset.scrollKey;
+  if (node.classList.contains("content")) return "content";
+  if (node.classList.contains("file-list")) return `file-list:${state.view}`;
+  if (node.classList.contains("diagnostics-list")) return "diagnostics-list";
+  if (node.tagName === "PRE") return "log";
+  return `scroll:${index}`;
+}
+
+function restoreScrollState(snapshot) {
+  if (!snapshot) return;
+  const restore = () => {
+    for (const entry of snapshot.entries || []) {
+      const node = app.querySelector(`[data-scroll-key="${cssEscape(entry.key)}"]`)
+        || Array.from(app.querySelectorAll(".content, .file-list, .diagnostics-list, pre")).find((item, index) => scrollKey(item, index) === entry.key);
+      if (!node) continue;
+      node.scrollLeft = entry.left;
+      node.scrollTop = Math.min(entry.top, Math.max(0, node.scrollHeight - node.clientHeight));
+    }
+    window.scrollTo(snapshot.windowX, snapshot.windowY);
+  };
+  requestAnimationFrame(() => {
+    restore();
+    requestAnimationFrame(restore);
+  });
+}
+
+function cssEscape(value) {
+  if (globalThis.CSS?.escape) return CSS.escape(value);
+  return String(value).replaceAll('"', '\\"').replaceAll("\\", "\\\\");
+}
+
 function render() {
+  const scrollState = captureScrollState();
+  const preserveScroll = scrollState && renderedView === state.view;
   const profile = profiles.find((item) => item.id === state.selectedProfile) || profiles[0];
   const signedIn = Boolean(state.account && state.token);
   const selectedBuild = buildForAccount();
@@ -190,11 +295,15 @@ function render() {
           <div class="brand-mark">GC</div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.69")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.70")}</span>
           </div>
         </div>
         <nav>
           ${navButton("play", "Play")}
+          ${navButton("accounts", "Accounts")}
+          ${navButton("updates", "Updates")}
+          ${navButton("settings", "Settings")}
+          ${navButton("privacy", "AntiScreenshare")}
           ${navButton("mods", "Mods")}
           ${navButton("packs", "Resource Packs")}
           ${navButton("diagnostics", "Diagnostics")}
@@ -208,28 +317,36 @@ function render() {
             <small>${escapeHtml(accountMeta())}</small>
           </div>
           <div class="rail-card">
-            <span>Build service</span>
-            <strong>${escapeHtml(state.version?.version || "Checking")}</strong>
-            <small>${escapeHtml(state.status)}</small>
+            <span>Latest launcher</span>
+            <strong>${escapeHtml(latestLauncherVersion() || "Checking")}</strong>
+            <small>${escapeHtml(launcherNeedsUpdate() ? "Update available" : state.status)}</small>
           </div>
         </div>
       </aside>
 
-      <section class="content">
+      <section class="content" data-scroll-key="content">
         ${topbar(signedIn)}
         ${state.view === "play" ? playView(profile, selectedBuild, canInstall, signedIn) : ""}
+        ${state.view === "accounts" ? accountsView(signedIn) : ""}
+        ${state.view === "updates" ? updatesView(profile, selectedBuild, canInstall, signedIn) : ""}
+        ${state.view === "settings" ? settingsView(profile, selectedBuild) : ""}
+        ${state.view === "privacy" ? privacyView() : ""}
         ${state.view === "mods" ? fileView("mods", profile, state.mods) : ""}
         ${state.view === "packs" ? fileView("packs", profile, state.packs) : ""}
         ${state.view === "diagnostics" ? diagnosticsView() : ""}
         ${state.signIn ? signInPanel() : ""}
         ${state.microsoftSignIn ? microsoftPanel() : ""}
       </section>
+      ${updatePopup()}
     </section>
   `;
+
+  renderedView = state.view;
+  if (preserveScroll) restoreScrollState(scrollState);
 }
 
 function navButton(id, label) {
-  return `<button class="nav-item ${state.view === id ? "active" : ""}" type="button" data-view="${id}">${label}</button>`;
+  return `<button class="nav-item ${state.view === id ? "active" : ""}" type="button" data-view="${id}">${escapeHtml(label)}</button>`;
 }
 
 function topbar(signedIn) {
@@ -248,8 +365,8 @@ function topbar(signedIn) {
 }
 
 function playView(profile, selectedBuild, canInstall, signedIn) {
-  const launchLabel = state.minecraftRunning ? "Stop Minecraft" : state.microsoft ? "Launch" : "Microsoft Sign In";
-  const clientStatus = state.manifest ? displayManifest(state.manifest) : "Not checked";
+  const launchLabel = state.minecraftRunning ? "Stop Minecraft" : "Launch";
+  const clientStatus = clientStatusLabel();
   const enabledMods = state.mods.filter((item) => item.enabled).length;
   const enabledPacks = state.packs.filter((item) => item.enabled).length;
   return `
@@ -269,12 +386,15 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
               <strong>${escapeHtml(state.memory)} GB</strong>
             </div>
             <div>
-              <span>Payload</span>
+              <span>Client</span>
               <strong>${escapeHtml(clientStatus)}</strong>
             </div>
           </div>
         </div>
-        <button class="launch-button" type="button" data-action="launch" ${state.busy ? "disabled" : ""}>${escapeHtml(launchLabel)}</button>
+        <div class="launch-stack">
+          <button class="launch-button" type="button" data-action="launch" ${state.busy ? "disabled" : ""}>${escapeHtml(launchLabel)}</button>
+          ${state.microsoft ? "" : `<p class="launch-warning">No Microsoft account linked. Launch opens Microsoft sign-in first.</p>`}
+        </div>
       </section>
 
       <aside class="account-panel">
@@ -287,74 +407,191 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           </div>
         </div>
         ${accountRow("Launcher", accountTitle(), accountMeta(), signedIn ? "Signed in" : "Required")}
-        ${accountRow("Minecraft", microsoftTitle(), state.microsoft ? "Java profile linked" : "Required for launch", state.microsoft ? "Linked" : "Required")}
-        <button class="subtle-button" type="button" data-action="${state.microsoft ? "switch-microsoft" : "microsoft"}" ${state.busy ? "disabled" : ""}>${state.microsoft ? "Switch Microsoft" : "Connect Microsoft"}</button>
+        ${accountRow("Minecraft", microsoftTitle(), state.microsoft ? `${state.microsoftAccounts.length || 1} saved account${(state.microsoftAccounts.length || 1) === 1 ? "" : "s"}` : "Required for launch", state.microsoft ? "Linked" : "Required")}
+        <div class="split-actions">
+          <button class="subtle-button" type="button" data-view="accounts">Accounts</button>
+          <button class="subtle-button" type="button" data-action="microsoft" ${state.busy ? "disabled" : ""}>Add Microsoft</button>
+        </div>
       </aside>
     </section>
 
-    <section class="launcher-deck">
-      <div class="control-column">
-        <section class="tune-strip">
+    <section class="quick-grid main-quick-grid">
+      <article class="action-tile">
+        <span>Launcher</span>
+        <strong>${escapeHtml(launcherNeedsUpdate() ? `Update ${latestLauncherVersion()}` : "Current")}</strong>
+        <button type="button" data-action="download-launcher" ${!launcherNeedsUpdate() || state.busy ? "disabled" : ""}>Update</button>
+      </article>
+      <article class="action-tile">
+        <span>Client</span>
+        <strong>${escapeHtml(clientStatus)}</strong>
+        <button type="button" data-action="install" ${!canInstall || state.busy ? "disabled" : ""}>Update</button>
+      </article>
+      <article class="action-tile">
+        <span>Sponsor</span>
+        <strong>${escapeHtml(sponsorTitle())}</strong>
+        <button type="button" data-action="sponsor" ${!signedIn || !state.ads?.canWatch || state.busy ? "disabled" : ""}>Watch</button>
+      </article>
+      <article class="action-tile">
+        <span>Mods</span>
+        <strong>${profile.fabric ? `${enabledMods} enabled` : "Vanilla"}</strong>
+        <button type="button" data-view="mods">Manage</button>
+      </article>
+      <article class="action-tile">
+        <span>Resource packs</span>
+        <strong>${enabledPacks} enabled</strong>
+        <button type="button" data-view="packs">Manage</button>
+      </article>
+      <article class="action-tile process-tile">
+        <span>Process</span>
+        <strong>${state.minecraftRunning ? `Running${state.minecraftPid ? ` #${state.minecraftPid}` : ""}` : "No active game"}</strong>
+        <button type="button" data-action="launch" ${!state.minecraftRunning || state.busy ? "disabled" : ""}>Kill</button>
+      </article>
+    </section>
+    ${state.sponsor ? sponsorOverlay() : ""}
+  `;
+}
+
+function accountsView(signedIn) {
+  return `
+    <section class="screen-band">
+      <div>
+        <span class="eyebrow">Identity</span>
+        <h2>Accounts</h2>
+      </div>
+      <div class="top-actions">
+        <button class="ghost" type="button" data-action="microsoft" ${state.busy ? "disabled" : ""}>Add Microsoft</button>
+        <button class="ghost" type="button" data-action="${signedIn ? "signout" : "signin"}" ${state.busy ? "disabled" : ""}>${signedIn ? "Sign out launcher" : "Sign in launcher"}</button>
+      </div>
+    </section>
+    <section class="account-list">
+      ${state.microsoftAccounts.length ? state.microsoftAccounts.map(accountCard).join("") : `<p class="empty">No Microsoft accounts saved on this device.</p>`}
+    </section>
+  `;
+}
+
+function accountCard(account) {
+  const active = state.microsoft?.uuid && account.uuid?.toLowerCase() === state.microsoft.uuid.toLowerCase();
+  return `
+    <article class="account-card ${active ? "active" : ""}">
+      <div class="identity-card">
+        <div class="avatar" style="${escapeAttr(avatarStyle(account))}">${escapeHtml(avatarInitials(account.name))}</div>
+        <div>
+          <span class="eyebrow">${active ? "Active" : "Saved"}</span>
+          <strong>${escapeHtml(account.name || "Minecraft account")}</strong>
+          <small>${escapeHtml(account.uuid || account.xuid || "")}</small>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button class="ghost" type="button" data-action="select-microsoft" data-uuid="${escapeAttr(account.uuid)}" ${active || state.busy ? "disabled" : ""}>Use</button>
+        <button class="ghost danger" type="button" data-action="remove-microsoft" data-uuid="${escapeAttr(account.uuid)}" ${state.busy ? "disabled" : ""}>Remove</button>
+      </div>
+    </article>
+  `;
+}
+
+function updatesView(profile, selectedBuild, canInstall, signedIn) {
+  return `
+    <section class="screen-band">
+      <div>
+        <span class="eyebrow">Versions</span>
+        <h2>Updates</h2>
+      </div>
+      <div class="top-actions">
+        <button class="ghost" type="button" data-action="refresh" ${state.busy ? "disabled" : ""}>Check</button>
+      </div>
+    </section>
+    <section class="update-grid">
+      <article class="update-card ${launcherNeedsUpdate() ? "warn" : ""}">
+        <span>Launcher</span>
+        <strong>${escapeHtml(launcherNeedsUpdate() ? "Update required" : "Current")}</strong>
+        <p>Installed ${escapeHtml(state.info?.version || "unknown")} · Latest ${escapeHtml(latestLauncherVersion() || "unknown")}</p>
+        <button class="primary-small" type="button" data-action="download-launcher" ${state.busy || !latestLauncherVersion() ? "disabled" : ""}>Update Launcher</button>
+      </article>
+      <article class="update-card ${clientNeedsUpdate() ? "warn" : ""}">
+        <span>Client</span>
+        <strong>${escapeHtml(clientStatusLabel())}</strong>
+        <p>${escapeHtml(profile.client ? `${selectedBuild.label} build` : "This profile does not install the managed client jar.")}</p>
+        <button class="primary-small" type="button" data-action="install" ${!canInstall || state.busy ? "disabled" : ""}>Update Client</button>
+      </article>
+      <article class="update-card">
+        <span>Required mods</span>
+        <strong>Fabric API managed</strong>
+        <p>Fabric API and the Gamble loader stay enabled and locked in Fabric profiles.</p>
+        <button class="ghost" type="button" data-view="mods">View Mods</button>
+      </article>
+      <article class="update-card">
+        <span>Access</span>
+        <strong>${escapeHtml(signedIn ? accountTitle() : "Sign in required")}</strong>
+        <p>${escapeHtml(accountMeta())}</p>
+        <button class="ghost" type="button" data-action="${signedIn ? "refresh" : "signin"}">${signedIn ? "Refresh" : "Sign in"}</button>
+      </article>
+    </section>
+    ${logView()}
+  `;
+}
+
+function settingsView(profile, selectedBuild) {
+  return `
+    <section class="screen-band">
+      <div>
+        <span class="eyebrow">Launch</span>
+        <h2>Settings</h2>
+      </div>
+      <div class="top-actions">
+        <button class="ghost" type="button" data-action="open-data">Data Folder</button>
+      </div>
+    </section>
+    <section class="settings-grid">
+      <label>
+        <span>Profile</span>
+        <select data-field="selectedProfile">
+          ${profiles.map((item) => `<option value="${item.id}" ${item.id === state.selectedProfile ? "selected" : ""}>${item.label}</option>`).join("")}
+        </select>
+      </label>
+      <label>
+        <span>Build</span>
+        <select data-field="selectedBuild" ${!profile.client || adTierOnly() ? "disabled" : ""}>
+          ${builds.map((item) => `<option value="${item.id}" ${item.id === selectedBuild.id ? "selected" : ""}>${item.label}</option>`).join("")}
+        </select>
+      </label>
+      <label>
+        <span>Memory</span>
+        <select data-field="memory">
+          ${["2", "3", "4", "5", "6", "7", "8", "10", "12", "16"].map((item) => `<option value="${item}" ${item === state.memory ? "selected" : ""}>${item} GB</option>`).join("")}
+        </select>
+      </label>
+      ${state.microsoft ? `
+        <div class="setting-note">
+          <span>Offline username</span>
+          <strong>${escapeHtml(state.microsoft.name)}</strong>
+          <small>Hidden because a Microsoft account is linked.</small>
+        </div>
+      ` : `
         <label>
-          <span>Profile</span>
-          <select data-field="selectedProfile">
-            ${profiles.map((item) => `<option value="${item.id}" ${item.id === state.selectedProfile ? "selected" : ""}>${item.label}</option>`).join("")}
-          </select>
-        </label>
-        <label>
-          <span>Build</span>
-          <select data-field="selectedBuild" ${!profile.client || adTierOnly() ? "disabled" : ""}>
-            ${builds.map((item) => `<option value="${item.id}" ${item.id === selectedBuild.id ? "selected" : ""}>${item.label}</option>`).join("")}
-          </select>
-        </label>
-        <label>
-          <span>Memory</span>
-          <select data-field="memory">
-            ${["2", "3", "4", "5", "6", "7", "8", "10", "12", "16"].map((item) => `<option value="${item}" ${item === state.memory ? "selected" : ""}>${item} GB</option>`).join("")}
-          </select>
-        </label>
-        <label>
-          <span>Username</span>
+          <span>Offline username</span>
           <input data-field="username" value="${escapeAttr(state.username)}" placeholder="Offline name">
         </label>
-        <label class="wide-field">
-          <span>JVM Args</span>
-          <input data-field="javaArgs" value="${escapeAttr(state.javaArgs)}" placeholder="-XX:+UseZGC">
-        </label>
-        </section>
-        ${antiScreensharePanel()}
-      </div>
-
-      <section class="quick-grid">
-        <article class="action-tile">
-          <span>Client</span>
-          <strong>${escapeHtml(clientStatus)}</strong>
-          <button type="button" data-action="install" ${!canInstall || state.busy ? "disabled" : ""}>Update</button>
-        </article>
-        <article class="action-tile">
-          <span>Sponsor</span>
-          <strong>${escapeHtml(sponsorTitle())}</strong>
-          <button type="button" data-action="sponsor" ${!signedIn || !state.ads?.canWatch || state.busy ? "disabled" : ""}>Watch</button>
-        </article>
-        <article class="action-tile">
-          <span>Mods</span>
-          <strong>${profile.fabric ? `${enabledMods} enabled` : "Vanilla"}</strong>
-          <button type="button" data-view="mods">Manage</button>
-        </article>
-        <article class="action-tile">
-          <span>Resource packs</span>
-          <strong>${enabledPacks} enabled</strong>
-          <button type="button" data-view="packs">Manage</button>
-        </article>
-        <article class="action-tile process-tile">
-          <span>Process</span>
-          <strong>${state.minecraftRunning ? `Running${state.minecraftPid ? ` #${state.minecraftPid}` : ""}` : "No active game"}</strong>
-          <button type="button" data-action="launch" ${!state.minecraftRunning || state.busy ? "disabled" : ""}>Kill</button>
-        </article>
-      </section>
+      `}
+      <label class="wide-field">
+        <span>Java Args</span>
+        <input data-field="javaArgs" value="${escapeAttr(state.javaArgs)}" placeholder="-XX:+UseZGC">
+      </label>
     </section>
+  `;
+}
 
-    ${state.sponsor ? sponsorOverlay() : ""}
+function privacyView() {
+  return `
+    <section class="screen-band">
+      <div>
+        <span class="eyebrow">Privacy</span>
+        <h2>AntiScreenshare</h2>
+      </div>
+      <div class="top-actions">
+        <button class="ghost" type="button" data-action="refresh-anti">Refresh</button>
+      </div>
+    </section>
+    ${antiScreensharePanel()}
   `;
 }
 
@@ -366,7 +603,7 @@ function antiScreensharePanel() {
   return `
     <section class="privacy-panel ${enabled ? "on" : ""}">
       <div class="privacy-copy">
-        <span class="eyebrow">Privacy</span>
+        <span class="eyebrow">Mode</span>
         <strong>AntiScreenshare ${enabled ? "on" : "off"}</strong>
         <small>${escapeHtml(source)} · ${escapeHtml(message)}</small>
       </div>
@@ -382,6 +619,41 @@ function antiScreensharePanel() {
   `;
 }
 
+function updatePopup() {
+  if (launcherNeedsUpdate() && state.dismissedLauncherVersion !== latestLauncherVersion()) {
+    return `
+      <section class="modal-scrim">
+        <article class="update-modal">
+          <span class="eyebrow">Launcher update</span>
+          <h2>Update required</h2>
+          <p>Installed ${escapeHtml(state.info?.version || "unknown")}. Latest is ${escapeHtml(latestLauncherVersion() || "unknown")}.</p>
+          <div class="top-actions">
+            <button class="primary-small" type="button" data-action="download-launcher" ${state.busy ? "disabled" : ""}>Update Launcher</button>
+            <button class="ghost" type="button" data-action="dismiss-launcher-popup">Later</button>
+          </div>
+        </article>
+      </section>
+    `;
+  }
+  const clientKey = clientStatusKey();
+  if (clientNeedsUpdate() && state.dismissedClientVersion !== clientKey) {
+    return `
+      <section class="modal-scrim">
+        <article class="update-modal">
+          <span class="eyebrow">Client update</span>
+          <h2>Client update available</h2>
+          <p>${escapeHtml(state.clientStatus?.message || "Install the latest managed client build.")}</p>
+          <div class="top-actions">
+            <button class="primary-small" type="button" data-action="install" ${state.busy ? "disabled" : ""}>Update Client</button>
+            <button class="ghost" type="button" data-action="dismiss-client-popup">Later</button>
+          </div>
+        </article>
+      </section>
+    `;
+  }
+  return "";
+}
+
 function accountRow(label, title, meta, badge) {
   return `
     <div class="account-row">
@@ -395,15 +667,14 @@ function accountRow(label, title, meta, badge) {
   `;
 }
 
-function avatarStyle() {
-  const uuid = String(state.microsoft?.uuid || "").replaceAll("-", "").trim();
+function avatarStyle(account = state.microsoft) {
+  const uuid = String(account?.uuid || "").replaceAll("-", "").trim();
   if (!/^[a-f0-9]{32}$/i.test(uuid)) return "";
-  return `background-image:linear-gradient(135deg, rgba(239, 63, 69, 0.2), rgba(24, 200, 181, 0.15)), url(https://crafatar.com/avatars/${uuid}?overlay&size=128);`;
+  return `background-image:linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(90, 170, 255, 0.14)), url(https://crafatar.com/avatars/${uuid}?overlay&size=128);`;
 }
 
-function avatarInitials() {
-  const source = state.microsoft?.name || accountTitle() || "GC";
-  return source.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "GC";
+function avatarInitials(source = state.microsoft?.name || accountTitle() || "GC") {
+  return String(source).split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "GC";
 }
 
 function signInPanel() {
@@ -456,7 +727,7 @@ function fileView(kind, profile, files) {
       </div>
     </section>
     ${disabled ? `<p class="empty">Vanilla has no mods folder. Switch to a Fabric profile to manage jar files.</p>` : ""}
-    <section class="file-list">
+    <section class="file-list" data-scroll-key="${kind}-file-list">
       ${files.length ? files.map((file) => fileRow(kind, file)).join("") : `<p class="empty">${isPacks ? "No resource packs yet." : "No mod jars yet."}</p>`}
     </section>
   `;
@@ -467,7 +738,7 @@ function fileRow(kind, file) {
     <article class="file-row">
       <div>
         <strong>${escapeHtml(file.name)}</strong>
-        <span>${escapeHtml(file.enabled ? "Enabled" : "Disabled")} · ${formatBytes(file.size)}</span>
+        <span>${escapeHtml(file.enabled ? "Enabled" : "Disabled")} · ${formatBytes(file.size)}${file.locked ? " · Required" : ""}</span>
       </div>
       <button type="button" data-action="toggle-file" data-kind="${kind}" data-path="${escapeAttr(file.path)}" ${file.locked ? "disabled" : ""}>${file.enabled ? "Disable" : "Enable"}</button>
     </article>
@@ -486,7 +757,7 @@ function diagnosticsView() {
         <button class="ghost" type="button" data-action="run-diagnostics">Run</button>
       </div>
     </section>
-    <section class="diagnostics-list">
+    <section class="diagnostics-list" data-scroll-key="diagnostics-list">
       ${state.diagnostics.length ? state.diagnostics.map((check) => `
         <article class="diagnostic-row ${check.ok ? "ok" : "warn"}">
           <strong>${escapeHtml(check.label)}</strong>
@@ -519,12 +790,16 @@ function logView() {
         <strong>Launcher Log</strong>
         <button type="button" data-action="clear-log">Clear</button>
       </div>
-      <pre>${escapeHtml(state.log.slice(-80).join("\n"))}</pre>
+      <pre data-scroll-key="launcher-log">${escapeHtml(state.log.slice(-80).join("\n"))}</pre>
     </section>
   `;
 }
 
 function viewTitle() {
+  if (state.view === "accounts") return "Accounts";
+  if (state.view === "updates") return "Update Center";
+  if (state.view === "settings") return "Launcher Settings";
+  if (state.view === "privacy") return "AntiScreenshare";
   if (state.view === "mods") return "Manage Mods";
   if (state.view === "packs") return "Manage Resource Packs";
   if (state.view === "diagnostics") return "Launcher Diagnostics";
@@ -536,9 +811,9 @@ function profileLabel() {
 }
 
 function playCopy(profile, signedIn) {
-  if (!signedIn) return "Sign in to check access, refresh Ad Tier, and install the managed client payload.";
+  if (!signedIn) return "Sign in to check access, refresh Ad Tier, and install the managed client jar.";
   if (!profile.client) return `${profile.label} uses the same managed folders without installing the Gamble Client jar.`;
-  return "Install and verify the managed payload, keep mods/resource packs organized, and prepare the native launch path.";
+  return "Install and verify the managed client, keep mods/resource packs organized, and prepare the native launch path.";
 }
 
 function accountTitle() {
@@ -600,8 +875,43 @@ function sponsorTitle() {
   return state.ads.canWatch ? "Ready" : "Capped";
 }
 
-function displayManifest(manifest) {
-  return manifest.buildVersion || manifest.fileName || "Available";
+function clientStatusLabel() {
+  if (!profiles.find((item) => item.id === state.selectedProfile)?.client) return "No client jar";
+  if (!state.clientStatus && !state.manifest) return "Not checked";
+  const status = state.clientStatus || state.manifest;
+  if (status.updateAvailable) return "Update available";
+  return status.buildVersion || status.fileName || "Current";
+}
+
+function clientNeedsUpdate() {
+  return Boolean(state.clientStatus?.updateAvailable);
+}
+
+function clientStatusKey() {
+  const status = state.clientStatus || {};
+  return `${state.selectedBuild}:${status.fileName || status.buildVersion || ""}`;
+}
+
+function latestLauncherVersion() {
+  return String(state.version?.version || state.version?.minVersion || "").trim();
+}
+
+function launcherNeedsUpdate() {
+  const current = state.info?.version || "0.0.0";
+  const latest = latestLauncherVersion();
+  const minimum = String(state.version?.minVersion || "").trim();
+  return (latest && compareVersions(current, latest) < 0) || (minimum && compareVersions(current, minimum) < 0);
+}
+
+function compareVersions(left, right) {
+  const a = String(left || "").match(/\d+/g) || [0];
+  const b = String(right || "").match(/\d+/g) || [0];
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index += 1) {
+    const diff = Number(a[index] || 0) - Number(b[index] || 0);
+    if (diff !== 0) return diff < 0 ? -1 : 1;
+  }
+  return 0;
 }
 
 function log(message) {
@@ -632,13 +942,20 @@ async function boot() {
   }
 
   state.token = localStorage.getItem(TOKEN_KEY) || await invoke("read_launcher_token").catch(() => "");
-  state.microsoft = await invoke("read_microsoft_account").catch(() => null);
+  await loadMicrosoftAccounts();
   await Promise.allSettled([refreshVersion(), refreshFiles(), restoreSession()]);
   await invoke("ensure_profile", { profile: state.selectedProfile }).catch(() => {});
   await refreshAntiScreenshareStatus();
-  await refreshMinecraftStatus();
-  setInterval(refreshMinecraftStatus, 3500);
+  await refreshManifest();
+  await refreshMinecraftStatus({ render: false });
+  setInterval(() => refreshMinecraftStatus({ render: true }), 3500);
   render();
+}
+
+async function loadMicrosoftAccounts() {
+  const result = await invoke("list_microsoft_accounts").catch(() => ({ accounts: [], selectedUuid: "" }));
+  state.microsoftAccounts = result?.accounts || [];
+  state.microsoft = await invoke("read_microsoft_account").catch(() => null);
 }
 
 async function restoreSession() {
@@ -657,16 +974,16 @@ async function restoreSession() {
     state.ads = null;
     localStorage.removeItem(TOKEN_KEY);
     await invoke("delete_launcher_token").catch(() => {});
-    log(`Stored sign-in expired: ${error.message}`);
+    log(`Stored sign-in expired: ${error.message || error}`);
   }
 }
 
 async function refreshVersion() {
   try {
     state.version = await api("/api/launcher/version");
-    log(`Launcher latest: ${state.version.version}`);
+    log(`Launcher latest: ${latestLauncherVersion() || "unknown"}`);
   } catch (error) {
-    log(`Version check failed: ${error.message}`);
+    log(`Version check failed: ${error.message || error}`);
   }
 }
 
@@ -679,20 +996,23 @@ async function refreshAccount() {
 function applyAccount(body) {
   state.account = body.user || null;
   state.ads = body.ads || body.adReward || null;
-  state.selectedBuild = preferredBuildForAccount();
+  if (!canUseBuild(state.selectedBuild, state.account)) state.selectedBuild = preferredBuildForAccount();
   state.manifest = null;
+  state.clientStatus = null;
 }
 
 async function refreshMinecraftStatus(options = {}) {
   try {
     const status = await invoke("minecraft_status");
     const wasRunning = state.minecraftRunning;
+    const oldPid = state.minecraftPid;
     state.minecraftRunning = Boolean(status?.running);
     state.minecraftPid = status?.pid || null;
     if (wasRunning && !state.minecraftRunning && options.logExit !== false) {
       log("Minecraft is no longer running.");
     }
-    if (options.render !== false) render();
+    const changed = wasRunning !== state.minecraftRunning || oldPid !== state.minecraftPid;
+    if (options.render !== false && changed) render();
   } catch (error) {
     if (options.logError) log(`Process status failed: ${error.message || error}`);
   }
@@ -713,7 +1033,7 @@ async function startSignIn() {
     render();
     await pollSignIn(start);
   } catch (error) {
-    log(`Sign-in failed: ${error.message}`);
+    log(`Sign-in failed: ${error.message || error}`);
     if (state.signIn?.loginUrl) {
       state.signInError = error.message || "Sign-in failed. Open or copy the link below.";
       render();
@@ -765,13 +1085,19 @@ async function pollSignIn(start) {
 
 async function refreshManifest() {
   const profile = profiles.find((item) => item.id === state.selectedProfile);
-  if (!state.token || !profile?.client) return;
+  if (!state.token || !profile?.client) {
+    state.clientStatus = null;
+    state.manifest = null;
+    return;
+  }
   const build = buildForAccount();
-  state.manifest = await api("/api/launcher/manifest", {
-    method: "POST",
-    body: JSON.stringify({ build: build.id })
+  state.clientStatus = await invoke("client_install_status", {
+    profile: state.selectedProfile,
+    build: build.id,
+    token: state.token
   });
-  log(`Client available: ${displayManifest(state.manifest)}`);
+  state.manifest = state.clientStatus;
+  log(state.clientStatus.message || `Client checked: ${clientStatusLabel()}`);
 }
 
 async function installSelected() {
@@ -784,10 +1110,27 @@ async function installSelected() {
       token: state.token
     });
     state.manifest = result;
+    state.clientStatus = { ...result, installed: true, updateAvailable: false };
+    state.dismissedClientVersion = clientStatusKey();
+    localStorage.setItem(CLIENT_DISMISS_KEY, state.dismissedClientVersion);
     log(result.message);
     await refreshFiles();
   } catch (error) {
     log(`Install failed: ${error.message || error}`);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function downloadLauncherUpdate() {
+  setBusy(true, "Downloading launcher update");
+  try {
+    const result = await invoke("download_launcher_update");
+    state.dismissedLauncherVersion = latestLauncherVersion();
+    localStorage.setItem(LAUNCHER_DISMISS_KEY, state.dismissedLauncherVersion);
+    log(`${result.message} ${result.path ? `Saved: ${result.path}` : ""}`.trim());
+  } catch (error) {
+    log(`Launcher update failed: ${error.message || error}`);
   } finally {
     setBusy(false);
   }
@@ -817,7 +1160,7 @@ async function startSponsor() {
     log(complete.message || "Sponsored access refreshed.");
   } catch (error) {
     state.sponsor = null;
-    log(`Sponsor break failed: ${error.message}`);
+    log(`Sponsor break failed: ${error.message || error}`);
   } finally {
     setBusy(false);
   }
@@ -865,6 +1208,7 @@ async function pollMicrosoftSignIn(start, deviceCode) {
       state.username = result.account.name || state.username;
       state.microsoftSignIn = null;
       state.microsoftError = "";
+      await loadMicrosoftAccounts();
       log(`Microsoft account linked: ${state.microsoft.name}`);
       render();
       return;
@@ -879,10 +1223,6 @@ async function pollMicrosoftSignIn(start, deviceCode) {
 
 function microsoftDeviceCode(value) {
   return String(value?.deviceCode || value?.device_code || "").trim();
-}
-
-function microsoftUserCode(value) {
-  return String(value?.userCode || value?.user_code || "").trim();
 }
 
 function microsoftVerificationUrl(value) {
@@ -943,7 +1283,9 @@ app.addEventListener("click", async (event) => {
   const view = event.target.closest("[data-view]")?.dataset.view;
   if (view) {
     state.view = view;
-    await refreshFiles();
+    if (view === "mods" || view === "packs" || view === "play") await refreshFiles();
+    if (view === "accounts") await loadMicrosoftAccounts();
+    if (view === "updates") await Promise.allSettled([refreshVersion(), refreshManifest()]);
     render();
     return;
   }
@@ -960,7 +1302,7 @@ app.addEventListener("click", async (event) => {
 
   if (action === "refresh") {
     setBusy(true, "Refreshing");
-    await Promise.allSettled([refreshVersion(), refreshAccount(), refreshManifest(), refreshFiles(), refreshAntiScreenshareStatus()]);
+    await Promise.allSettled([refreshVersion(), refreshAccount(), refreshManifest(), refreshFiles(), refreshAntiScreenshareStatus(), loadMicrosoftAccounts()]);
     setBusy(false, "Ready");
   } else if (action === "signin") {
     await startSignIn();
@@ -982,9 +1324,21 @@ app.addEventListener("click", async (event) => {
     state.token = "";
     state.account = null;
     state.ads = null;
+    state.clientStatus = null;
+    state.manifest = null;
     localStorage.removeItem(TOKEN_KEY);
     await invoke("delete_launcher_token").catch(() => {});
     log("Signed out.");
+    render();
+  } else if (action === "download-launcher") {
+    await downloadLauncherUpdate();
+  } else if (action === "dismiss-launcher-popup") {
+    state.dismissedLauncherVersion = latestLauncherVersion();
+    localStorage.setItem(LAUNCHER_DISMISS_KEY, state.dismissedLauncherVersion);
+    render();
+  } else if (action === "dismiss-client-popup") {
+    state.dismissedClientVersion = clientStatusKey();
+    localStorage.setItem(CLIENT_DISMISS_KEY, state.dismissedClientVersion);
     render();
   } else if (action === "install") {
     await installSelected();
@@ -1024,8 +1378,34 @@ app.addEventListener("click", async (event) => {
     } finally {
       setBusy(false);
     }
-  } else if (action === "microsoft" || action === "switch-microsoft") {
+  } else if (action === "microsoft") {
     await startMicrosoftSignIn();
+  } else if (action === "select-microsoft") {
+    setBusy(true, "Switching Microsoft account");
+    try {
+      state.microsoft = await invoke("select_microsoft_account", { uuid: actionEl.dataset.uuid });
+      await loadMicrosoftAccounts();
+      log(`Using Microsoft account: ${state.microsoft?.name || "selected"}`);
+    } catch (error) {
+      log(`Account switch failed: ${error.message || error}`);
+    } finally {
+      setBusy(false);
+    }
+  } else if (action === "remove-microsoft") {
+    setBusy(true, "Removing Microsoft account");
+    try {
+      await invoke("delete_microsoft_account_by_uuid", { uuid: actionEl.dataset.uuid });
+      await loadMicrosoftAccounts();
+      log("Microsoft account removed.");
+    } catch (error) {
+      log(`Account remove failed: ${error.message || error}`);
+    } finally {
+      setBusy(false);
+    }
+  } else if (action === "refresh-anti") {
+    await refreshAntiScreenshareStatus();
+    log("AntiScreenshare refreshed.");
+    render();
   } else if (action === "toggle-anti") {
     setBusy(true, "Updating AntiScreenshare");
     try {
@@ -1121,11 +1501,19 @@ app.addEventListener("change", async (event) => {
   state[field] = event.target.value;
   if (field === "username") localStorage.setItem("gamble.launcher.username", state.username);
   if (field === "javaArgs") localStorage.setItem("gamble.launcher.javaArgs", state.javaArgs);
+  if (field === "memory") localStorage.setItem("gamble.launcher.memory", state.memory);
   if (field === "selectedProfile") {
+    state.clientStatus = null;
+    state.manifest = null;
     await refreshFiles();
     await refreshAntiScreenshareStatus();
+    await refreshManifest().catch(() => {});
   }
-  if (field === "selectedBuild") state.manifest = null;
+  if (field === "selectedBuild") {
+    state.clientStatus = null;
+    state.manifest = null;
+    await refreshManifest().catch(() => {});
+  }
   render();
 });
 

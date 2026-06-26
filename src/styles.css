@@ -63,6 +63,7 @@ select:disabled {
   flex-direction: column;
   gap: 18px;
   padding: 18px 14px;
+  overflow: auto;
   background: var(--rail);
   border-right: 1px solid var(--line);
 }
@@ -357,12 +358,31 @@ p {
   filter: brightness(1.18);
 }
 
+.launch-stack {
+  display: grid;
+  gap: 10px;
+  align-self: end;
+}
+
+.launch-warning {
+  max-width: 180px;
+  color: #b9b9b9;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
 .account-panel {
   display: grid;
   align-content: start;
   gap: 10px;
   padding: 14px;
   background: #0b0b0b;
+}
+
+.split-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .launcher-deck {
@@ -446,6 +466,38 @@ p {
   text-transform: uppercase;
 }
 
+.account-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.account-card,
+.update-card,
+.setting-note {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-strong);
+}
+
+.account-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 94px;
+  padding: 14px;
+}
+
+.account-card.active {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: #141414;
+}
+
+.danger {
+  color: #ffc8c8;
+}
+
 .tune-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -457,8 +509,71 @@ p {
   backdrop-filter: none;
 }
 
+.settings-grid,
+.update-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.settings-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.update-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.update-card {
+  display: grid;
+  gap: 10px;
+  min-height: 170px;
+  padding: 16px;
+}
+
+.update-card.warn {
+  border-color: rgba(255, 255, 255, 0.26);
+}
+
+.update-card span,
+.setting-note span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.update-card strong,
+.setting-note strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 1.15rem;
+}
+
+.update-card p,
+.setting-note small {
+  color: #b9c2cf;
+  font-size: 0.9rem;
+}
+
+.update-card button {
+  align-self: end;
+  justify-self: start;
+}
+
+.setting-note {
+  display: grid;
+  gap: 7px;
+  min-height: 80px;
+  padding: 10px 11px;
+}
+
 .wide-field {
-  grid-column: span 4;
+  grid-column: 1 / -1;
 }
 
 label {
@@ -574,6 +689,10 @@ option {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(152px, 1fr));
   gap: 10px;
+}
+
+.main-quick-grid {
+  margin-top: 12px;
 }
 
 .action-tile {
@@ -701,6 +820,31 @@ pre {
   line-height: 1.45;
 }
 
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.update-modal {
+  display: grid;
+  gap: 12px;
+  width: min(460px, 100%);
+  padding: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #101010;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.update-modal h2 {
+  font-size: 1.6rem;
+}
+
 @media (max-width: 1260px) {
   .play-stage,
   .launcher-deck {
@@ -719,6 +863,10 @@ pre {
 
   .account-panel .identity-card,
   .account-panel .subtle-button {
+    grid-column: 1 / -1;
+  }
+
+  .split-actions {
     grid-column: 1 / -1;
   }
 }
@@ -743,7 +891,9 @@ pre {
   }
 
   .launch-facts,
-  .tune-strip {
+  .tune-strip,
+  .settings-grid,
+  .update-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -798,6 +948,8 @@ pre {
 
   .launch-facts,
   .tune-strip,
+  .settings-grid,
+  .update-grid,
   .account-panel {
     grid-template-columns: 1fr;
   }
@@ -813,8 +965,13 @@ pre {
   }
 
   .privacy-panel,
-  .privacy-actions {
+  .privacy-actions,
+  .account-card {
     grid-template-columns: 1fr;
+  }
+
+  .launch-warning {
+    max-width: none;
   }
 }
 

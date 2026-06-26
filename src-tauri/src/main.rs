@@ -13,7 +13,7 @@ use std::{
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.69";
+const VERSION: &str = "0.1.70";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -83,6 +83,13 @@ struct AntiScreenshareStatus {
 }
 
 #[derive(Serialize)]
+struct MicrosoftAccountState {
+    accounts: Vec<MicrosoftAccount>,
+    #[serde(rename = "selectedUuid")]
+    selected_uuid: String,
+}
+
+#[derive(Serialize)]
 struct DiagnosticCheck {
     label: String,
     ok: bool,
@@ -91,14 +98,84 @@ struct DiagnosticCheck {
 
 #[derive(Serialize)]
 struct InstallResult {
+    #[serde(rename = "fileName")]
     file_name: String,
     build: String,
+    #[serde(rename = "buildVersion")]
     build_version: String,
     path: String,
     size: u64,
     sha256: String,
     updated: bool,
     message: String,
+}
+
+#[derive(Serialize)]
+struct ClientInstallStatus {
+    #[serde(rename = "fileName")]
+    file_name: String,
+    build: String,
+    #[serde(rename = "buildVersion")]
+    build_version: String,
+    path: String,
+    size: u64,
+    sha256: String,
+    installed: bool,
+    #[serde(rename = "updateAvailable")]
+    update_available: bool,
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct LauncherVersionResponse {
+    #[serde(default)]
+    version: String,
+    #[serde(default, rename = "minVersion")]
+    min_version: String,
+    #[serde(default, rename = "fileName")]
+    file_name: String,
+    #[serde(default, rename = "downloadUrl")]
+    download_url: String,
+    #[serde(default)]
+    downloads: LauncherDownloads,
+}
+
+#[derive(Default, Deserialize)]
+struct LauncherDownloads {
+    #[serde(default)]
+    windows: Option<LauncherDownload>,
+    #[serde(default, rename = "linuxRpm")]
+    linux_rpm: Option<LauncherDownload>,
+    #[serde(default, rename = "linuxDeb")]
+    linux_deb: Option<LauncherDownload>,
+    #[serde(default, rename = "linuxAppImage")]
+    linux_app_image: Option<LauncherDownload>,
+    #[serde(default)]
+    jar: Option<LauncherDownload>,
+}
+
+#[derive(Clone, Default, Deserialize)]
+struct LauncherDownload {
+    #[serde(default, rename = "fileName")]
+    file_name: String,
+    #[serde(default, rename = "downloadUrl")]
+    download_url: String,
+}
+
+#[derive(Serialize)]
+struct LauncherUpdateResult {
+    version: String,
+    #[serde(rename = "fileName")]
+    file_name: String,
+    #[serde(rename = "downloadUrl")]
+    download_url: String,
+    path: String,
+    message: String,
+}
+
+struct ModrinthRelease {
+    file_name: String,
+    url: String,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -298,25 +375,71 @@ fn delete_launcher_token() -> Result<(), String> {
 
 #[tauri::command]
 fn read_microsoft_account() -> Result<Option<MicrosoftAccount>, String> {
-    let path = microsoft_account_file();
-    if !path.is_file() {
-        return Ok(None);
+    selected_microsoft_account()
+}
+
+#[tauri::command]
+fn list_microsoft_accounts() -> Result<MicrosoftAccountState, String> {
+    let accounts = read_microsoft_account_list()?;
+    Ok(MicrosoftAccountState {
+        selected_uuid: selected_microsoft_uuid().unwrap_or_else(|| accounts.first().map(|account| account.uuid.clone()).unwrap_or_default()),
+        accounts,
+    })
+}
+
+#[tauri::command]
+fn select_microsoft_account(uuid: String) -> Result<Option<MicrosoftAccount>, String> {
+    let uuid = uuid.trim().replace('-', "");
+    if uuid.is_empty() {
+        return Err("Choose a Microsoft account first.".to_string());
     }
-    let text = fs::read_to_string(path).map_err(error_text)?;
-    let account = serde_json::from_str::<MicrosoftAccount>(&text).map_err(error_text)?;
-    if account.refresh_token.trim().is_empty() {
-        return Ok(None);
-    }
+    let account = read_microsoft_account_list()?
+        .into_iter()
+        .find(|account| account.uuid.eq_ignore_ascii_case(&uuid))
+        .ok_or_else(|| "That Microsoft account is not saved in this launcher.".to_string())?;
+    save_selected_microsoft_uuid(&account.uuid)?;
+    save_legacy_microsoft_account(&account)?;
     Ok(Some(account))
 }
 
 #[tauri::command]
 fn delete_microsoft_account() -> Result<(), String> {
+    let _ = fs::remove_file(microsoft_accounts_file());
+    let _ = fs::remove_file(selected_microsoft_account_file());
     match fs::remove_file(microsoft_account_file()) {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error_text(error)),
     }
+}
+
+#[tauri::command]
+fn delete_microsoft_account_by_uuid(uuid: String) -> Result<MicrosoftAccountState, String> {
+    let uuid = uuid.trim().replace('-', "");
+    let mut accounts = read_microsoft_account_list()?;
+    accounts.retain(|account| !account.uuid.eq_ignore_ascii_case(&uuid));
+    write_microsoft_account_list(&accounts)?;
+
+    let selected = selected_microsoft_uuid().unwrap_or_default();
+    let next_selected = if selected.eq_ignore_ascii_case(&uuid) {
+        accounts.first().map(|account| account.uuid.clone()).unwrap_or_default()
+    } else {
+        selected
+    };
+    if next_selected.trim().is_empty() {
+        let _ = fs::remove_file(selected_microsoft_account_file());
+        let _ = fs::remove_file(microsoft_account_file());
+    } else {
+        save_selected_microsoft_uuid(&next_selected)?;
+        if let Some(account) = accounts.iter().find(|account| account.uuid.eq_ignore_ascii_case(&next_selected)) {
+            save_legacy_microsoft_account(account)?;
+        }
+    }
+
+    Ok(MicrosoftAccountState {
+        accounts,
+        selected_uuid: next_selected,
+    })
 }
 
 #[tauri::command]
@@ -459,7 +582,7 @@ fn list_local_files(profile: String, kind: String) -> Result<Vec<LocalFile>, Str
         if !include {
             continue;
         }
-        let locked = kind != "resourcepacks" && lower == LOADER_JAR_NAME;
+        let locked = kind != "resourcepacks" && is_required_mod_name(&lower);
         let enabled = if kind == "resourcepacks" {
             !lower.ends_with(".disabled")
         } else {
@@ -484,8 +607,11 @@ fn toggle_local_file(profile: String, kind: String, path: String) -> Result<(), 
     if !path.exists() {
         return Err("File does not exist anymore.".to_string());
     }
-    if kind != "resourcepacks" && path.file_name().and_then(|v| v.to_str()).unwrap_or("") == LOADER_JAR_NAME {
-        return Err("The Gamble Client loader is required for this profile.".to_string());
+    if kind != "resourcepacks" {
+        let lower = path.file_name().and_then(|v| v.to_str()).unwrap_or("").to_lowercase();
+        if is_required_mod_name(&lower) {
+            return Err("This required Fabric mod is managed by the launcher.".to_string());
+        }
     }
 
     let target = toggle_target(&path)?;
@@ -558,7 +684,13 @@ fn diagnostics(profile: String) -> Result<Diagnostics, String> {
     push_check(&mut checks, "Mods folder", mods_folder(profile).is_dir(), display_path(&mods_folder(profile)));
     push_check(&mut checks, "Resource packs", resource_packs_folder(profile).is_dir(), display_path(&resource_packs_folder(profile)));
     push_check(&mut checks, "Launcher session", launcher_session_file().is_file(), display_path(&launcher_session_file()));
-    push_check(&mut checks, "Microsoft account", microsoft_account_file().is_file(), display_path(&microsoft_account_file()));
+    let microsoft_saved = read_microsoft_account().map(|account| account.is_some()).unwrap_or(false);
+    push_check(
+        &mut checks,
+        "Microsoft account",
+        microsoft_saved,
+        display_path(&microsoft_accounts_file()),
+    );
     let java = Command::new("java").arg("-version").output();
     push_check(
         &mut checks,
@@ -629,49 +761,109 @@ fn open_anti_screenshare_obs() -> Result<String, String> {
 }
 
 #[tauri::command]
+fn client_install_status(profile: String, build: String, token: String) -> Result<ClientInstallStatus, String> {
+    let profile = profile_id(&profile);
+    if profile != "gamble-client" {
+        return Ok(ClientInstallStatus {
+            file_name: String::new(),
+            build,
+            build_version: String::new(),
+            path: String::new(),
+            size: 0,
+            sha256: String::new(),
+            installed: true,
+            update_available: false,
+            message: "This profile does not install the managed Gamble Client jar.".to_string(),
+        });
+    }
+    if token.trim().is_empty() {
+        return Err("Sign in before checking the client build.".to_string());
+    }
+
+    ensure_profile_folders(profile)?;
+    let manifest = fetch_client_manifest(&build, &token)?;
+    let installed = payload_file(profile, &manifest.file_name);
+    let current = installed.is_file() && verify_file(&installed, manifest.size, &manifest.sha256).is_ok();
+    Ok(ClientInstallStatus {
+        file_name: manifest.file_name.clone(),
+        build: manifest.build.clone(),
+        build_version: manifest.build_version.clone(),
+        path: display_path(&installed),
+        size: installed.metadata().map(|metadata| metadata.len()).unwrap_or(0),
+        sha256: manifest.sha256.clone(),
+        installed: current,
+        update_available: !current,
+        message: if current {
+            format!("Installed client is current: {}", display_version(&manifest))
+        } else {
+            format!("Client update available: {}", display_version(&manifest))
+        },
+    })
+}
+
+#[tauri::command]
+fn download_launcher_update() -> Result<LauncherUpdateResult, String> {
+    let info = fetch_launcher_version_info()?;
+    let download = preferred_launcher_download(&info);
+    if download.download_url.trim().is_empty() || download.file_name.trim().is_empty() {
+        return Err("Launcher update download is not configured for this platform.".to_string());
+    }
+
+    let target = downloads_folder().join(&download.file_name);
+    download_file(&download.download_url, &target)?;
+    let target_text = display_path(&target);
+    let open_message = match open_external(&target_text) {
+        Ok(_) => "Opened the downloaded launcher installer.".to_string(),
+        Err(error) => {
+            if let Some(parent) = target.parent() {
+                let _ = open_external(&display_path(parent));
+            }
+            format!("Downloaded the launcher update. Open failed: {error}")
+        }
+    };
+
+    Ok(LauncherUpdateResult {
+        version: if info.version.trim().is_empty() { info.min_version } else { info.version },
+        file_name: download.file_name,
+        download_url: download.download_url,
+        path: target_text,
+        message: open_message,
+    })
+}
+
+#[tauri::command]
 fn install_client_manifest(profile: String, build: String, token: String) -> Result<InstallResult, String> {
     let profile = profile_id(&profile);
     if token.trim().is_empty() {
         return Err("Sign in before installing the client.".to_string());
     }
     if profile != "gamble-client" {
-        return Err("Only the Gamble Client profile installs the managed client payload.".to_string());
+        return Err("Only the Gamble Client profile installs the managed client jar.".to_string());
     }
     ensure_profile_folders(profile)?;
 
-    let client = reqwest::blocking::Client::builder()
-        .user_agent(format!("GambleClientLauncher/{VERSION}"))
-        .build()
-        .map_err(error_text)?;
-    let manifest: ManifestResponse = client
-        .post(format!("{SITE_URL}/api/launcher/manifest"))
-        .bearer_auth(token.trim())
-        .json(&json!({ "build": build }))
-        .send()
-        .map_err(error_text)?
-        .error_for_status()
-        .map_err(error_text)?
-        .json()
-        .map_err(error_text)?;
+    let client = http_client()?;
+    let manifest = fetch_client_manifest(&build, &token)?;
 
     if manifest.file_name.is_empty() || manifest.download_url.is_empty() {
         return Err("Backend manifest did not include a jar download.".to_string());
     }
 
-    let payload = payload_file(profile, &manifest.file_name);
-    if payload.is_file() && verify_file(&payload, manifest.size, &manifest.sha256).is_ok() {
+    let client_jar = payload_file(profile, &manifest.file_name);
+    if client_jar.is_file() && verify_file(&client_jar, manifest.size, &manifest.sha256).is_ok() {
         cleanup_managed_mod_jars(profile)?;
         ensure_loader_jar(profile)?;
-        write_install_marker(profile, &build, &manifest, &payload)?;
+        ensure_fabric_api(profile)?;
+        write_install_marker(profile, &build, &manifest, &client_jar)?;
         return Ok(InstallResult {
             file_name: manifest.file_name.clone(),
             build: manifest.build.clone(),
             build_version: manifest.build_version.clone(),
-            path: display_path(&payload),
-            size: payload.metadata().map(|m| m.len()).unwrap_or(0),
+            path: display_path(&client_jar),
+            size: client_jar.metadata().map(|m| m.len()).unwrap_or(0),
             sha256: manifest.sha256.clone(),
             updated: false,
-            message: format!("Latest managed client payload verified: {}", display_version(&manifest)),
+            message: format!("Latest managed client verified: {}", display_version(&manifest)),
         });
     }
 
@@ -697,18 +889,19 @@ fn install_client_manifest(profile: String, build: String, token: String) -> Res
     fs::create_dir_all(payloads_folder(profile)).map_err(error_text)?;
     cleanup_managed_mod_jars(profile)?;
     ensure_loader_jar(profile)?;
-    fs::write(&payload, bytes).map_err(error_text)?;
-    write_install_marker(profile, &build, &manifest, &payload)?;
+    ensure_fabric_api(profile)?;
+    fs::write(&client_jar, bytes).map_err(error_text)?;
+    write_install_marker(profile, &build, &manifest, &client_jar)?;
 
     Ok(InstallResult {
         file_name: manifest.file_name.clone(),
         build: manifest.build.clone(),
         build_version: manifest.build_version.clone(),
-        path: display_path(&payload),
-        size: payload.metadata().map(|m| m.len()).unwrap_or(0),
+        path: display_path(&client_jar),
+        size: client_jar.metadata().map(|m| m.len()).unwrap_or(0),
         sha256: manifest.sha256.clone(),
         updated: true,
-        message: format!("Updated managed client payload to: {}", display_version(&manifest)),
+        message: format!("Updated managed client to: {}", display_version(&manifest)),
     })
 }
 
@@ -741,7 +934,7 @@ fn launch_game(input: LaunchRequest) -> Result<String, String> {
     if identity.name.trim().is_empty() && !input.username.trim().is_empty() {
         identity.name = input.username.trim().to_string();
     }
-    let payload = if profile == "gamble-client" {
+    let managed_client = if profile == "gamble-client" {
         Some(PathBuf::from(install_client_manifest(profile.to_string(), build.to_string(), token.to_string())?.path))
     } else {
         None
@@ -761,6 +954,7 @@ fn launch_game(input: LaunchRequest) -> Result<String, String> {
     } else {
         ensure_fabric_version_json(&profile_dir)?;
         ensure_vanilla_version_json(&profile_dir, MINECRAFT_VERSION)?;
+        ensure_fabric_api(profile)?;
         format!("fabric-loader-{FABRIC_LOADER_VERSION}-{MINECRAFT_VERSION}")
     };
     let version = load_version_profile(&profile_dir, &version_id)?;
@@ -781,7 +975,7 @@ fn launch_game(input: LaunchRequest) -> Result<String, String> {
         input.memory.max(2).min(16),
         &input.java_args,
         input.anti_screenshare,
-        payload.as_deref(),
+        managed_client.as_deref(),
         launch_ticket_file.as_deref(),
     )?;
     let log_file = latest_launch_log_file();
@@ -1659,7 +1853,10 @@ fn main() {
             save_launcher_token,
             delete_launcher_token,
             read_microsoft_account,
+            list_microsoft_accounts,
+            select_microsoft_account,
             delete_microsoft_account,
+            delete_microsoft_account_by_uuid,
             microsoft_device_start,
             microsoft_device_poll,
             ensure_profile,
@@ -1673,6 +1870,8 @@ fn main() {
             set_anti_screenshare,
             apply_anti_screenshare_clean_view,
             open_anti_screenshare_obs,
+            client_install_status,
+            download_launcher_update,
             install_client_manifest,
             launch_game,
             minecraft_status,
@@ -1700,17 +1899,33 @@ fn managed_root() -> PathBuf {
 }
 
 fn app_data_folder() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let home = home_folder();
     match env::consts::OS {
         "windows" => env::var("APPDATA")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(home))
+            .unwrap_or_else(|_| home.clone())
             .join("Gamble Client"),
-        "macos" => PathBuf::from(home).join("Library/Application Support/Gamble Client"),
+        "macos" => home.join("Library/Application Support/Gamble Client"),
         _ => env::var("XDG_DATA_HOME")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(home).join(".local/share"))
+            .unwrap_or_else(|_| home.join(".local/share"))
             .join("gamble-client"),
+    }
+}
+
+fn home_folder() -> PathBuf {
+    env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn downloads_folder() -> PathBuf {
+    let downloads = home_folder().join("Downloads");
+    if downloads.is_dir() {
+        downloads
+    } else {
+        home_folder()
     }
 }
 
@@ -1724,6 +1939,14 @@ fn launcher_session_file() -> PathBuf {
 
 fn microsoft_account_file() -> PathBuf {
     launcher_data_folder().join("microsoft-account.json")
+}
+
+fn microsoft_accounts_file() -> PathBuf {
+    launcher_data_folder().join("microsoft-accounts.json")
+}
+
+fn selected_microsoft_account_file() -> PathBuf {
+    launcher_data_folder().join("selected-microsoft-account.txt")
 }
 
 fn latest_launch_log_file() -> PathBuf {
@@ -1889,6 +2112,80 @@ fn ensure_loader_jar(profile: &str) -> Result<(), String> {
     fs::write(loader, buffer.into_inner()).map_err(error_text)
 }
 
+fn ensure_fabric_api(profile: &str) -> Result<(), String> {
+    let mods = mods_folder(profile);
+    fs::create_dir_all(&mods).map_err(error_text)?;
+    if find_managed_mod_jar(&mods, "fabric-api-", false)?.is_some() {
+        return Ok(());
+    }
+
+    if let Some(disabled) = find_managed_mod_jar(&mods, "fabric-api-", true)? {
+        let target = PathBuf::from(disabled.to_string_lossy().trim_end_matches(".disabled"));
+        fs::rename(disabled, target).map_err(error_text)?;
+        return Ok(());
+    }
+
+    let release = fetch_modrinth_release(&modrinth_versions_url("fabric-api"))?;
+    if release.file_name.trim().is_empty() || release.url.trim().is_empty() {
+        return Err(format!("Could not find Fabric API for Minecraft {MINECRAFT_VERSION}."));
+    }
+
+    let target = mods.join(release.file_name);
+    download_file(&release.url, &target)
+}
+
+fn fetch_modrinth_release(url: &str) -> Result<ModrinthRelease, String> {
+    let versions = http_client()?
+        .get(url)
+        .send()
+        .map_err(error_text)?
+        .error_for_status()
+        .map_err(error_text)?
+        .json::<Vec<serde_json::Value>>()
+        .map_err(error_text)?;
+    let version = versions.first().cloned().unwrap_or_else(|| json!({}));
+    let files = version.get("files").and_then(|value| value.as_array()).cloned().unwrap_or_default();
+    let selected = files
+        .iter()
+        .find(|file| json_bool_value(file.get("primary").unwrap_or(&serde_json::Value::Bool(false))))
+        .or_else(|| files.first())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    Ok(ModrinthRelease {
+        file_name: json_string(&selected, "filename"),
+        url: json_string(&selected, "url"),
+    })
+}
+
+fn find_managed_mod_jar(mods: &Path, prefix: &str, include_disabled: bool) -> Result<Option<PathBuf>, String> {
+    if !mods.is_dir() {
+        return Ok(None);
+    }
+    for entry in fs::read_dir(mods).map_err(error_text)? {
+        let entry = entry.map_err(error_text)?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let lower = entry.file_name().to_string_lossy().to_lowercase();
+        if lower.starts_with(prefix) && (lower.ends_with(".jar") || (include_disabled && lower.ends_with(".jar.disabled"))) {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+fn is_required_mod_name(lower_name: &str) -> bool {
+    let base = lower_name.trim_end_matches(".disabled");
+    base == LOADER_JAR_NAME || base == "fabric-api.jar" || base.starts_with("fabric-api-")
+}
+
+fn modrinth_versions_url(slug: &str) -> String {
+    format!(
+        "https://api.modrinth.com/v2/project/{slug}/version?loaders=%5B%22fabric%22%5D&game_versions=%5B%22{MINECRAFT_VERSION}%22%5D"
+    )
+}
+
 fn write_install_marker(profile: &str, build: &str, manifest: &ManifestResponse, installed: &Path) -> Result<(), String> {
     let folder = profile_data_folder(profile);
     fs::create_dir_all(&folder).map_err(error_text)?;
@@ -1910,13 +2207,97 @@ fn write_install_marker(profile: &str, build: &str, manifest: &ManifestResponse,
     .map_err(error_text)
 }
 
-fn save_microsoft_account(account: &MicrosoftAccount) -> Result<(), String> {
+fn selected_microsoft_account() -> Result<Option<MicrosoftAccount>, String> {
+    let accounts = read_microsoft_account_list()?;
+    if accounts.is_empty() {
+        return Ok(None);
+    }
+    if let Some(uuid) = selected_microsoft_uuid() {
+        if let Some(account) = accounts.iter().find(|account| account.uuid.eq_ignore_ascii_case(&uuid)) {
+            return Ok(Some(account.clone()));
+        }
+    }
+    Ok(accounts.first().cloned())
+}
+
+fn read_microsoft_account_list() -> Result<Vec<MicrosoftAccount>, String> {
+    let mut accounts = Vec::new();
+    let accounts_path = microsoft_accounts_file();
+    if accounts_path.is_file() {
+        let text = fs::read_to_string(&accounts_path).map_err(error_text)?;
+        let parsed = serde_json::from_str::<serde_json::Value>(&text).map_err(error_text)?;
+        if let Some(items) = parsed.as_array() {
+            for item in items {
+                if let Ok(account) = serde_json::from_value::<MicrosoftAccount>(item.clone()) {
+                    upsert_microsoft_account(&mut accounts, account);
+                }
+            }
+        } else if let Some(items) = parsed.get("accounts").and_then(|value| value.as_array()) {
+            for item in items {
+                if let Ok(account) = serde_json::from_value::<MicrosoftAccount>(item.clone()) {
+                    upsert_microsoft_account(&mut accounts, account);
+                }
+            }
+        }
+    }
+
+    let legacy_path = microsoft_account_file();
+    if legacy_path.is_file() {
+        let text = fs::read_to_string(&legacy_path).map_err(error_text)?;
+        if let Ok(account) = serde_json::from_str::<MicrosoftAccount>(&text) {
+            upsert_microsoft_account(&mut accounts, account);
+        }
+    }
+
+    accounts.retain(|account| !account.refresh_token.trim().is_empty() && !account.uuid.trim().is_empty());
+    Ok(accounts)
+}
+
+fn upsert_microsoft_account(accounts: &mut Vec<MicrosoftAccount>, mut account: MicrosoftAccount) {
+    account.uuid = account.uuid.replace('-', "");
+    if account.refresh_token.trim().is_empty() || account.uuid.trim().is_empty() {
+        return;
+    }
+    if let Some(existing) = accounts.iter_mut().find(|existing| existing.uuid.eq_ignore_ascii_case(&account.uuid)) {
+        *existing = account;
+    } else {
+        accounts.push(account);
+    }
+}
+
+fn write_microsoft_account_list(accounts: &[MicrosoftAccount]) -> Result<(), String> {
+    fs::create_dir_all(launcher_data_folder()).map_err(error_text)?;
+    fs::write(
+        microsoft_accounts_file(),
+        serde_json::to_string_pretty(accounts).map_err(error_text)? + "\n",
+    )
+    .map_err(error_text)
+}
+
+fn selected_microsoft_uuid() -> Option<String> {
+    read_trimmed(&selected_microsoft_account_file()).ok().filter(|value| !value.trim().is_empty())
+}
+
+fn save_selected_microsoft_uuid(uuid: &str) -> Result<(), String> {
+    fs::create_dir_all(launcher_data_folder()).map_err(error_text)?;
+    fs::write(selected_microsoft_account_file(), format!("{}\n", uuid.trim().replace('-', ""))).map_err(error_text)
+}
+
+fn save_legacy_microsoft_account(account: &MicrosoftAccount) -> Result<(), String> {
     fs::create_dir_all(launcher_data_folder()).map_err(error_text)?;
     fs::write(
         microsoft_account_file(),
         serde_json::to_string_pretty(account).map_err(error_text)? + "\n",
     )
     .map_err(error_text)
+}
+
+fn save_microsoft_account(account: &MicrosoftAccount) -> Result<(), String> {
+    let mut accounts = read_microsoft_account_list().unwrap_or_default();
+    upsert_microsoft_account(&mut accounts, account.clone());
+    write_microsoft_account_list(&accounts)?;
+    save_selected_microsoft_uuid(&account.uuid)?;
+    save_legacy_microsoft_account(account)
 }
 
 fn parse_microsoft_token(body: &serde_json::Value) -> Result<MicrosoftToken, String> {
@@ -2047,6 +2428,61 @@ fn post_json(url: &str, body: &serde_json::Value, bearer_token: &str) -> Result<
         });
     }
     Ok(body)
+}
+
+fn fetch_client_manifest(build: &str, token: &str) -> Result<ManifestResponse, String> {
+    let body = post_json(
+        &format!("{SITE_URL}/api/launcher/manifest"),
+        &json!({ "build": build }),
+        token,
+    )?;
+    serde_json::from_value::<ManifestResponse>(body).map_err(error_text)
+}
+
+fn fetch_launcher_version_info() -> Result<LauncherVersionResponse, String> {
+    http_client()?
+        .get(format!("{SITE_URL}/api/launcher/version"))
+        .send()
+        .map_err(error_text)?
+        .error_for_status()
+        .map_err(error_text)?
+        .json::<LauncherVersionResponse>()
+        .map_err(error_text)
+}
+
+fn preferred_launcher_download(info: &LauncherVersionResponse) -> LauncherDownload {
+    let platform = match env::consts::OS {
+        "windows" => usable_launcher_download(info.downloads.windows.clone()),
+        "linux" => match linux_package_preference() {
+            "rpm" => usable_launcher_download(info.downloads.linux_rpm.clone()).or_else(|| usable_launcher_download(info.downloads.linux_app_image.clone())),
+            "deb" => usable_launcher_download(info.downloads.linux_deb.clone()).or_else(|| usable_launcher_download(info.downloads.linux_app_image.clone())),
+            _ => usable_launcher_download(info.downloads.linux_app_image.clone())
+                .or_else(|| usable_launcher_download(info.downloads.linux_rpm.clone()))
+                .or_else(|| usable_launcher_download(info.downloads.linux_deb.clone())),
+        },
+        _ => None,
+    };
+    platform
+        .or_else(|| usable_launcher_download(info.downloads.jar.clone()))
+        .unwrap_or_else(|| LauncherDownload {
+            file_name: info.file_name.clone(),
+            download_url: info.download_url.clone(),
+        })
+}
+
+fn usable_launcher_download(download: Option<LauncherDownload>) -> Option<LauncherDownload> {
+    download.filter(|item| !item.file_name.trim().is_empty() && !item.download_url.trim().is_empty())
+}
+
+fn linux_package_preference() -> &'static str {
+    let text = fs::read_to_string("/etc/os-release").unwrap_or_default().to_lowercase();
+    if text.contains("fedora") || text.contains("rhel") || text.contains("centos") || text.contains("suse") {
+        "rpm"
+    } else if text.contains("debian") || text.contains("ubuntu") || text.contains("linuxmint") || text.contains("pop") {
+        "deb"
+    } else {
+        "appimage"
+    }
 }
 
 fn verify_file(path: &Path, expected_size: u64, expected_sha: &str) -> Result<(), String> {

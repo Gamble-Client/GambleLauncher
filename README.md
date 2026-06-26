@@ -46,7 +46,7 @@ Linux Tauri bundles:
 
 ```bash
 ./scripts/build-linux-tauri.sh
-sudo dnf install "./src-tauri/target/release/bundle/rpm/Gamble Client Launcher-0.1.69-1.x86_64.rpm"
+sudo dnf install "./src-tauri/target/release/bundle/rpm/Gamble Client Launcher-0.1.70-1.x86_64.rpm"
 ```
 
 On Fedora 44, graphical RPM installers can fail with `Id is out of bitmap range`
