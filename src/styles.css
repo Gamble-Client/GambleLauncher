@@ -540,6 +540,14 @@ p {
   display: block;
 }
 
+.friend-identity {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
 .friend-row small {
   margin-top: 4px;
   color: var(--muted);
@@ -765,6 +773,16 @@ input {
   background: #0b0b0b;
   border: 1px solid rgba(255, 255, 255, 0.14);
   color: var(--text);
+}
+
+input[type="checkbox"] {
+  width: 22px;
+  min-height: 22px;
+  height: 22px;
+  padding: 0;
+  appearance: auto;
+  accent-color: #eeeeee;
+  cursor: pointer;
 }
 
 .toggle-button {

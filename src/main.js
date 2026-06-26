@@ -349,11 +349,6 @@ function render() {
             <strong>${escapeHtml(accountTitle())}</strong>
             <small>${escapeHtml(accountMeta())}</small>
           </div>
-          <div class="rail-card">
-            <span>Latest launcher</span>
-            <strong>${escapeHtml(latestLauncherVersion() || "Checking")}</strong>
-            <small>${escapeHtml(launcherNeedsUpdate() ? "Update available" : state.status)}</small>
-          </div>
         </div>
       </aside>
 
@@ -408,9 +403,9 @@ function profileAccount(profile = currentProfile()) {
 
 function profileAccountLabel(profile = currentProfile()) {
   const account = profileAccount(profile);
-  if (!account) return "Global default";
+  if (!account) return "Default";
   const hasOverride = Boolean(state.profileAccountOverrides?.[profile.id]);
-  return `${account.name || "Microsoft"}${hasOverride ? "" : " (global)"}`;
+  return `${account.name || "Microsoft"}${hasOverride ? "" : " (default)"}`;
 }
 
 function topbar(signedIn) {
@@ -464,7 +459,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
 
       <aside class="account-panel">
         <div class="identity-card">
-          <div class="avatar" style="${escapeAttr(avatarStyle(activeMicrosoft))}">${escapeHtml(avatarInitials(activeMicrosoft?.name))}</div>
+          <div class="avatar" style="${escapeAttr(avatarStyle(activeMicrosoft))}">${avatarText(avatarStyle(activeMicrosoft), activeMicrosoft?.name)}</div>
           <div>
             <span class="eyebrow">Active identity</span>
             <strong>${escapeHtml(activeMicrosoft?.name || accountTitle())}</strong>
@@ -545,7 +540,7 @@ function accountCard(account) {
   return `
     <article class="account-card ${active ? "active" : ""}">
       <div class="identity-card">
-        <div class="avatar" style="${escapeAttr(avatarStyle(account))}">${escapeHtml(avatarInitials(account.name))}</div>
+        <div class="avatar" style="${escapeAttr(avatarStyle(account))}">${avatarText(avatarStyle(account), account.name)}</div>
         <div>
           <span class="eyebrow">${active ? "Active" : "Saved"}</span>
           <strong>${escapeHtml(account.name || "Minecraft account")}</strong>
@@ -591,19 +586,38 @@ function friendsPanel() {
       ${outgoing.length ? `
         <div class="friend-group">
           <span class="eyebrow">Outgoing</span>
-          ${outgoing.map((request) => `<article class="friend-row"><strong>${escapeHtml(request.username)}</strong><small>Pending</small></article>`).join("")}
+          ${outgoing.map(friendPendingRow).join("")}
         </div>
       ` : ""}
     </section>
   `;
 }
 
-function friendRow(friend) {
+function friendPendingRow(request) {
+  const imageStyle = friendAvatarStyle(request);
   return `
     <article class="friend-row">
-      <div>
-        <strong>${escapeHtml(friend.username)}</strong>
-        <small>${friend.access?.owner ? "Owner" : friend.access?.media ? "Media" : friend.access?.beta ? "Beta" : "Friend"}</small>
+      <div class="friend-identity">
+        <div class="mini-avatar" style="${escapeAttr(imageStyle)}">${avatarText(imageStyle, request.username)}</div>
+        <div>
+          <strong>${escapeHtml(request.username)}</strong>
+          <small>Pending</small>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function friendRow(friend) {
+  const imageStyle = friendAvatarStyle(friend);
+  return `
+    <article class="friend-row">
+      <div class="friend-identity">
+        <div class="mini-avatar" style="${escapeAttr(imageStyle)}">${avatarText(imageStyle, friend.username)}</div>
+        <div>
+          <strong>${escapeHtml(friend.username)}</strong>
+          <small>${friend.access?.owner ? "Owner" : friend.access?.media ? "Media" : friend.access?.beta ? "Beta" : "Friend"}</small>
+        </div>
       </div>
       <button class="ghost danger" type="button" data-action="remove-friend" data-username="${escapeAttr(friend.username)}">Remove</button>
     </article>
@@ -611,11 +625,15 @@ function friendRow(friend) {
 }
 
 function friendRequestRow(request) {
+  const imageStyle = friendAvatarStyle(request);
   return `
     <article class="friend-row">
-      <div>
-        <strong>${escapeHtml(request.username)}</strong>
-        <small>Wants to add you</small>
+      <div class="friend-identity">
+        <div class="mini-avatar" style="${escapeAttr(imageStyle)}">${avatarText(imageStyle, request.username)}</div>
+        <div>
+          <strong>${escapeHtml(request.username)}</strong>
+          <small>Wants to add you</small>
+        </div>
       </div>
       <div class="top-actions">
         <button class="primary-small" type="button" data-action="accept-friend" data-request="${escapeAttr(request.id)}">Accept</button>
@@ -709,7 +727,7 @@ function profilesView(profile, selectedBuild) {
           <label>
             <span>Microsoft account</span>
             <select data-field="profileAccount">
-              <option value="" ${state.profileAccountOverrides?.[profile.id] ? "" : "selected"}>Global default${state.microsoft?.name ? ` (${escapeHtml(state.microsoft.name)})` : ""}</option>
+              <option value="" ${state.profileAccountOverrides?.[profile.id] ? "" : "selected"}>Default${state.microsoft?.name ? ` (${escapeHtml(state.microsoft.name)})` : ""}</option>
               ${state.microsoftAccounts.map((account) => {
                 const uuid = String(account.uuid || "").replaceAll("-", "").toLowerCase();
                 const selected = String(state.profileAccountOverrides?.[profile.id] || "").replaceAll("-", "").toLowerCase() === uuid;
@@ -882,7 +900,7 @@ function updatePopup() {
 function accountRow(label, title, meta, badge, imageStyle = "", initials = "") {
   return `
     <div class="account-row">
-      <div class="mini-avatar" style="${escapeAttr(imageStyle)}">${escapeHtml(initials || avatarInitials(title))}</div>
+      <div class="mini-avatar" style="${escapeAttr(imageStyle)}">${avatarText(imageStyle, initials || title)}</div>
       <div>
         <span>${escapeHtml(label)}</span>
         <strong>${escapeHtml(title)}</strong>
@@ -895,14 +913,39 @@ function accountRow(label, title, meta, badge, imageStyle = "", initials = "") {
 
 function avatarStyle(account = state.microsoft) {
   const uuid = String(account?.uuid || "").replaceAll("-", "").trim();
-  if (!/^[a-f0-9]{32}$/i.test(uuid)) return "";
-  return `background-image:linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(90, 170, 255, 0.14)), url(https://mc-heads.net/avatar/${uuid}/128);`;
+  if (/^[a-f0-9]{32}$/i.test(uuid)) return remoteAvatarStyle(`https://mc-heads.net/avatar/${uuid}/128`);
+  const name = String(account?.name || "").trim();
+  if (name) return remoteAvatarStyle(`https://mc-heads.net/avatar/${encodeURIComponent(name)}/128`);
+  return "";
 }
 
 function launcherAvatarStyle() {
   const avatar = state.account?.avatarUrl || state.account?.avatar || state.account?.discordAvatar || "";
-  if (!avatar) return "";
-  return `background-image:linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(90, 170, 255, 0.14)), url(${avatar});`;
+  return remoteAvatarStyle(avatar);
+}
+
+function friendAvatarStyle(friend = {}) {
+  const uuid = String(friend.minecraftUuid || friend.minecraftUUID || friend.uuid || "").replaceAll("-", "").trim();
+  if (/^[a-f0-9]{32}$/i.test(uuid)) return remoteAvatarStyle(`https://mc-heads.net/avatar/${uuid}/128`);
+  const minecraftName = String(friend.minecraftName || friend.mcName || "").trim();
+  if (minecraftName) return remoteAvatarStyle(`https://mc-heads.net/avatar/${encodeURIComponent(minecraftName)}/128`);
+  const username = String(friend.username || "").trim();
+  if (/^[a-z0-9_]{3,16}$/i.test(username)) return remoteAvatarStyle(`https://mc-heads.net/avatar/${encodeURIComponent(username)}/128`);
+  return remoteAvatarStyle(friend.avatarUrl || friend.avatar || friend.discordAvatar || "");
+}
+
+function remoteAvatarStyle(url) {
+  const clean = String(url || "").trim();
+  if (!/^https?:\/\//i.test(clean)) return "";
+  return `background-image:linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(90, 170, 255, 0.08)), url("${cssUrl(clean)}");`;
+}
+
+function cssUrl(value) {
+  return String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\n", "");
+}
+
+function avatarText(imageStyle, source) {
+  return imageStyle ? "" : escapeHtml(avatarInitials(source));
 }
 
 function avatarInitials(source = state.microsoft?.name || accountTitle() || "GC") {
@@ -980,7 +1023,6 @@ function fileSection(kind, profile, files) {
     <section class="profile-file-section">
       <div class="section-head">
         <div>
-          <span class="eyebrow">${escapeHtml(profile.label)}</span>
           <h3>${isPacks ? "Resource Packs" : "Mods"}</h3>
         </div>
         <div class="top-actions">
@@ -1525,11 +1567,21 @@ async function removeFriend(username) {
 
 async function updatePrivacySetting(field, value) {
   const body = { [field]: Boolean(value) };
+  const previousSettings = { ...(state.social?.settings || {}) };
+  state.social = {
+    ...(state.social || {}),
+    settings: {
+      ...previousSettings,
+      [field]: Boolean(value)
+    }
+  };
+  render();
   try {
     const result = await api("/api/friends/settings", { method: "POST", body: JSON.stringify(body) });
-    state.social = { ...(state.social || {}), settings: result.settings || {} };
+    state.social = { ...(state.social || {}), settings: result.settings || state.social.settings || {} };
     log("Privacy settings updated.");
   } catch (error) {
+    state.social = { ...(state.social || {}), settings: previousSettings };
     showPopup("Privacy update failed", String(error.message || error), "friends");
     log(`Privacy update failed: ${error.message || error}`);
   }
