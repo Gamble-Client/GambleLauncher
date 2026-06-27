@@ -1,12 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     env,
     fs::{self, File},
     io::{self, Cursor, Read, Write},
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
@@ -15,7 +18,7 @@ use std::{
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.72";
+const VERSION: &str = "0.1.73";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -24,9 +27,12 @@ const FABRIC_PROFILE_URL: &str = "https://meta.fabricmc.net/v2/versions/loader/1
 const VERSION_MANIFEST_URL: &str = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
 const ASSET_BASE_URL: &str = "https://resources.download.minecraft.net/";
 const MICROSOFT_DEVICE_CODE_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
+const MICROSOFT_AUTHORIZE_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
 const MICROSOFT_TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
 const MICROSOFT_SCOPE: &str = "XboxLive.signin offline_access";
 const MICROSOFT_CLIENT_ID: &str = "8eea0ae2-d0a9-4af1-88b9-f66bd96c94bd";
+const MICROSOFT_REDIRECT_PORT: u16 = 39062;
+const MICROSOFT_REDIRECT_URI: &str = "http://localhost:39062/";
 const XBOX_AUTH_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
 const XSTS_AUTH_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
 const MINECRAFT_LOGIN_URL: &str = "https://api.minecraftservices.com/launcher/login";
@@ -442,6 +448,60 @@ fn delete_microsoft_account_by_uuid(uuid: String) -> Result<MicrosoftAccountStat
         accounts,
         selected_uuid: next_selected,
     })
+}
+
+#[tauri::command]
+fn microsoft_browser_sign_in(force_account_picker: bool) -> Result<serde_json::Value, String> {
+    let state = random_base64_url(24);
+    let code_verifier = random_base64_url(48);
+    let code_challenge = sha256_base64_url(&code_verifier);
+    let listener = TcpListener::bind(("127.0.0.1", MICROSOFT_REDIRECT_PORT))
+        .map_err(|error| format!("Could not start Microsoft callback listener on port {MICROSOFT_REDIRECT_PORT}: {error}"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(error_text)?;
+
+    let auth_url = microsoft_authorize_url(&code_challenge, &state, force_account_picker);
+    open_external(&auth_url)?;
+
+    let mut stream = wait_for_microsoft_callback(&listener)?;
+    let callback = read_microsoft_callback(&mut stream)?;
+    let title;
+    let message;
+
+    let result = if callback.get("state").map(String::as_str) != Some(state.as_str()) {
+        title = "Microsoft sign-in failed";
+        message = "The Microsoft sign-in state did not match. Try again.";
+        Err(message.to_string())
+    } else if let Some(error) = callback.get("error") {
+        title = "Microsoft sign-in failed";
+        message = callback.get("error_description").map(String::as_str).unwrap_or(error);
+        Err(message.to_string())
+    } else if let Some(code) = callback.get("code") {
+        title = "Microsoft sign-in complete";
+        message = "You can close this tab and return to the Gamble Client launcher.";
+        Ok(code.clone())
+    } else {
+        title = "Microsoft sign-in failed";
+        message = "Microsoft did not return an authorization code.";
+        Err(message.to_string())
+    };
+
+    let _ = write_microsoft_callback_response(&mut stream, title, message);
+    drop(listener);
+
+    let code = result?;
+    let token = exchange_microsoft_authorization_code(&code, &code_verifier)?;
+    let profile = exchange_microsoft_for_minecraft(&token.access_token)?;
+    let account = MicrosoftAccount {
+        name: profile.name,
+        uuid: profile.uuid,
+        xuid: profile.xuid,
+        refresh_token: token.refresh_token,
+        minecraft_expires_at: unix_millis() + token.expires_in_seconds.max(300) * 1000,
+    };
+    save_microsoft_account(&account)?;
+    Ok(json!({ "status": "ready", "account": account }))
 }
 
 #[tauri::command]
@@ -1055,6 +1115,156 @@ fn refresh_microsoft_token(refresh_token: &str) -> Result<MicrosoftToken, String
         .json::<serde_json::Value>()
         .map_err(error_text)?;
     parse_microsoft_token(&body)
+}
+
+fn exchange_microsoft_authorization_code(code: &str, code_verifier: &str) -> Result<MicrosoftToken, String> {
+    let params = [
+        ("grant_type", "authorization_code".to_string()),
+        ("client_id", MICROSOFT_CLIENT_ID.to_string()),
+        ("code", code.to_string()),
+        ("redirect_uri", MICROSOFT_REDIRECT_URI.to_string()),
+        ("code_verifier", code_verifier.to_string()),
+        ("scope", MICROSOFT_SCOPE.to_string()),
+    ];
+    let body = http_client()?
+        .post(MICROSOFT_TOKEN_URL)
+        .form(&params)
+        .send()
+        .map_err(error_text)?
+        .error_for_status()
+        .map_err(error_text)?
+        .json::<serde_json::Value>()
+        .map_err(error_text)?;
+    parse_microsoft_token(&body)
+}
+
+fn wait_for_microsoft_callback(listener: &TcpListener) -> Result<TcpStream, String> {
+    let deadline = SystemTime::now() + Duration::from_secs(180);
+
+    loop {
+        match listener.accept() {
+            Ok((stream, _)) => return Ok(stream),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                if SystemTime::now() >= deadline {
+                    return Err("Microsoft sign-in timed out.".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(150));
+            }
+            Err(error) => return Err(error_text(error)),
+        }
+    }
+}
+
+fn microsoft_authorize_url(code_challenge: &str, state: &str, force_account_picker: bool) -> String {
+    let mut params = vec![
+        ("client_id", MICROSOFT_CLIENT_ID.to_string()),
+        ("response_type", "code".to_string()),
+        ("redirect_uri", MICROSOFT_REDIRECT_URI.to_string()),
+        ("response_mode", "query".to_string()),
+        ("scope", MICROSOFT_SCOPE.to_string()),
+        ("code_challenge", code_challenge.to_string()),
+        ("code_challenge_method", "S256".to_string()),
+        ("state", state.to_string()),
+    ];
+    if force_account_picker {
+        params.push(("prompt", "select_account".to_string()));
+    }
+
+    let query = params
+        .into_iter()
+        .map(|(key, value)| format!("{}={}", url_encode_component(key), url_encode_component(&value)))
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("{MICROSOFT_AUTHORIZE_URL}?{query}")
+}
+
+fn read_microsoft_callback(stream: &mut TcpStream) -> Result<HashMap<String, String>, String> {
+    let mut buffer = [0u8; 8192];
+    let count = stream.read(&mut buffer).map_err(error_text)?;
+    let request = String::from_utf8_lossy(&buffer[..count]);
+    let first_line = request.lines().next().unwrap_or("");
+    let target = first_line.split_whitespace().nth(1).unwrap_or("/");
+    let query = target.split_once('?').map(|(_, query)| query).unwrap_or("");
+    Ok(parse_url_query(query))
+}
+
+fn write_microsoft_callback_response(stream: &mut TcpStream, title: &str, message: &str) -> io::Result<()> {
+    let body = format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title><style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#11131a;color:#f4f6fb;font-family:system-ui,sans-serif}}main{{max-width:440px;padding:28px;border:1px solid #2b2f3a;background:#181b24}}h1{{margin:0 0 10px;font-size:24px}}p{{margin:0;color:#b8bfcc;line-height:1.5}}</style></head><body><main><h1>{}</h1><p>{}</p></main></body></html>",
+        html_escape(title),
+        html_escape(title),
+        html_escape(message)
+    );
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.as_bytes().len(),
+        body
+    );
+    stream.write_all(response.as_bytes())
+}
+
+fn random_base64_url(len: usize) -> String {
+    let mut bytes = vec![0u8; len];
+    for byte in &mut bytes {
+        *byte = rand::random();
+    }
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn sha256_base64_url(value: &str) -> String {
+    let digest = Sha256::digest(value.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest)
+}
+
+fn parse_url_query(query: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        map.insert(url_decode_component(key), url_decode_component(value));
+    }
+    map
+}
+
+fn url_decode_component(value: &str) -> String {
+    let mut bytes = Vec::with_capacity(value.len());
+    let mut iter = value.as_bytes().iter().copied().peekable();
+    while let Some(byte) = iter.next() {
+        if byte == b'+' {
+            bytes.push(b' ');
+        } else if byte == b'%' {
+            let hi = iter.next();
+            let lo = iter.next();
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                if let (Some(hi), Some(lo)) = (hex_value(hi), hex_value(lo)) {
+                    bytes.push((hi << 4) | lo);
+                }
+            }
+        } else {
+            bytes.push(byte);
+        }
+    }
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn write_launcher_preferences(profile: &str, anti_screenshare: bool) -> Result<(), String> {
@@ -1859,6 +2069,7 @@ fn main() {
             select_microsoft_account,
             delete_microsoft_account,
             delete_microsoft_account_by_uuid,
+            microsoft_browser_sign_in,
             microsoft_device_start,
             microsoft_device_poll,
             ensure_profile,

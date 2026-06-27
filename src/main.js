@@ -131,7 +131,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(35);
   if (command === "launcher_info") {
     return {
-      version: "0.1.72",
+      version: "0.1.73",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
       session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
@@ -159,13 +159,13 @@ async function mockInvoke(command, args = {}) {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
       return {
-        version: "0.1.72",
-        minVersion: "0.1.72",
+        version: "0.1.73",
+        minVersion: "0.1.73",
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.72-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.72-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.72_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.73-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.73-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.73_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -191,9 +191,9 @@ async function mockInvoke(command, args = {}) {
   }
   if (command === "download_launcher_update") {
     return {
-      version: "0.1.72",
-      fileName: "Gamble-Client-Launcher_0.1.72_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.72_amd64.deb",
+      version: "0.1.73",
+      fileName: "Gamble-Client-Launcher_0.1.73_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.73_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -332,7 +332,7 @@ function render() {
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.72")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.73")}</span>
           </div>
         </div>
         <nav>
@@ -979,15 +979,18 @@ function signInPanel() {
 }
 
 function microsoftPanel() {
+  const browser = Boolean(state.microsoftSignIn?.browser);
   return `
     <section class="signin-panel">
       <div>
         <span class="eyebrow">Microsoft sign-in</span>
-        <h2>Open Microsoft sign-in</h2>
-        <p>${escapeHtml(state.microsoftError || "Finish sign-in in your browser. This window will update automatically.")}</p>
+        <h2>${browser ? "Waiting for Microsoft" : "Open Microsoft sign-in"}</h2>
+        <p>${escapeHtml(state.microsoftError || (browser
+          ? "Finish the browser sign-in. The launcher is listening for the local callback."
+          : "Finish sign-in in your browser. This window will update automatically."))}</p>
       </div>
       <div class="top-actions">
-        <button class="ghost" type="button" data-action="open-microsoft-link">Open Link</button>
+        ${browser ? "" : `<button class="ghost" type="button" data-action="open-microsoft-link">Open Link</button>`}
         <button class="ghost" type="button" data-action="cancel-microsoft">Cancel</button>
       </div>
     </section>
@@ -1664,19 +1667,20 @@ async function startSponsor() {
 async function startMicrosoftSignIn() {
   setBusy(true, "Starting Microsoft sign-in");
   try {
-    const start = await invoke("microsoft_device_start", { forceAccountPicker: true });
-    state.microsoftSignIn = start;
+    state.microsoftSignIn = { browser: true };
     state.microsoftError = "";
     state.microsoftPollCancelled = false;
-    const deviceCode = microsoftDeviceCode(start);
-    if (!deviceCode) throw new Error("Microsoft did not return a device code.");
-    const url = microsoftVerificationUrl(start);
-    if (url) await invoke("open_url", { url }).catch((error) => {
-      state.microsoftError = `Could not open Microsoft automatically: ${error}`;
-    });
-    log("Opened Microsoft sign-in link.");
+    log("Opening Microsoft sign-in.");
     render();
-    await pollMicrosoftSignIn(start, deviceCode);
+    const result = await invoke("microsoft_browser_sign_in", { forceAccountPicker: true });
+    if (result?.status !== "ready" || !result.account) throw new Error("Microsoft did not return a linked Minecraft account.");
+    state.microsoft = result.account;
+    state.username = result.account.name || state.username;
+    state.microsoftSignIn = null;
+    state.microsoftError = "";
+    await loadMicrosoftAccounts();
+    log(`Microsoft account linked: ${state.microsoft.name}`);
+    render();
   } catch (error) {
     state.microsoftError = String(error?.message || error);
     log(`Microsoft sign-in failed: ${state.microsoftError}`);
@@ -1735,7 +1739,7 @@ function microsoftAuthMessage(message) {
   const text = String(message || "Microsoft sign-in failed.");
   const lower = text.toLowerCase();
   if (lower.includes("first party application") || lower.includes("pre-authorization")) {
-    return "Microsoft rejected this app registration before account linking. The launcher is using the configured app id, but the Microsoft app registration needs the Xbox/Minecraft resource consent or pre-authorization fixed.";
+    return "Microsoft rejected the old device-code sign-in page. This launcher now uses browser sign-in with a local callback; update the launcher and try Add Microsoft again.";
   }
   return text;
 }
