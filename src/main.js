@@ -11,7 +11,9 @@ const CLIENT_DISMISS_KEY = "gamble.launcher.dismissedClientVersion";
 const CUSTOM_PROFILES_KEY = "gamble.launcher.customProfiles";
 const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
-const UPDATE_CHECK_TTL_MS = 45000;
+const ANIMATIONS_KEY = "gamble.launcher.animations";
+const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
+const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 const PREVIEW = !("__TAURI_INTERNALS__" in window);
 
 const app = document.querySelector("#app");
@@ -50,6 +52,7 @@ const state = {
   javaArgs: defaultJavaArgs(),
   antiScreenshare: defaultAntiScreenshare(),
   showAdvancedSettings: defaultAdvancedSettings(),
+  animationsEnabled: defaultAnimationsEnabled(),
   status: "Starting",
   busy: false,
   signIn: null,
@@ -70,6 +73,7 @@ const state = {
   spotify: null,
   lastVersionCheckAt: 0,
   lastManifestCheckAt: 0,
+  lastSocialCheckAt: 0,
   dismissedLauncherVersion: readStorage(LAUNCHER_DISMISS_KEY),
   dismissedClientVersion: readStorage(CLIENT_DISMISS_KEY),
   log: []
@@ -117,6 +121,10 @@ function defaultAdvancedSettings() {
   return globalThis.localStorage?.getItem(ADVANCED_SETTINGS_KEY) === "true";
 }
 
+function defaultAnimationsEnabled() {
+  return globalThis.localStorage?.getItem(ANIMATIONS_KEY) !== "false";
+}
+
 async function invoke(command, args = {}) {
   if (!PREVIEW) return await tauriInvoke(command, args);
   return mockInvoke(command, args);
@@ -131,7 +139,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(35);
   if (command === "launcher_info") {
     return {
-      version: "0.1.73",
+      version: "0.1.75",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
       session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
@@ -159,13 +167,13 @@ async function mockInvoke(command, args = {}) {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
       return {
-        version: "0.1.73",
-        minVersion: "0.1.73",
+        version: "0.1.75",
+        minVersion: "0.1.75",
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.73-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.73-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.73_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.75-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.75-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.75_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -191,9 +199,9 @@ async function mockInvoke(command, args = {}) {
   }
   if (command === "download_launcher_update") {
     return {
-      version: "0.1.73",
-      fileName: "Gamble-Client-Launcher_0.1.73_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.73_amd64.deb",
+      version: "0.1.75",
+      fileName: "Gamble-Client-Launcher_0.1.75_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.75_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -326,18 +334,19 @@ function render() {
   const selectedBuild = buildForAccount();
   const canInstall = signedIn && profile.client;
   app.innerHTML = `
-    <section class="shell">
+    <section class="shell ${state.animationsEnabled ? "" : "animations-off"}">
       <aside class="rail">
         <div class="brand">
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.73")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.75")}</span>
           </div>
         </div>
         <nav>
           ${navButton("play", "Play")}
           ${navButton("accounts", "Accounts")}
+          ${navButton("social", "Social")}
           ${navButton("updates", "Updates")}
           ${navButton("profiles", "Profiles")}
           <button class="nav-item nav-action" type="button" data-open="${DASH}/dashboard.html">Dashboard</button>
@@ -356,6 +365,7 @@ function render() {
         ${topbar(signedIn)}
         ${state.view === "play" ? playView(profile, selectedBuild, canInstall, signedIn) : ""}
         ${state.view === "accounts" ? accountsView(signedIn) : ""}
+        ${state.view === "social" ? socialView() : ""}
         ${state.view === "updates" ? updatesView(profile, selectedBuild, canInstall, signedIn) : ""}
         ${state.view === "profiles" ? profilesView(profile, selectedBuild) : ""}
         ${state.view === "settings" ? settingsView(profile, selectedBuild) : ""}
@@ -417,7 +427,7 @@ function topbar(signedIn) {
       </div>
       <div class="top-actions">
         <button class="ghost" type="button" data-action="refresh" ${state.busy ? "disabled" : ""}>Refresh</button>
-        <button class="icon-button ${state.view === "settings" ? "active" : ""}" type="button" data-view="settings" aria-label="Settings" title="Settings">⚙</button>
+        <button class="icon-button ${state.view === "settings" ? "active" : ""}" type="button" data-view="settings" aria-label="Settings" title="Settings"><span class="settings-glyph" aria-hidden="true">⚙</span></button>
         <button class="${signedIn ? "ghost" : "primary-small"}" type="button" data-action="${signedIn ? "signout" : "signin"}" ${state.busy ? "disabled" : ""}>${signedIn ? "Sign out" : "Sign in"}</button>
       </div>
     </header>
@@ -436,6 +446,10 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
         <div class="launch-copy">
           <span class="eyebrow">Gamble Client</span>
           <h2>${escapeHtml(selectedBuild.label)}</h2>
+          <div class="version-strip">
+            <span>Version</span>
+            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.75")} · Client ${escapeHtml(clientStatus)}</strong>
+          </div>
           <div class="launch-facts">
             <div>
               <span>Profile</span>
@@ -444,10 +458,6 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
             <div>
               <span>Memory</span>
               <strong>${escapeHtml(state.memory)} GB</strong>
-            </div>
-            <div>
-              <span>Client</span>
-              <strong>${escapeHtml(clientStatus)}</strong>
             </div>
           </div>
         </div>
@@ -468,24 +478,10 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
         </div>
         ${accountRow("Launcher", accountTitle(), accountMeta(), signedIn ? "Signed in" : "Required", launcherAvatarStyle())}
         ${accountRow("Minecraft", microsoftTitle(), state.microsoft ? `${state.microsoftAccounts.length || 1} saved account${(state.microsoftAccounts.length || 1) === 1 ? "" : "s"}` : "Required for launch", state.microsoft ? "Linked" : "Required", avatarStyle(state.microsoft), avatarInitials(state.microsoft?.name))}
-        <div class="split-actions">
-          <button class="subtle-button" type="button" data-view="accounts">Accounts</button>
-          <button class="subtle-button" type="button" data-action="microsoft" ${state.busy ? "disabled" : ""}>Add Microsoft</button>
-        </div>
       </aside>
     </section>
 
     <section class="quick-grid main-quick-grid">
-      <article class="action-tile">
-        <span>Launcher</span>
-        <strong>${escapeHtml(launcherNeedsUpdate() ? `Update ${latestLauncherVersion()}` : "Current")}</strong>
-        <button type="button" data-action="download-launcher" ${!launcherNeedsUpdate() || state.busy ? "disabled" : ""}>Update</button>
-      </article>
-      <article class="action-tile">
-        <span>Client</span>
-        <strong>${escapeHtml(clientStatus)}</strong>
-        <button type="button" data-action="install" ${!canInstall || state.busy ? "disabled" : ""}>Update</button>
-      </article>
       <article class="action-tile">
         <span>Sponsor</span>
         <strong>${escapeHtml(sponsorTitle())}</strong>
@@ -506,11 +502,6 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
         <strong>${escapeHtml(spotifyTitle())}</strong>
         <button type="button" data-open="${DASH}/dashboard.html#spotify">Open Dashboard</button>
       </article>
-      <article class="action-tile process-tile">
-        <span>Process</span>
-        <strong>${state.minecraftRunning ? `Running${state.minecraftPid ? ` #${state.minecraftPid}` : ""}` : "No active game"}</strong>
-        <button type="button" data-action="launch" ${!state.minecraftRunning || state.busy ? "disabled" : ""}>Kill</button>
-      </article>
     </section>
     ${state.sponsor ? sponsorOverlay() : ""}
   `;
@@ -530,6 +521,20 @@ function accountsView(signedIn) {
     </section>
     <section class="account-list">
       ${state.microsoftAccounts.length ? state.microsoftAccounts.map(accountCard).join("") : `<p class="empty">No Microsoft accounts saved on this device.</p>`}
+    </section>
+  `;
+}
+
+function socialView() {
+  return `
+    <section class="screen-band">
+      <div>
+        <span class="eyebrow">Social</span>
+        <h2>Friends</h2>
+      </div>
+      <div class="top-actions">
+        <button class="ghost" type="button" data-action="refresh" ${state.busy ? "disabled" : ""}>Refresh</button>
+      </div>
     </section>
     ${friendsPanel()}
   `;
@@ -644,14 +649,15 @@ function friendRequestRow(request) {
 }
 
 function updatesView(profile, selectedBuild, canInstall, signedIn) {
+  const checkedAt = Math.max(state.lastVersionCheckAt || 0, state.lastManifestCheckAt || 0);
   return `
     <section class="screen-band">
       <div>
-        <span class="eyebrow">Versions</span>
+        <span class="eyebrow">Updates</span>
         <h2>Updates</h2>
       </div>
       <div class="top-actions">
-        <button class="ghost" type="button" data-action="refresh" ${state.busy ? "disabled" : ""}>Check</button>
+        <button class="ghost" type="button" data-action="check-updates" ${state.busy ? "disabled" : ""}>Check</button>
       </div>
     </section>
     <section class="update-grid">
@@ -662,22 +668,22 @@ function updatesView(profile, selectedBuild, canInstall, signedIn) {
         <button class="primary-small" type="button" data-action="download-launcher" ${state.busy || !latestLauncherVersion() ? "disabled" : ""}>Update Launcher</button>
       </article>
       <article class="update-card ${clientNeedsUpdate() ? "warn" : ""}">
-        <span>Client</span>
+        <span>Managed client</span>
         <strong>${escapeHtml(clientStatusLabel())}</strong>
         <p>${escapeHtml(profile.client ? `${selectedBuild.label} build` : "This profile does not install the managed client jar.")}</p>
         <button class="primary-small" type="button" data-action="install" ${!canInstall || state.busy ? "disabled" : ""}>Update Client</button>
       </article>
       <article class="update-card">
-        <span>Required mods</span>
-        <strong>Fabric API managed</strong>
-        <p>Fabric API and the Gamble loader stay enabled and locked in Fabric profiles.</p>
-        <button class="ghost" type="button" data-view="profiles">View Mods</button>
+        <span>Profile</span>
+        <strong>${escapeHtml(profile.label)}</strong>
+        <p>${escapeHtml(profile.client ? `Using ${selectedBuild.label} access for this profile.` : "Vanilla and plain Fabric profiles skip the managed client jar.")}</p>
+        <button class="ghost" type="button" data-view="profiles">Profiles</button>
       </article>
       <article class="update-card">
-        <span>Access</span>
-        <strong>${escapeHtml(signedIn ? accountTitle() : "Sign in required")}</strong>
-        <p>${escapeHtml(accountMeta())}</p>
-        <button class="ghost" type="button" data-action="${signedIn ? "refresh" : "signin"}">${signedIn ? "Refresh" : "Sign in"}</button>
+        <span>Last check</span>
+        <strong>${escapeHtml(checkedAt ? new Date(checkedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "Not checked")}</strong>
+        <p>Cached checks keep this tab quick. Use Check when you want a fresh launcher and client status pull.</p>
+        <button class="ghost" type="button" data-action="check-updates" ${state.busy ? "disabled" : ""}>Refresh now</button>
       </article>
     </section>
   `;
@@ -721,7 +727,7 @@ function profilesView(profile, selectedBuild) {
             <div class="setting-note">
               <span>Profile name</span>
               <strong>${escapeHtml(profile.label)}</strong>
-              <small>Built-in profiles keep their default names.</small>
+              <small>Built-in</small>
             </div>
           `}
           <label>
@@ -774,11 +780,7 @@ function settingsView(profile, selectedBuild) {
           <input data-field="username" value="${escapeAttr(state.username)}" placeholder="Offline name">
         </label>
       `}
-      <div class="setting-note">
-        <span>Privacy defaults</span>
-        <strong>Friends stay private</strong>
-        <small>Friend data is not included in shared configs.</small>
-      </div>
+      ${privacyToggle("animationsEnabled", "Launcher animations", state.animationsEnabled, "setting")}
       ${privacyToggle("allowFriendRequests", "Friend requests", state.social?.settings?.allowFriendRequests !== false)}
       ${privacyToggle("showServerToFriends", "Show server to friends", Boolean(state.social?.settings?.showServerToFriends))}
       ${privacyToggle("shareSpotifyToFriends", "Share Spotify with friends", Boolean(state.social?.settings?.shareSpotifyToFriends))}
@@ -800,11 +802,12 @@ function settingsView(profile, selectedBuild) {
   `;
 }
 
-function privacyToggle(field, label, checked) {
+function privacyToggle(field, label, checked, kind = "privacy") {
+  const dataAttr = kind === "setting" ? "data-setting-toggle" : "data-privacy-field";
   return `
     <label class="checkbox-setting">
       <span>${escapeHtml(label)}</span>
-      <input type="checkbox" data-privacy-field="${escapeAttr(field)}" ${checked ? "checked" : ""}>
+      <input type="checkbox" ${dataAttr}="${escapeAttr(field)}" ${checked ? "checked" : ""}>
     </label>
   `;
 }
@@ -1129,6 +1132,7 @@ function logView() {
 
 function viewTitle() {
   if (state.view === "accounts") return "Accounts";
+  if (state.view === "social") return "Social";
   if (state.view === "updates") return "Update Center";
   if (state.view === "profiles") return "Profiles";
   if (state.view === "settings") return "Launcher Settings";
@@ -1176,7 +1180,8 @@ function buildForAccount() {
 
 function preferredBuildForAccount(account = state.account) {
   if (!account) return "release";
-  if (account.ownerAccess || account.mediaAccess || account.testerAccess || hasPlanOrStatus(account, ["owner", "media", "tester"])) return "media";
+  if (account.ownerAccess || hasPlanOrStatus(account, ["owner"])) return "release";
+  if (account.mediaAccess || account.testerAccess || hasPlanOrStatus(account, ["media", "tester"])) return "media";
   if (account.betaAccess || hasPlanOrStatus(account, ["beta_plus", "lifetime_beta"])) return "beta_plus";
   if (hasPlanOrStatus(account, ["weekly", "monthly", "yearly", "lifetime", "owned"])) return "release";
   return "ad_tier";
@@ -1184,6 +1189,7 @@ function preferredBuildForAccount(account = state.account) {
 
 function canUseBuild(buildId, account = state.account) {
   if (!account) return buildId === "release";
+  if (account.ownerAccess || hasPlanOrStatus(account, ["owner"])) return true;
   if (buildId === "ad_tier") return true;
   if (buildId === "release") return preferredBuildForAccount(account) !== "ad_tier";
   if (buildId === "beta_plus") return ["beta_plus", "media"].includes(preferredBuildForAccount(account));
@@ -1519,12 +1525,21 @@ async function refreshSpotifyStatus() {
 async function refreshSocial() {
   if (!state.token) {
     state.social = null;
+    state.lastSocialCheckAt = Date.now();
     return;
   }
   try {
     state.social = await api("/api/friends");
+    state.lastSocialCheckAt = Date.now();
   } catch (error) {
     state.social = { friends: [], incomingRequests: [], outgoingRequests: [], settings: {}, message: String(error.message || error) };
+    state.lastSocialCheckAt = Date.now();
+  }
+}
+
+async function refreshSocialIfStale(force = false) {
+  if (force || Date.now() - state.lastSocialCheckAt > SOCIAL_CHECK_TTL_MS) {
+    await refreshSocial();
   }
 }
 
@@ -1792,6 +1807,11 @@ app.addEventListener("click", async (event) => {
   const view = event.target.closest("[data-view]")?.dataset.view;
   if (view) {
     state.view = view;
+    if (view === "social") {
+      render();
+      refreshSocialIfStale().then(render).catch((error) => log(`Social refresh failed: ${error.message || error}`));
+      return;
+    }
     if (view === "profiles" || view === "play") await refreshFiles();
     if (view === "accounts") await loadMicrosoftAccounts();
     if (view === "updates") await refreshUpdatesIfStale();
@@ -1809,7 +1829,11 @@ app.addEventListener("click", async (event) => {
   const action = actionEl?.dataset.action;
   if (!action) return;
 
-  if (action === "refresh") {
+  if (action === "check-updates") {
+    setBusy(true, "Checking updates");
+    await refreshUpdatesIfStale(true);
+    setBusy(false, "Ready");
+  } else if (action === "refresh") {
     setBusy(true, "Refreshing");
     await Promise.allSettled([refreshVersion(), refreshAccount(), refreshManifest(), refreshFiles(), refreshAntiScreenshareStatus(), loadMicrosoftAccounts(), refreshSpotifyStatus(), refreshSocial()]);
     setBusy(false, "Ready");
@@ -2048,6 +2072,14 @@ app.addEventListener("click", async (event) => {
 });
 
 app.addEventListener("change", async (event) => {
+  const settingToggle = event.target.closest("[data-setting-toggle]")?.dataset.settingToggle;
+  if (settingToggle === "animationsEnabled") {
+    state.animationsEnabled = event.target.checked;
+    localStorage.setItem(ANIMATIONS_KEY, state.animationsEnabled ? "true" : "false");
+    render();
+    return;
+  }
+
   const privacyField = event.target.closest("[data-privacy-field]")?.dataset.privacyField;
   if (privacyField) {
     await updatePrivacySetting(privacyField, event.target.checked);

@@ -124,7 +124,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.73";
+    private static final String LAUNCHER_VERSION = "0.1.75";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -4891,6 +4891,7 @@ public class Main {
     }
 
     private Build bestBuildForUser(LauncherUser user) {
+        if (hasOwnerAccess(user)) return findBuild("release");
         String[] priority = {"media", "beta_plus", "release", "ad_tier"};
         for (String buildId : priority) {
             if (canUseBuild(user, buildId)) return findBuild(buildId);

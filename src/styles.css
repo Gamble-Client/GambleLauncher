@@ -288,11 +288,18 @@ p {
 .icon-button {
   display: grid;
   place-items: center;
-  width: 42px;
+  width: 48px;
+  min-height: 48px;
   padding: 0;
   background: #161616;
-  font-size: 1.05rem;
   line-height: 1;
+}
+
+.settings-glyph {
+  display: block;
+  font-size: 2.15rem;
+  line-height: 1;
+  transform: translateY(-1px);
 }
 
 .icon-button:hover,
@@ -336,10 +343,33 @@ p {
 
 .launch-facts {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: 20px;
   max-width: 560px;
+}
+
+.version-strip {
+  display: grid;
+  gap: 6px;
+  width: min(560px, 100%);
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 6px;
+  background: #0d0d0d;
+}
+
+.version-strip span {
+  color: #d2dae7;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.version-strip strong {
+  overflow-wrap: anywhere;
+  font-size: 0.95rem;
 }
 
 .launch-facts div {
@@ -601,7 +631,7 @@ p {
 }
 
 .settings-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -747,11 +777,39 @@ h3 {
 }
 
 .checkbox-setting input {
-  width: 22px;
-  height: 22px;
-  min-height: 22px;
+  position: relative;
+  width: 46px;
+  height: 26px;
+  min-height: 26px;
   padding: 0;
-  accent-color: #eeeeee;
+  appearance: none;
+  border-radius: 999px;
+  background: #151515;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.checkbox-setting input::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #e8edf4;
+  transition: transform 0.16s ease, background 0.16s ease;
+}
+
+.checkbox-setting input:checked {
+  background: #eeeeee;
+  border-color: #eeeeee;
+}
+
+.checkbox-setting input:checked::after {
+  transform: translateX(20px);
+  background: #050505;
 }
 
 .wide-field {
@@ -773,16 +831,6 @@ input {
   background: #0b0b0b;
   border: 1px solid rgba(255, 255, 255, 0.14);
   color: var(--text);
-}
-
-input[type="checkbox"] {
-  width: 22px;
-  min-height: 22px;
-  height: 22px;
-  padding: 0;
-  appearance: auto;
-  accent-color: #eeeeee;
-  cursor: pointer;
 }
 
 .toggle-button {
@@ -920,6 +968,10 @@ option {
   overflow: auto;
 }
 
+.profile-file-section .file-list {
+  max-height: 346px;
+}
+
 .file-row {
   display: flex;
   min-height: 74px;
@@ -1038,6 +1090,31 @@ pre {
   font-size: 1.6rem;
 }
 
+.shell:not(.animations-off) .content > section,
+.shell:not(.animations-off) .content > header,
+.shell:not(.animations-off) .modal-scrim {
+  animation: launcherFadeUp 0.2s ease both;
+}
+
+.animations-off *,
+.animations-off *::before,
+.animations-off *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+
+@keyframes launcherFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 1260px) {
   .play-stage,
   .launcher-deck {
@@ -1150,7 +1227,7 @@ pre {
   }
 
   .launch-facts {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .wide-field,

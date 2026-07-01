@@ -18,7 +18,7 @@ use std::{
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.73";
+const VERSION: &str = "0.1.75";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -48,6 +48,7 @@ const ANTISCREENSHARE_VISUAL_OFF: &[&str] = &[
     "block-debug-finder", "block-update-finder",
 ];
 static MINECRAFT_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
+static ACTIVE_LAUNCH_PAYLOAD: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 #[derive(Serialize)]
 struct LauncherInfo {
@@ -847,7 +848,7 @@ fn client_install_status(profile: String, build: String, token: String) -> Resul
     ensure_profile_folders(&profile)?;
     let manifest = fetch_client_manifest(&build, &token)?;
     let installed = find_verified_client_install(&profile, &manifest);
-    let expected_install = managed_client_mod_file(&profile, &manifest);
+    let expected_install = payload_file(&profile, &manifest.file_name);
     let installed_path = installed.as_deref().unwrap_or(expected_install.as_path());
     let current = installed.is_some();
     Ok(ClientInstallStatus {
@@ -943,11 +944,14 @@ fn install_client_manifest(profile: String, build: String, token: String) -> Res
         }
     }
 
-    cleanup_managed_mod_jars(&profile)?;
-    cleanup_payload_client_jars(&profile)?;
     ensure_loader_jar(&profile)?;
     ensure_fabric_api(&profile)?;
-    let client_jar = managed_client_mod_file(&profile, &manifest);
+    cleanup_managed_mod_jars(&profile)?;
+    cleanup_payload_client_jars(&profile)?;
+    let client_jar = payload_file(&profile, &manifest.file_name);
+    if let Some(parent) = client_jar.parent() {
+        fs::create_dir_all(parent).map_err(error_text)?;
+    }
     fs::write(&client_jar, bytes).map_err(error_text)?;
     write_install_marker(&profile, &build, &manifest, &client_jar)?;
 
@@ -975,9 +979,11 @@ fn launch_game(input: LaunchRequest) -> Result<String, String> {
             if child.try_wait().map_err(error_text)?.is_none() {
                 child.kill().map_err(error_text)?;
                 *running = None;
+                cleanup_active_launch_payload()?;
                 return Ok("Minecraft stop signal sent.".to_string());
             }
             *running = None;
+            cleanup_active_launch_payload()?;
         }
     }
 
@@ -996,8 +1002,10 @@ fn launch_game(input: LaunchRequest) -> Result<String, String> {
     if identity.name.trim().is_empty() && !input.username.trim().is_empty() {
         identity.name = input.username.trim().to_string();
     }
-    let managed_client = if profile_installs_client(&profile) {
-        Some(PathBuf::from(install_client_manifest(profile.to_string(), build.to_string(), token.to_string())?.path))
+    cleanup_stale_launch_payloads(&profile)?;
+    let managed_client_payload = if profile_installs_client(&profile) {
+        let install = install_client_manifest(profile.to_string(), build.to_string(), token.to_string())?;
+        Some((PathBuf::from(install.path), install.file_name))
     } else {
         None
     };
@@ -1024,8 +1032,13 @@ fn launch_game(input: LaunchRequest) -> Result<String, String> {
     classpath.push(ensure_client_jar(&profile_dir, &version)?);
     ensure_assets(&profile_dir, &version)?;
     let natives = extract_natives(&profile_dir, &version_id, &version)?;
+    let managed_client = if let Some((payload, file_name)) = managed_client_payload.as_ref() {
+        Some(prepare_launch_payload(&profile, payload, file_name)?)
+    } else {
+        None
+    };
 
-    let command = build_minecraft_command(
+    let command = match build_minecraft_command(
         &profile_dir,
         &profile,
         build,
@@ -1039,7 +1052,15 @@ fn launch_game(input: LaunchRequest) -> Result<String, String> {
         input.anti_screenshare,
         managed_client.as_deref(),
         launch_ticket_file.as_deref(),
-    )?;
+    ) {
+        Ok(command) => command,
+        Err(error) => {
+            if let Some(payload) = managed_client.as_deref() {
+                cleanup_launch_payload(payload);
+            }
+            return Err(error);
+        }
+    };
     let log_file = latest_launch_log_file();
     if let Some(parent) = log_file.parent() {
         fs::create_dir_all(parent).map_err(error_text)?;
@@ -1050,9 +1071,16 @@ fn launch_game(input: LaunchRequest) -> Result<String, String> {
     let mut process = Command::new(&command[0]);
     process.args(&command[1..]).current_dir(&profile_dir).stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
     let child = process.spawn().map_err(|error| {
+        if let Some(payload) = managed_client.as_deref() {
+            cleanup_launch_payload(payload);
+        }
         format!("Could not start Minecraft: {error}. If this mentions Java, install Java 21+ and restart the launcher.")
     })?;
     let pid = child.id();
+    {
+        let mut active_payload = ACTIVE_LAUNCH_PAYLOAD.lock().map_err(error_text)?;
+        *active_payload = managed_client;
+    }
     *MINECRAFT_PROCESS.lock().map_err(error_text)? = Some(child);
     Ok(format!("Minecraft process started (pid {pid}). Latest launch log: {}", display_path(&log_file)))
 }
@@ -1068,6 +1096,7 @@ fn minecraft_status() -> Result<MinecraftStatus, String> {
             });
         }
         *running = None;
+        cleanup_active_launch_payload()?;
     }
     Ok(MinecraftStatus {
         running: false,
@@ -2212,10 +2241,6 @@ fn payload_file(profile: &str, file_name: &str) -> PathBuf {
     payloads_folder(profile).join(file_name)
 }
 
-fn managed_client_mod_file(profile: &str, manifest: &ManifestResponse) -> PathBuf {
-    mods_folder(profile).join(&manifest.file_name)
-}
-
 fn ensure_profile_folders(profile: &str) -> Result<PathBuf, String> {
     let root = minecraft_folder(profile);
     fs::create_dir_all(&root).map_err(error_text)?;
@@ -2345,6 +2370,58 @@ fn cleanup_payload_client_jars(profile: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn cleanup_stale_launch_payloads(profile: &str) -> Result<(), String> {
+    let folder = profile_data_folder(profile).join("launch");
+    if !folder.is_dir() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(&folder).map_err(error_text)? {
+        let entry = entry.map_err(error_text)?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if name.starts_with("payload-") && name.ends_with(".jar") {
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    Ok(())
+}
+
+fn prepare_launch_payload(profile: &str, source: &Path, file_name: &str) -> Result<PathBuf, String> {
+    if !source.is_file() {
+        return Err(format!("Managed client payload is missing: {}", display_path(source)));
+    }
+    let folder = profile_data_folder(profile).join("launch");
+    fs::create_dir_all(&folder).map_err(error_text)?;
+    let safe_name = Path::new(file_name)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("cg-client.jar");
+    let target = folder.join(format!("payload-{}-{}-{safe_name}", timestamp(), process_id()));
+    fs::copy(source, &target).map_err(error_text)?;
+    Ok(target)
+}
+
+fn cleanup_launch_payload(path: &Path) {
+    let _ = fs::remove_file(path);
+}
+
+fn cleanup_active_launch_payload() -> Result<(), String> {
+    let payload = {
+        let mut active = ACTIVE_LAUNCH_PAYLOAD.lock().map_err(error_text)?;
+        active.take()
+    };
+    if let Some(path) = payload {
+        cleanup_launch_payload(&path);
+    }
+    Ok(())
+}
+
 fn ensure_loader_jar(profile: &str) -> Result<(), String> {
     let mods = mods_folder(profile);
     fs::create_dir_all(&mods).map_err(error_text)?;
@@ -2372,10 +2449,7 @@ fn find_verified_client_install(profile: &str, manifest: &ManifestResponse) -> O
 }
 
 fn client_install_candidates(profile: &str, manifest: &ManifestResponse) -> Vec<PathBuf> {
-    vec![
-        managed_client_mod_file(profile, manifest),
-        payload_file(profile, &manifest.file_name),
-    ]
+    vec![payload_file(profile, &manifest.file_name)]
 }
 
 fn ensure_fabric_api(profile: &str) -> Result<(), String> {

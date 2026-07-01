@@ -139,7 +139,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(35);
   if (command === "launcher_info") {
     return {
-      version: "0.1.74",
+      version: "0.1.75",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
       session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
@@ -167,13 +167,13 @@ async function mockInvoke(command, args = {}) {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
       return {
-        version: "0.1.74",
-        minVersion: "0.1.74",
+        version: "0.1.75",
+        minVersion: "0.1.75",
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.74-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.74-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.74_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.75-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.75-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.75_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -199,9 +199,9 @@ async function mockInvoke(command, args = {}) {
   }
   if (command === "download_launcher_update") {
     return {
-      version: "0.1.74",
-      fileName: "Gamble-Client-Launcher_0.1.74_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.74_amd64.deb",
+      version: "0.1.75",
+      fileName: "Gamble-Client-Launcher_0.1.75_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.75_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -340,7 +340,7 @@ function render() {
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.74")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.75")}</span>
           </div>
         </div>
         <nav>
@@ -448,7 +448,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           <h2>${escapeHtml(selectedBuild.label)}</h2>
           <div class="version-strip">
             <span>Version</span>
-            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.74")} · Client ${escapeHtml(clientStatus)}</strong>
+            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.75")} · Client ${escapeHtml(clientStatus)}</strong>
           </div>
           <div class="launch-facts">
             <div>
