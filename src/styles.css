@@ -609,6 +609,20 @@ p {
   color: #ffc8c8;
 }
 
+.danger-note {
+  border-color: rgba(255, 107, 107, 0.34);
+  background: rgba(255, 107, 107, 0.08);
+}
+
+button.danger {
+  border-color: rgba(255, 107, 107, 0.42);
+}
+
+button.danger:hover {
+  background: rgba(255, 107, 107, 0.14);
+  border-color: rgba(255, 107, 107, 0.76);
+}
+
 .tune-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

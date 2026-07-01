@@ -162,6 +162,7 @@ async function mockInvoke(command, args = {}) {
     return { selectedUuid: state.microsoft?.uuid || "", accounts: state.microsoftAccounts.filter((account) => account.uuid !== args.uuid) };
   }
   if (command === "save_launcher_token" || command === "ensure_profile" || command === "open_url") return "";
+  if (command === "purge_profile") return { profile: args.profile || "gamble-client", path: "/home/theac/.local/share/gamble-client/minecraft/profiles/gamble-client", message: "Profile folder purged. Microsoft accounts and launcher sign-in were kept." };
   if (command === "delete_launcher_token" || command === "delete_microsoft_account") return null;
   if (command === "launcher_api") {
     const path = args.input?.path || "";
@@ -796,6 +797,14 @@ function settingsView(profile, selectedBuild) {
           <input data-field="javaArgs" value="${escapeAttr(state.javaArgs)}" placeholder="-XX:+UseZGC">
         </label>
       ` : ""}
+    </section>
+    <section class="settings-grid compact-grid">
+      <div class="setting-note danger-note">
+        <span>Clean selected profile</span>
+        <strong>${escapeHtml(profile.label)}</strong>
+        <small>Deletes this profile folder only. Microsoft accounts and launcher login stay saved.</small>
+      </div>
+      <button class="ghost danger" type="button" data-action="purge-profile" ${state.busy ? "disabled" : ""}>Purge Profile</button>
     </section>
     ${antiScreensharePanel()}
     ${diagnosticsPanel()}
@@ -2058,6 +2067,28 @@ app.addEventListener("click", async (event) => {
     const path = await invoke("open_profile_folder", { profile: state.selectedProfile, kind: "data" });
     log(`Opened ${path}`);
     render();
+  } else if (action === "purge-profile") {
+    const profile = currentProfile();
+    const ok = window.confirm(`Purge ${profile.label}? This deletes the selected managed Minecraft profile folder, but keeps Microsoft accounts and launcher sign-in.`);
+    if (!ok) return;
+    setBusy(true, "Purging profile");
+    try {
+      const result = await invoke("purge_profile", { profile: state.selectedProfile });
+      state.clientStatus = null;
+      state.manifest = null;
+      state.mods = [];
+      state.packs = [];
+      log(result?.message || `Purged ${profile.label}.`);
+      showPopup("Profile purged", result?.message || "The selected profile was cleaned.", "profile");
+      await refreshFiles();
+      await refreshAntiScreenshareStatus();
+      await refreshManifest().catch(() => {});
+    } catch (error) {
+      showPopup("Purge failed", String(error.message || error), "profile");
+      log(`Purge failed: ${error.message || error}`);
+    } finally {
+      setBusy(false);
+    }
   } else if (action === "reload-files") {
     await refreshFiles();
     log("Files refreshed.");

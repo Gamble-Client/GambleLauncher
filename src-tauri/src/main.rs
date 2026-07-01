@@ -75,6 +75,13 @@ struct LocalFile {
 }
 
 #[derive(Serialize)]
+struct PurgeProfileResult {
+    profile: String,
+    path: String,
+    message: String,
+}
+
+#[derive(Serialize)]
 struct Diagnostics {
     checks: Vec<DiagnosticCheck>,
 }
@@ -618,6 +625,31 @@ fn microsoft_device_poll(device_code: String) -> Result<serde_json::Value, Strin
 fn ensure_profile(profile: String) -> Result<String, String> {
     let profile = profile_id(&profile);
     ensure_profile_folders(&profile).map(|path| display_path(&path))
+}
+
+#[tauri::command]
+fn purge_profile(profile: String) -> Result<PurgeProfileResult, String> {
+    let profile = profile_id(&profile);
+    {
+        let mut guard = MINECRAFT_PROCESS.lock().map_err(|_| "Minecraft process lock failed.".to_string())?;
+        if let Some(child) = guard.as_mut() {
+            if child.try_wait().map_err(error_text)?.is_none() {
+                return Err("Close Minecraft before purging this profile.".to_string());
+            }
+            *guard = None;
+        }
+    }
+
+    let root = minecraft_folder(&profile);
+    if root.exists() {
+        fs::remove_dir_all(&root).map_err(error_text)?;
+    }
+    let recreated = ensure_profile_folders(&profile)?;
+    Ok(PurgeProfileResult {
+        profile,
+        path: display_path(&recreated),
+        message: "Profile folder purged. Microsoft accounts and launcher sign-in were kept.".to_string(),
+    })
 }
 
 #[tauri::command]
@@ -2102,6 +2134,7 @@ fn main() {
             microsoft_device_start,
             microsoft_device_poll,
             ensure_profile,
+            purge_profile,
             list_local_files,
             toggle_local_file,
             add_resource_packs,
