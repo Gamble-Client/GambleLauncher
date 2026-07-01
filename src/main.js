@@ -139,7 +139,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(35);
   if (command === "launcher_info") {
     return {
-      version: "0.1.77",
+      version: "0.1.78",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
       session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
@@ -162,19 +162,18 @@ async function mockInvoke(command, args = {}) {
     return { selectedUuid: state.microsoft?.uuid || "", accounts: state.microsoftAccounts.filter((account) => account.uuid !== args.uuid) };
   }
   if (command === "save_launcher_token" || command === "ensure_profile" || command === "open_url") return "";
-  if (command === "purge_profile") return { profile: args.profile || "gamble-client", path: "/home/theac/.local/share/gamble-client/minecraft/profiles/gamble-client", message: "Profile folder purged. Microsoft accounts and launcher sign-in were kept." };
   if (command === "delete_launcher_token" || command === "delete_microsoft_account") return null;
   if (command === "launcher_api") {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
       return {
-        version: "0.1.77",
-        minVersion: "0.1.77",
+        version: "0.1.78",
+        minVersion: "0.1.78",
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.77-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.77-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.77_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.78-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.78-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.78_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -200,9 +199,9 @@ async function mockInvoke(command, args = {}) {
   }
   if (command === "download_launcher_update") {
     return {
-      version: "0.1.77",
-      fileName: "Gamble-Client-Launcher_0.1.77_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.77_amd64.deb",
+      version: "0.1.78",
+      fileName: "Gamble-Client-Launcher_0.1.78_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.78_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -341,7 +340,7 @@ function render() {
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.77")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.78")}</span>
           </div>
         </div>
         <nav>
@@ -449,7 +448,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           <h2>${escapeHtml(selectedBuild.label)}</h2>
           <div class="version-strip">
             <span>Version</span>
-            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.77")} · Client ${escapeHtml(clientStatus)}</strong>
+            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.78")} · Client ${escapeHtml(clientStatus)}</strong>
           </div>
           <div class="launch-facts">
             <div>
@@ -797,14 +796,6 @@ function settingsView(profile, selectedBuild) {
           <input data-field="javaArgs" value="${escapeAttr(state.javaArgs)}" placeholder="-XX:+UseZGC">
         </label>
       ` : ""}
-    </section>
-    <section class="settings-grid compact-grid">
-      <div class="setting-note danger-note">
-        <span>Clean selected profile</span>
-        <strong>${escapeHtml(profile.label)}</strong>
-        <small>Deletes this profile folder only. Microsoft accounts and launcher login stay saved.</small>
-      </div>
-      <button class="ghost danger" type="button" data-action="purge-profile" ${state.busy ? "disabled" : ""}>Purge Profile</button>
     </section>
     ${antiScreensharePanel()}
     ${diagnosticsPanel()}
@@ -2069,28 +2060,6 @@ app.addEventListener("click", async (event) => {
     const path = await invoke("open_profile_folder", { profile: state.selectedProfile, kind: "data" });
     log(`Opened ${path}`);
     render();
-  } else if (action === "purge-profile") {
-    const profile = currentProfile();
-    const ok = window.confirm(`Purge ${profile.label}? This deletes the selected managed Minecraft profile folder, but keeps Microsoft accounts and launcher sign-in.`);
-    if (!ok) return;
-    setBusy(true, "Purging profile");
-    try {
-      const result = await invoke("purge_profile", { profile: state.selectedProfile });
-      state.clientStatus = null;
-      state.manifest = null;
-      state.mods = [];
-      state.packs = [];
-      log(result?.message || `Purged ${profile.label}.`);
-      showPopup("Profile purged", result?.message || "The selected profile was cleaned.", "profile");
-      await refreshFiles();
-      await refreshAntiScreenshareStatus();
-      await refreshManifest().catch(() => {});
-    } catch (error) {
-      showPopup("Purge failed", String(error.message || error), "profile");
-      log(`Purge failed: ${error.message || error}`);
-    } finally {
-      setBusy(false);
-    }
   } else if (action === "reload-files") {
     await refreshFiles();
     log("Files refreshed.");
