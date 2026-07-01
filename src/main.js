@@ -139,7 +139,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(35);
   if (command === "launcher_info") {
     return {
-      version: "0.1.76",
+      version: "0.1.77",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
       session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
@@ -168,13 +168,13 @@ async function mockInvoke(command, args = {}) {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
       return {
-        version: "0.1.76",
-        minVersion: "0.1.76",
+        version: "0.1.77",
+        minVersion: "0.1.77",
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.76-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.76-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.76_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.77-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.77-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.77_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -200,9 +200,9 @@ async function mockInvoke(command, args = {}) {
   }
   if (command === "download_launcher_update") {
     return {
-      version: "0.1.76",
-      fileName: "Gamble-Client-Launcher_0.1.76_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.76_amd64.deb",
+      version: "0.1.77",
+      fileName: "Gamble-Client-Launcher_0.1.77_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.77_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -341,7 +341,7 @@ function render() {
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.76")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.77")}</span>
           </div>
         </div>
         <nav>
@@ -449,7 +449,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           <h2>${escapeHtml(selectedBuild.label)}</h2>
           <div class="version-strip">
             <span>Version</span>
-            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.76")} · Client ${escapeHtml(clientStatus)}</strong>
+            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.77")} · Client ${escapeHtml(clientStatus)}</strong>
           </div>
           <div class="launch-facts">
             <div>
@@ -1625,6 +1625,7 @@ async function updatePrivacySetting(field, value) {
 async function installSelected() {
   setBusy(true, "Installing client");
   try {
+    await yieldToUi();
     const build = buildForAccount();
     const result = await invoke("install_client_manifest", {
       profile: state.selectedProfile,
@@ -1647,6 +1648,7 @@ async function installSelected() {
 async function downloadLauncherUpdate() {
   setBusy(true, "Downloading launcher update");
   try {
+    await yieldToUi();
     const result = await invoke("download_launcher_update");
     state.dismissedLauncherVersion = latestLauncherVersion();
     localStorage.setItem(LAUNCHER_DISMISS_KEY, state.dismissedLauncherVersion);
@@ -2194,6 +2196,10 @@ function formatDuration(seconds) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function yieldToUi() {
+  return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
 }
 
 boot();

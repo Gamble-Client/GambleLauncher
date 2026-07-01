@@ -18,7 +18,7 @@ use std::{
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.76";
+const VERSION: &str = "0.1.77";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -33,6 +33,8 @@ const MICROSOFT_SCOPE: &str = "XboxLive.signin offline_access";
 const MICROSOFT_CLIENT_ID: &str = "8eea0ae2-d0a9-4af1-88b9-f66bd96c94bd";
 const MICROSOFT_REDIRECT_PORT: u16 = 39062;
 const MICROSOFT_REDIRECT_URI: &str = "http://localhost:39062/";
+const HTTP_CONNECT_TIMEOUT_SECONDS: u64 = 15;
+const HTTP_REQUEST_TIMEOUT_SECONDS: u64 = 300;
 const XBOX_AUTH_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
 const XSTS_AUTH_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
 const MINECRAFT_LOGIN_URL: &str = "https://api.minecraftservices.com/launcher/login";
@@ -858,7 +860,11 @@ fn open_anti_screenshare_obs() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn client_install_status(profile: String, build: String, token: String) -> Result<ClientInstallStatus, String> {
+async fn client_install_status(profile: String, build: String, token: String) -> Result<ClientInstallStatus, String> {
+    run_blocking(move || client_install_status_blocking(profile, build, token)).await
+}
+
+fn client_install_status_blocking(profile: String, build: String, token: String) -> Result<ClientInstallStatus, String> {
     let profile = profile_id(&profile);
     if !profile_installs_client(&profile) {
         return Ok(ClientInstallStatus {
@@ -901,7 +907,11 @@ fn client_install_status(profile: String, build: String, token: String) -> Resul
 }
 
 #[tauri::command]
-fn download_launcher_update() -> Result<LauncherUpdateResult, String> {
+async fn download_launcher_update() -> Result<LauncherUpdateResult, String> {
+    run_blocking(download_launcher_update_blocking).await
+}
+
+fn download_launcher_update_blocking() -> Result<LauncherUpdateResult, String> {
     let info = fetch_launcher_version_info()?;
     let download = preferred_launcher_download(&info);
     if download.download_url.trim().is_empty() || download.file_name.trim().is_empty() {
@@ -931,7 +941,11 @@ fn download_launcher_update() -> Result<LauncherUpdateResult, String> {
 }
 
 #[tauri::command]
-fn install_client_manifest(profile: String, build: String, token: String) -> Result<InstallResult, String> {
+async fn install_client_manifest(profile: String, build: String, token: String) -> Result<InstallResult, String> {
+    run_blocking(move || install_client_manifest_blocking(profile, build, token)).await
+}
+
+fn install_client_manifest_blocking(profile: String, build: String, token: String) -> Result<InstallResult, String> {
     let profile = profile_id(&profile);
     if token.trim().is_empty() {
         return Err("Sign in before installing the client.".to_string());
@@ -1004,7 +1018,11 @@ fn install_client_manifest(profile: String, build: String, token: String) -> Res
 }
 
 #[tauri::command]
-fn launch_game(input: LaunchRequest) -> Result<String, String> {
+async fn launch_game(input: LaunchRequest) -> Result<String, String> {
+    run_blocking(move || launch_game_blocking(input)).await
+}
+
+fn launch_game_blocking(input: LaunchRequest) -> Result<String, String> {
     {
         let mut running = MINECRAFT_PROCESS.lock().map_err(error_text)?;
         if let Some(child) = running.as_mut() {
@@ -1036,7 +1054,7 @@ fn launch_game(input: LaunchRequest) -> Result<String, String> {
     }
     cleanup_stale_launch_payloads(&profile)?;
     let managed_client_payload = if profile_installs_client(&profile) {
-        let install = install_client_manifest(profile.to_string(), build.to_string(), token.to_string())?;
+        let install = install_client_manifest_blocking(profile.to_string(), build.to_string(), token.to_string())?;
         Some((PathBuf::from(install.path), install.file_name))
     } else {
         None
@@ -2096,6 +2114,16 @@ fn redacted_command(command: &[String]) -> String {
         .join(" ")
 }
 
+async fn run_blocking<T, F>(task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
@@ -2891,6 +2919,8 @@ fn sha256_hex(data: &[u8]) -> String {
 fn http_client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .user_agent(format!("GambleClientLauncher/{VERSION}"))
+        .connect_timeout(Duration::from_secs(HTTP_CONNECT_TIMEOUT_SECONDS))
+        .timeout(Duration::from_secs(HTTP_REQUEST_TIMEOUT_SECONDS))
         .build()
         .map_err(error_text)
 }
