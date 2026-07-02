@@ -7,17 +7,17 @@
   --bg: #050505;
   --rail: #080808;
   --panel: #0d0d0d;
-  --panel-2: #111111;
-  --line: rgba(255, 255, 255, 0.08);
-  --line-strong: rgba(255, 255, 255, 0.14);
-  --muted: #8a8a8a;
+  --panel-2: #14100a;
+  --line: rgba(245, 158, 11, 0.22);
+  --line-strong: rgba(245, 158, 11, 0.38);
+  --muted: #b8a37c;
   --text: #f5f7fb;
-  --red: #9a9a9a;
-  --red-dark: #505050;
-  --teal: #aaaaaa;
-  --amber: #aaaaaa;
+  --red: #f59e0b;
+  --red-dark: #8a4b08;
+  --teal: #fbbf24;
+  --amber: #fb923c;
   --surface: #0b0b0b;
-  --surface-strong: #101010;
+  --surface-strong: #11100d;
 }
 
 * {
@@ -36,7 +36,7 @@ button,
 select,
 input {
   border: 0;
-  border-radius: 6px;
+  border-radius: 4px;
   color: inherit;
   font: inherit;
 }
@@ -90,8 +90,8 @@ select:disabled {
   place-items: center;
   width: 44px;
   height: 44px;
-  border-radius: 8px;
-  background: #111111;
+  border-radius: 4px;
+  background: #14100a;
   border: 1px solid var(--line-strong);
   color: white;
   font-weight: 950;
@@ -143,31 +143,31 @@ nav {
   padding: 10px 12px;
   text-align: left;
   background: transparent;
-  color: #c7d0df;
+  color: #f0e0c7;
   transition: background 0.14s ease, color 0.14s ease, transform 0.14s ease;
 }
 
 .nav-action {
   margin-top: 6px;
   border: 1px solid var(--line);
-  background: #101010;
+  background: #11100d;
   text-align: center;
   font-weight: 850;
 }
 
 .nav-action:hover {
   border-color: var(--line-strong);
-  background: #1a1a1a;
+  background: #251606;
 }
 
 .nav-item:hover,
 .nav-item.active {
-  background: #19222e;
+  background: #2a1806;
   color: white;
 }
 
 .nav-item.active {
-  box-shadow: inset 3px 0 0 #777777;
+  box-shadow: inset 3px 0 0 #f59e0b;
 }
 
 .rail-status {
@@ -185,8 +185,8 @@ nav {
 .sponsor-panel,
 .signin-panel {
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: rgba(18, 25, 35, 0.88);
+  border-radius: 4px;
+  background: rgba(20, 16, 10, 0.9);
 }
 
 .rail-card {
@@ -253,7 +253,7 @@ h2 {
 
 p {
   max-width: 650px;
-  color: #c3ccda;
+  color: #d8c6a7;
   line-height: 1.5;
 }
 
@@ -528,7 +528,7 @@ p {
   display: block;
   padding: 6px 8px;
   border-radius: 6px;
-  background: #1a1a1a;
+  background: #251606;
   color: #dddddd;
   font-size: 0.72rem;
   text-transform: uppercase;
@@ -907,7 +907,7 @@ input {
 }
 
 .toggle-button.on b {
-  background: #777777;
+  background: #f59e0b;
 }
 
 .toggle-button.on b::after {
@@ -1082,7 +1082,7 @@ pre {
   padding: 20px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  background: #101010;
+  background: #11100d;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
 }
 
