@@ -18,7 +18,7 @@ use std::{
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.78";
+const VERSION: &str = "0.1.79";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -35,6 +35,7 @@ const MICROSOFT_REDIRECT_PORT: u16 = 39062;
 const MICROSOFT_REDIRECT_URI: &str = "http://localhost:39062/";
 const HTTP_CONNECT_TIMEOUT_SECONDS: u64 = 15;
 const HTTP_REQUEST_TIMEOUT_SECONDS: u64 = 300;
+const HTTP_DOWNLOAD_ATTEMPTS: usize = 3;
 const XBOX_AUTH_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
 const XSTS_AUTH_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
 const MINECRAFT_LOGIN_URL: &str = "https://api.minecraftservices.com/launcher/login";
@@ -1857,8 +1858,45 @@ fn download_file(url: &str, path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(error_text)?;
     }
-    let bytes = http_client()?.get(url).send().map_err(error_text)?.error_for_status().map_err(error_text)?.bytes().map_err(error_text)?;
+    let mut last_error = String::new();
+    for attempt in 1..=HTTP_DOWNLOAD_ATTEMPTS {
+        match download_file_once(url, path) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                last_error = error;
+                if attempt < HTTP_DOWNLOAD_ATTEMPTS {
+                    std::thread::sleep(Duration::from_millis(250 * attempt as u64));
+                }
+            }
+        }
+    }
+    Err(download_failure_message(url, &last_error))
+}
+
+fn download_file_once(url: &str, path: &Path) -> Result<(), String> {
+    let bytes = http_client()?
+        .get(url)
+        .send()
+        .map_err(error_text)?
+        .error_for_status()
+        .map_err(error_text)?
+        .bytes()
+        .map_err(error_text)?;
     fs::write(path, bytes).map_err(error_text)
+}
+
+fn download_failure_message(url: &str, error: &str) -> String {
+    if url.starts_with(ASSET_BASE_URL) {
+        return format!(
+            "Minecraft asset download failed from Mojang's CDN after {HTTP_DOWNLOAD_ATTEMPTS} attempts: {url} ({error})"
+        );
+    }
+    if url.contains("launchermeta.mojang.com") {
+        return format!(
+            "Minecraft version metadata failed from Mojang after {HTTP_DOWNLOAD_ATTEMPTS} attempts: {url} ({error})"
+        );
+    }
+    format!("Download failed after {HTTP_DOWNLOAD_ATTEMPTS} attempts: {url} ({error})")
 }
 
 fn unzip_natives(zip_path: &Path, target: &Path) -> Result<(), String> {

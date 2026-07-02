@@ -139,7 +139,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(35);
   if (command === "launcher_info") {
     return {
-      version: "0.1.78",
+      version: "0.1.79",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
       session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
@@ -167,13 +167,13 @@ async function mockInvoke(command, args = {}) {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
       return {
-        version: "0.1.78",
-        minVersion: "0.1.78",
+        version: "0.1.79",
+        minVersion: "0.1.79",
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.78-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.78-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.78_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.79-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.79-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.79_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -199,9 +199,9 @@ async function mockInvoke(command, args = {}) {
   }
   if (command === "download_launcher_update") {
     return {
-      version: "0.1.78",
-      fileName: "Gamble-Client-Launcher_0.1.78_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.78_amd64.deb",
+      version: "0.1.79",
+      fileName: "Gamble-Client-Launcher_0.1.79_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.79_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -340,7 +340,7 @@ function render() {
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.78")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.79")}</span>
           </div>
         </div>
         <nav>
@@ -448,7 +448,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           <h2>${escapeHtml(selectedBuild.label)}</h2>
           <div class="version-strip">
             <span>Version</span>
-            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.78")} · Client ${escapeHtml(clientStatus)}</strong>
+            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.79")} · Client ${escapeHtml(clientStatus)}</strong>
           </div>
           <div class="launch-facts">
             <div>
@@ -1270,6 +1270,9 @@ function knownLaunchMessage(error) {
   const lower = text.toLowerCase();
   if (lower.includes("update") || lower.includes("outdated")) return "Update the client or launcher, then launch again.";
   if (lower.includes("microsoft") || lower.includes("account") || lower.includes("auth")) return "Link or refresh your Microsoft account, then launch again.";
+  if (lower.includes("resources.download.minecraft.net") || lower.includes("minecraft asset") || lower.includes("mojang")) {
+    return "Minecraft asset download failed from Mojang's CDN. Check VPN/proxy/DNS on this computer, then try Launch again.";
+  }
   if (lower.includes("java")) return "Java failed during launch. Run diagnostics from Settings for the exact local check.";
   return text;
 }
@@ -1504,10 +1507,39 @@ async function refreshManifest() {
 
 async function refreshUpdatesIfStale(force = false) {
   const now = Date.now();
-  const checks = [];
-  if (force || now - state.lastVersionCheckAt > UPDATE_CHECK_TTL_MS) checks.push(refreshVersion());
-  if (force || now - state.lastManifestCheckAt > UPDATE_CHECK_TTL_MS) checks.push(refreshManifest());
-  if (checks.length) await Promise.allSettled(checks);
+  if (force || now - state.lastVersionCheckAt > UPDATE_CHECK_TTL_MS) await refreshVersion();
+  if (force) await refreshAccountForUpdate();
+  if (force || now - state.lastManifestCheckAt > UPDATE_CHECK_TTL_MS) await refreshManifestForUpdate();
+}
+
+async function refreshAccountForUpdate() {
+  if (!state.token) return;
+  try {
+    await refreshAccount();
+  } catch (error) {
+    log(`Account refresh failed: ${error.message || error}`);
+  }
+}
+
+async function refreshManifestForUpdate() {
+  try {
+    await refreshManifest();
+  } catch (error) {
+    log(`Client check failed: ${error.message || error}`);
+  }
+}
+
+async function refreshLauncherStateForUpdate() {
+  await refreshVersion();
+  await refreshAccountForUpdate();
+  await refreshManifestForUpdate();
+  await Promise.allSettled([
+    refreshFiles(),
+    refreshAntiScreenshareStatus(),
+    loadMicrosoftAccounts(),
+    refreshSpotifyStatus(),
+    refreshSocial()
+  ]);
 }
 
 async function refreshSpotifyStatus() {
@@ -1833,11 +1865,11 @@ app.addEventListener("click", async (event) => {
 
   if (action === "check-updates") {
     setBusy(true, "Checking updates");
-    await refreshUpdatesIfStale(true);
+    await refreshLauncherStateForUpdate();
     setBusy(false, "Ready");
   } else if (action === "refresh") {
     setBusy(true, "Refreshing");
-    await Promise.allSettled([refreshVersion(), refreshAccount(), refreshManifest(), refreshFiles(), refreshAntiScreenshareStatus(), loadMicrosoftAccounts(), refreshSpotifyStatus(), refreshSocial()]);
+    await refreshLauncherStateForUpdate();
     setBusy(false, "Ready");
   } else if (action === "signin") {
     await startSignIn();
@@ -1883,20 +1915,27 @@ app.addEventListener("click", async (event) => {
   } else if (action === "install") {
     await installSelected();
   } else if (action === "launch") {
-    await refreshMinecraftStatus({ render: false, logExit: false });
-    const selectedProfile = currentProfile();
-    const selectedAccount = profileAccount(selectedProfile);
-    if (!state.minecraftRunning && clientNeedsUpdate()) {
-      showPopup("Client update needed", state.clientStatus?.message || "Install the latest managed client build before launching.", "client");
-      return;
-    }
-    if (!state.minecraftRunning && !selectedAccount) {
-      showPopup("Microsoft account needed", "Link a Microsoft account before launching this profile.", "account");
-      await startMicrosoftSignIn();
-      return;
-    }
-    setBusy(true, "Preparing Minecraft");
+    setBusy(true, "Checking client");
     try {
+      await yieldToUi();
+      await refreshMinecraftStatus({ render: false, logExit: false });
+      if (!state.minecraftRunning) {
+        await refreshAccountForUpdate();
+        await refreshManifestForUpdate();
+      }
+      const selectedProfile = currentProfile();
+      const selectedAccount = profileAccount(selectedProfile);
+      if (!state.minecraftRunning && clientNeedsUpdate()) {
+        showPopup("Client update needed", state.clientStatus?.message || "Install the latest managed client build before launching.", "client");
+        return;
+      }
+      if (!state.minecraftRunning && !selectedAccount) {
+        showPopup("Microsoft account needed", "Link a Microsoft account before launching this profile.", "account");
+        setBusy(false);
+        await startMicrosoftSignIn();
+        return;
+      }
+      setBusy(true, "Preparing Minecraft");
       const selectedBuild = buildForAccount();
       if (selectedAccount?.uuid && state.microsoft?.uuid !== selectedAccount.uuid) {
         state.microsoft = await invoke("select_microsoft_account", { uuid: selectedAccount.uuid });
