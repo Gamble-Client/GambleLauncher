@@ -1090,6 +1090,45 @@ pre {
   font-size: 1.6rem;
 }
 
+.launch-progress-modal {
+  width: min(520px, 100%);
+}
+
+.launch-progress-track {
+  height: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.launch-progress-track span {
+  display: block;
+  height: 100%;
+  min-width: 8px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f59e0b, #facc15);
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.45);
+  transition: width 0.18s ease;
+}
+
+.launch-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: #bac6d8;
+  font-size: 0.84rem;
+}
+
+.launch-progress-meta strong {
+  color: #f8fafc;
+}
+
+.launch-progress-note {
+  color: #8d98aa;
+  line-height: 1.45;
+}
+
 .shell:not(.animations-off) .content > section,
 .shell:not(.animations-off) .content > header,
 .shell:not(.animations-off) .modal-scrim {

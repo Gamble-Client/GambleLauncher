@@ -1,4 +1,5 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open as tauriOpenDialog } from "@tauri-apps/plugin-dialog";
 import "./styles.css";
 import logoUrl from "./assets/cg-mod-icon.png";
@@ -70,6 +71,7 @@ const state = {
   minecraftRunning: false,
   minecraftPid: null,
   popup: null,
+  launchProgress: null,
   spotify: null,
   lastVersionCheckAt: 0,
   lastManifestCheckAt: 0,
@@ -139,7 +141,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(35);
   if (command === "launcher_info") {
     return {
-      version: "0.1.80",
+      version: "0.1.81",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
       session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
@@ -167,13 +169,13 @@ async function mockInvoke(command, args = {}) {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
       return {
-        version: "0.1.80",
-        minVersion: "0.1.80",
+        version: "0.1.81",
+        minVersion: "0.1.81",
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.80-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.80-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.80_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.81-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.81-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.81_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -199,9 +201,9 @@ async function mockInvoke(command, args = {}) {
   }
   if (command === "download_launcher_update") {
     return {
-      version: "0.1.80",
-      fileName: "Gamble-Client-Launcher_0.1.80_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.80_amd64.deb",
+      version: "0.1.81",
+      fileName: "Gamble-Client-Launcher_0.1.81_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.81_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -340,7 +342,7 @@ function render() {
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.80")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.81")}</span>
           </div>
         </div>
         <nav>
@@ -448,7 +450,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           <h2>${escapeHtml(selectedBuild.label)}</h2>
           <div class="version-strip">
             <span>Version</span>
-            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.80")} · Client ${escapeHtml(clientStatus)}</strong>
+            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.81")} · Client ${escapeHtml(clientStatus)}</strong>
           </div>
           <div class="launch-facts">
             <div>
@@ -852,6 +854,9 @@ function antiScreensharePanel() {
 }
 
 function updatePopup() {
+  if (state.launchProgress) {
+    return launchProgressModal();
+  }
   if (state.popup) {
     return `
       <section class="modal-scrim">
@@ -898,6 +903,43 @@ function updatePopup() {
     `;
   }
   return "";
+}
+
+function launchProgressModal() {
+  const progress = normalizeLaunchProgress(state.launchProgress);
+  return `
+    <section class="modal-scrim">
+      <article class="update-modal launch-progress-modal">
+        <span class="eyebrow">Launch progress</span>
+        <h2>Preparing Minecraft</h2>
+        <p>${escapeHtml(progress.message)}</p>
+        <div class="launch-progress-track" aria-label="Launch progress">
+          <span style="width:${progress.percent}%"></span>
+        </div>
+        <div class="launch-progress-meta">
+          <span>${escapeHtml(progress.phase)}</span>
+          <strong>${progress.percent}%</strong>
+        </div>
+        <small class="launch-progress-note">First launch can download Minecraft files, Fabric, assets, and native libraries.</small>
+      </article>
+    </section>
+  `;
+}
+
+function normalizeLaunchProgress(payload = {}) {
+  const total = Math.max(1, Number(payload.total || 1));
+  const current = Math.max(0, Math.min(total, Number(payload.current || 0)));
+  const givenPercent = Number(payload.percent);
+  const percent = Number.isFinite(givenPercent)
+    ? Math.max(0, Math.min(100, Math.round(givenPercent)))
+    : Math.round((current / total) * 100);
+  return {
+    phase: String(payload.phase || "Preparing"),
+    message: String(payload.message || "Preparing Minecraft"),
+    current,
+    total,
+    percent
+  };
 }
 
 function accountRow(label, title, meta, badge, imageStyle = "", initials = "") {
@@ -1265,6 +1307,19 @@ function showPopup(title, message, kind = "notice") {
   render();
 }
 
+async function setupLaunchProgressListener() {
+  if (PREVIEW) return;
+  try {
+    await listen("launch-progress", (event) => {
+      state.launchProgress = normalizeLaunchProgress(event.payload);
+      state.status = state.launchProgress.message;
+      render();
+    });
+  } catch (error) {
+    log(`Launch progress unavailable: ${error.message || error}`);
+  }
+}
+
 function knownLaunchMessage(error) {
   const text = String(error?.message || error || "Minecraft could not launch.");
   const lower = text.toLowerCase();
@@ -1291,6 +1346,7 @@ async function api(path, options = {}) {
 }
 
 async function boot() {
+  await setupLaunchProgressListener();
   try {
     state.info = await invoke("launcher_info");
     log(`Managed root: ${state.info.managed_root}`);
@@ -1915,6 +1971,12 @@ app.addEventListener("click", async (event) => {
   } else if (action === "install") {
     await installSelected();
   } else if (action === "launch") {
+    state.launchProgress = normalizeLaunchProgress({
+      phase: "Starting",
+      message: "Checking launcher state",
+      current: 0,
+      total: 1
+    });
     setBusy(true, "Checking client");
     try {
       await yieldToUi();
@@ -1963,10 +2025,12 @@ app.addEventListener("click", async (event) => {
       log(message);
       await refreshMinecraftStatus({ render: false, logExit: false });
     } catch (error) {
+      state.launchProgress = null;
       log(`Launch failed: ${error.message || error}`);
       showPopup("Launch failed", knownLaunchMessage(error), "launch");
       await refreshMinecraftStatus({ render: false, logExit: false });
     } finally {
+      state.launchProgress = null;
       setBusy(false);
     }
   } else if (action === "microsoft") {

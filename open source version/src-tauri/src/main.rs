@@ -15,10 +15,11 @@ use std::{
     sync::Mutex,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.80";
+const VERSION: &str = "0.1.81";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -66,6 +67,15 @@ struct LauncherInfo {
 struct MinecraftStatus {
     running: bool,
     pid: Option<u32>,
+}
+
+#[derive(Clone, Serialize)]
+struct LaunchProgressEvent {
+    phase: String,
+    message: String,
+    current: u32,
+    total: u32,
+    percent: u8,
 }
 
 #[derive(Serialize)]
@@ -985,15 +995,16 @@ fn install_client_manifest_blocking(profile: String, build: String, token: Strin
 }
 
 #[tauri::command]
-async fn launch_game(input: LaunchRequest) -> Result<String, String> {
-    run_blocking(move || launch_game_blocking(input)).await
+async fn launch_game(app: AppHandle, input: LaunchRequest) -> Result<String, String> {
+    run_blocking(move || launch_game_blocking(app, input)).await
 }
 
-fn launch_game_blocking(input: LaunchRequest) -> Result<String, String> {
+fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, String> {
     {
         let mut running = MINECRAFT_PROCESS.lock().map_err(error_text)?;
         if let Some(child) = running.as_mut() {
             if child.try_wait().map_err(error_text)?.is_none() {
+                emit_launch_progress(&app, "Stopping", "Stopping Minecraft", 1, 1);
                 child.kill().map_err(error_text)?;
                 *running = None;
                 cleanup_active_launch_payload()?;
@@ -1012,6 +1023,7 @@ fn launch_game_blocking(input: LaunchRequest) -> Result<String, String> {
     }
     ensure_profile_folders(&profile)?;
 
+    emit_launch_progress(&app, "Account", "Refreshing Microsoft session", 1, 12);
     let account = read_microsoft_account()?.ok_or_else(|| {
         "Microsoft is linked on the site, but this launcher does not have a local Minecraft token yet. Connect Microsoft in the launcher first.".to_string()
     })?;
@@ -1020,6 +1032,7 @@ fn launch_game_blocking(input: LaunchRequest) -> Result<String, String> {
         identity.name = input.username.trim().to_string();
     }
     cleanup_stale_launch_payloads(&profile)?;
+    emit_launch_progress(&app, "Client", "Checking managed client payload", 2, 12);
     let managed_client_payload = if profile_installs_client(&profile) {
         let install = install_client_manifest_blocking(profile.to_string(), build.to_string(), token.to_string())?;
         Some((PathBuf::from(install.path), install.file_name))
@@ -1029,32 +1042,37 @@ fn launch_game_blocking(input: LaunchRequest) -> Result<String, String> {
 
     write_launcher_preferences(&profile, input.anti_screenshare)?;
 
+    emit_launch_progress(&app, "Profile", "Preparing Minecraft profile", 3, 12);
     let profile_dir = minecraft_folder(&profile);
     let version_id = if profile == "vanilla" {
-        ensure_vanilla_version_json(&profile_dir, MINECRAFT_VERSION)?;
+        ensure_vanilla_version_json_with_progress(&profile_dir, MINECRAFT_VERSION, Some(&app))?;
         MINECRAFT_VERSION.to_string()
     } else {
-        ensure_fabric_version_json(&profile_dir)?;
-        ensure_vanilla_version_json(&profile_dir, MINECRAFT_VERSION)?;
-        ensure_fabric_api(&profile)?;
+        ensure_fabric_version_json_with_progress(&profile_dir, Some(&app))?;
+        ensure_vanilla_version_json_with_progress(&profile_dir, MINECRAFT_VERSION, Some(&app))?;
+        ensure_fabric_api_with_progress(&profile, Some(&app))?;
         format!("fabric-loader-{FABRIC_LOADER_VERSION}-{MINECRAFT_VERSION}")
     };
+    emit_launch_progress(&app, "Profile", "Reading Minecraft launch profile", 6, 12);
     let version = load_version_profile(&profile_dir, &version_id)?;
-    let mut classpath = ensure_libraries(&profile_dir, &version)?;
-    classpath.push(ensure_client_jar(&profile_dir, &version)?);
-    ensure_assets(&profile_dir, &version)?;
-    let natives = extract_natives(&profile_dir, &version_id, &version)?;
+    let mut classpath = ensure_libraries_with_progress(&profile_dir, &version, Some(&app))?;
+    classpath.push(ensure_client_jar_with_progress(&profile_dir, &version, Some(&app))?);
+    ensure_assets_with_progress(&profile_dir, &version, Some(&app))?;
+    let natives = extract_natives_with_progress(&profile_dir, &version_id, &version, Some(&app))?;
+    emit_launch_progress(&app, "Client", "Preparing temporary client payload", 10, 12);
     let managed_client = if let Some((payload, file_name)) = managed_client_payload.as_ref() {
         Some(prepare_launch_payload(&profile, payload, file_name)?)
     } else {
         None
     };
+    emit_launch_progress(&app, "Ticket", "Creating launch ticket", 11, 12);
     let launch_ticket_file = if profile_installs_client(&profile) {
         Some(write_launch_ticket_file(&profile, token, build)?)
     } else {
         None
     };
 
+    emit_launch_progress(&app, "Starting", "Starting Minecraft", 12, 12);
     let command = match build_minecraft_command(
         &profile_dir,
         &profile,
@@ -1556,19 +1574,30 @@ fn write_launch_ticket_file(profile: &str, token: &str, build: &str) -> Result<P
     Ok(path)
 }
 
-fn ensure_fabric_version_json(game_dir: &Path) -> Result<PathBuf, String> {
+fn ensure_fabric_version_json_with_progress(game_dir: &Path, app: Option<&AppHandle>) -> Result<PathBuf, String> {
     let version_id = format!("fabric-loader-{FABRIC_LOADER_VERSION}-{MINECRAFT_VERSION}");
     let path = game_dir.join("versions").join(&version_id).join(format!("{version_id}.json"));
     if !path.is_file() {
+        if let Some(app) = app {
+            emit_launch_progress(app, "Fabric", "Downloading Fabric launch profile", 4, 12);
+        }
         download_file(FABRIC_PROFILE_URL, &path)?;
+    } else if let Some(app) = app {
+        emit_launch_progress(app, "Fabric", "Fabric launch profile is ready", 4, 12);
     }
     Ok(path)
 }
 
-fn ensure_vanilla_version_json(game_dir: &Path, version_id: &str) -> Result<PathBuf, String> {
+fn ensure_vanilla_version_json_with_progress(game_dir: &Path, version_id: &str, app: Option<&AppHandle>) -> Result<PathBuf, String> {
     let path = game_dir.join("versions").join(version_id).join(format!("{version_id}.json"));
     if path.is_file() {
+        if let Some(app) = app {
+            emit_launch_progress(app, "Minecraft", "Minecraft version profile is ready", 5, 12);
+        }
         return Ok(path);
+    }
+    if let Some(app) = app {
+        emit_launch_progress(app, "Minecraft", "Downloading Minecraft version manifest", 5, 12);
     }
     let manifest = http_client()?.get(VERSION_MANIFEST_URL).send().map_err(error_text)?.error_for_status().map_err(error_text)?.json::<serde_json::Value>().map_err(error_text)?;
     let versions = manifest.get("versions").and_then(|v| v.as_array()).cloned().unwrap_or_default();
@@ -1578,6 +1607,9 @@ fn ensure_vanilla_version_json(game_dir: &Path, version_id: &str) -> Result<Path
         .map(|entry| json_string(entry, "url"))
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| format!("Could not find Minecraft {version_id} in Mojang's version manifest."))?;
+    if let Some(app) = app {
+        emit_launch_progress(app, "Minecraft", format!("Downloading Minecraft {version_id} profile"), 5, 12);
+    }
     download_file(&url, &path)?;
     Ok(path)
 }
@@ -1696,18 +1728,27 @@ fn parse_arguments(values: &[serde_json::Value]) -> Vec<String> {
     out
 }
 
-fn ensure_libraries(game_dir: &Path, profile: &VersionProfile) -> Result<Vec<PathBuf>, String> {
+fn ensure_libraries_with_progress(game_dir: &Path, profile: &VersionProfile, app: Option<&AppHandle>) -> Result<Vec<PathBuf>, String> {
     let mut classpath = Vec::new();
     let libraries_dir = game_dir.join("libraries");
+    let total = profile.libraries.iter().filter(|library| rules_allow(&library.rules)).count().max(1) as u32;
+    let mut current = 0u32;
     for library in &profile.libraries {
         if !rules_allow(&library.rules) {
             continue;
+        }
+        current = current.saturating_add(1);
+        if let Some(app) = app {
+            emit_launch_progress(app, "Libraries", format!("Checking library {current}/{total}"), current, total);
         }
         if !library.artifact_path.is_empty() {
             let path = libraries_dir.join(&library.artifact_path);
             if !path.is_file() {
                 if library.artifact_url.is_empty() {
                     return Err(format!("No download URL for library {}", library.name));
+                }
+                if let Some(app) = app {
+                    emit_launch_progress(app, "Libraries", format!("Downloading {}", library.name), current, total);
                 }
                 download_file(&library.artifact_url, &path)?;
             }
@@ -1719,6 +1760,9 @@ fn ensure_libraries(game_dir: &Path, profile: &VersionProfile) -> Result<Vec<Pat
                 if url.is_empty() {
                     return Err(format!("No native download URL for library {}", library.name));
                 }
+                if let Some(app) = app {
+                    emit_launch_progress(app, "Libraries", format!("Downloading native {}", library.name), current, total);
+                }
                 download_file(&url, &file)?;
             }
         }
@@ -1726,52 +1770,76 @@ fn ensure_libraries(game_dir: &Path, profile: &VersionProfile) -> Result<Vec<Pat
     Ok(classpath)
 }
 
-fn ensure_client_jar(game_dir: &Path, profile: &VersionProfile) -> Result<PathBuf, String> {
+fn ensure_client_jar_with_progress(game_dir: &Path, profile: &VersionProfile, app: Option<&AppHandle>) -> Result<PathBuf, String> {
     if profile.client_version_id.is_empty() || profile.client_jar_url.is_empty() {
         return Err("Minecraft profile does not include a client jar URL.".to_string());
     }
     let path = game_dir.join("versions").join(&profile.client_version_id).join(format!("{}.jar", profile.client_version_id));
     if !path.is_file() {
+        if let Some(app) = app {
+            emit_launch_progress(app, "Minecraft", format!("Downloading Minecraft {} client jar", profile.client_version_id), 8, 12);
+        }
         download_file(&profile.client_jar_url, &path)?;
+    } else if let Some(app) = app {
+        emit_launch_progress(app, "Minecraft", "Minecraft client jar is ready", 8, 12);
     }
     Ok(path)
 }
 
-fn ensure_assets(game_dir: &Path, profile: &VersionProfile) -> Result<(), String> {
+fn ensure_assets_with_progress(game_dir: &Path, profile: &VersionProfile, app: Option<&AppHandle>) -> Result<(), String> {
     if profile.asset_index_id.is_empty() || profile.asset_index_url.is_empty() {
         return Err("Minecraft profile does not include an asset index.".to_string());
     }
     let assets = game_dir.join("assets");
     let index = assets.join("indexes").join(format!("{}.json", profile.asset_index_id));
     if !index.is_file() {
+        if let Some(app) = app {
+            emit_launch_progress(app, "Assets", "Downloading Minecraft asset index", 0, 1);
+        }
         download_file(&profile.asset_index_url, &index)?;
     }
     let body = serde_json::from_str::<serde_json::Value>(&fs::read_to_string(index).map_err(error_text)?).map_err(error_text)?;
     let objects = body.get("objects").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let total = objects.len().max(1) as u32;
+    let mut current = 0u32;
     for item in objects.values() {
+        current = current.saturating_add(1);
         let hash = json_string(item, "hash");
         if hash.len() < 2 {
             continue;
         }
         let path = assets.join("objects").join(&hash[0..2]).join(&hash);
         if !path.is_file() {
+            if let Some(app) = app {
+                emit_launch_progress(app, "Assets", format!("Downloading Minecraft assets {current}/{total}"), current, total);
+            }
             download_file(&format!("{ASSET_BASE_URL}{}/{}", &hash[0..2], hash), &path)?;
+        } else if let Some(app) = app {
+            if current == 1 || current == total || current % 50 == 0 {
+                emit_launch_progress(app, "Assets", format!("Checking Minecraft assets {current}/{total}"), current, total);
+            }
         }
     }
     Ok(())
 }
 
-fn extract_natives(game_dir: &Path, version_id: &str, profile: &VersionProfile) -> Result<PathBuf, String> {
+fn extract_natives_with_progress(game_dir: &Path, version_id: &str, profile: &VersionProfile, app: Option<&AppHandle>) -> Result<PathBuf, String> {
     let target = game_dir.join("versions").join(version_id).join("natives");
     fs::create_dir_all(&target).map_err(error_text)?;
     let libraries_dir = game_dir.join("libraries");
+    let total = profile.libraries.iter().filter(|library| rules_allow(&library.rules)).count().max(1) as u32;
+    let mut current = 0u32;
     for library in &profile.libraries {
         if !rules_allow(&library.rules) {
             continue;
         }
+        current = current.saturating_add(1);
         if let Some((path, _)) = native_artifact(library) {
             let file = libraries_dir.join(path);
             if file.is_file() {
+                if let Some(app) = app {
+                    emit_launch_progress(app, "Natives", format!("Extracting native libraries {current}/{total}"), current, total);
+                }
                 unzip_natives(&file, &target)?;
             }
         }
@@ -2128,6 +2196,21 @@ where
         .map_err(|error| error.to_string())?
 }
 
+fn emit_launch_progress(app: &AppHandle, phase: &str, message: impl Into<String>, current: u32, total: u32) {
+    let total = total.max(1);
+    let current = current.min(total);
+    let percent = (((current as f64 / total as f64) * 100.0).round() as u8).min(100);
+    let _ = app.emit(
+        "launch-progress",
+        LaunchProgressEvent {
+            phase: phase.to_string(),
+            message: message.into(),
+            current,
+            total,
+            percent,
+        },
+    );
+}
 
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
@@ -2517,24 +2600,40 @@ fn client_install_candidates(profile: &str, manifest: &ManifestResponse) -> Vec<
 }
 
 fn ensure_fabric_api(profile: &str) -> Result<(), String> {
+    ensure_fabric_api_with_progress(profile, None)
+}
+
+fn ensure_fabric_api_with_progress(profile: &str, app: Option<&AppHandle>) -> Result<(), String> {
     let mods = mods_folder(profile);
     fs::create_dir_all(&mods).map_err(error_text)?;
     if find_managed_mod_jar(&mods, "fabric-api-", false)?.is_some() {
+        if let Some(app) = app {
+            emit_launch_progress(app, "Fabric", "Fabric API is ready", 5, 12);
+        }
         return Ok(());
     }
 
     if let Some(disabled) = find_managed_mod_jar(&mods, "fabric-api-", true)? {
         let target = PathBuf::from(disabled.to_string_lossy().trim_end_matches(".disabled"));
+        if let Some(app) = app {
+            emit_launch_progress(app, "Fabric", "Enabling Fabric API", 5, 12);
+        }
         fs::rename(disabled, target).map_err(error_text)?;
         return Ok(());
     }
 
+    if let Some(app) = app {
+        emit_launch_progress(app, "Fabric", "Finding Fabric API download", 5, 12);
+    }
     let release = fetch_modrinth_release(&modrinth_versions_url("fabric-api"))?;
     if release.file_name.trim().is_empty() || release.url.trim().is_empty() {
         return Err(format!("Could not find Fabric API for Minecraft {MINECRAFT_VERSION}."));
     }
 
     let target = mods.join(release.file_name);
+    if let Some(app) = app {
+        emit_launch_progress(app, "Fabric", "Downloading Fabric API", 5, 12);
+    }
     download_file(&release.url, &target)
 }
 
