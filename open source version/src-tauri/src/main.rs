@@ -18,7 +18,7 @@ use std::{
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.79";
+const VERSION: &str = "0.1.80";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -160,8 +160,6 @@ struct LauncherDownloads {
     linux_rpm: Option<LauncherDownload>,
     #[serde(default, rename = "linuxDeb")]
     linux_deb: Option<LauncherDownload>,
-    #[serde(default, rename = "linuxAppImage")]
-    linux_app_image: Option<LauncherDownload>,
     #[serde(default)]
     jar: Option<LauncherDownload>,
 }
@@ -1029,11 +1027,6 @@ fn launch_game_blocking(input: LaunchRequest) -> Result<String, String> {
         None
     };
 
-    let launch_ticket_file = if profile_installs_client(&profile) {
-        Some(write_launch_ticket_file(&profile, token, build)?)
-    } else {
-        None
-    };
     write_launcher_preferences(&profile, input.anti_screenshare)?;
 
     let profile_dir = minecraft_folder(&profile);
@@ -1053,6 +1046,11 @@ fn launch_game_blocking(input: LaunchRequest) -> Result<String, String> {
     let natives = extract_natives(&profile_dir, &version_id, &version)?;
     let managed_client = if let Some((payload, file_name)) = managed_client_payload.as_ref() {
         Some(prepare_launch_payload(&profile, payload, file_name)?)
+    } else {
+        None
+    };
+    let launch_ticket_file = if profile_installs_client(&profile) {
+        Some(write_launch_ticket_file(&profile, token, build)?)
     } else {
         None
     };
@@ -2860,11 +2858,9 @@ fn preferred_launcher_download(info: &LauncherVersionResponse) -> LauncherDownlo
     let platform = match env::consts::OS {
         "windows" => usable_launcher_download(info.downloads.windows.clone()),
         "linux" => match linux_package_preference() {
-            "rpm" => usable_launcher_download(info.downloads.linux_rpm.clone()).or_else(|| usable_launcher_download(info.downloads.linux_app_image.clone())),
-            "deb" => usable_launcher_download(info.downloads.linux_deb.clone()).or_else(|| usable_launcher_download(info.downloads.linux_app_image.clone())),
-            _ => usable_launcher_download(info.downloads.linux_app_image.clone())
-                .or_else(|| usable_launcher_download(info.downloads.linux_rpm.clone()))
-                .or_else(|| usable_launcher_download(info.downloads.linux_deb.clone())),
+            "rpm" => usable_launcher_download(info.downloads.linux_rpm.clone()),
+            "deb" => usable_launcher_download(info.downloads.linux_deb.clone()),
+            _ => None,
         },
         _ => None,
     };
@@ -2887,7 +2883,7 @@ fn linux_package_preference() -> &'static str {
     } else if text.contains("debian") || text.contains("ubuntu") || text.contains("linuxmint") || text.contains("pop") {
         "deb"
     } else {
-        "appimage"
+        "jar"
     }
 }
 
