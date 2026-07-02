@@ -141,7 +141,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(35);
   if (command === "launcher_info") {
     return {
-      version: "0.1.81",
+      version: "0.1.82",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
       session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
@@ -169,13 +169,13 @@ async function mockInvoke(command, args = {}) {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
       return {
-        version: "0.1.81",
-        minVersion: "0.1.81",
+        version: "0.1.82",
+        minVersion: "0.1.82",
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.81-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.81-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.81_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.82-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.82-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.82_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -201,9 +201,9 @@ async function mockInvoke(command, args = {}) {
   }
   if (command === "download_launcher_update") {
     return {
-      version: "0.1.81",
-      fileName: "Gamble-Client-Launcher_0.1.81_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.81_amd64.deb",
+      version: "0.1.82",
+      fileName: "Gamble-Client-Launcher_0.1.82_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.82_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -342,7 +342,7 @@ function render() {
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.81")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.82")}</span>
           </div>
         </div>
         <nav>
@@ -450,7 +450,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           <h2>${escapeHtml(selectedBuild.label)}</h2>
           <div class="version-strip">
             <span>Version</span>
-            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.81")} · Client ${escapeHtml(clientStatus)}</strong>
+            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.82")} · Client ${escapeHtml(clientStatus)}</strong>
           </div>
           <div class="launch-facts">
             <div>
@@ -1324,6 +1324,9 @@ function knownLaunchMessage(error) {
   const text = String(error?.message || error || "Minecraft could not launch.");
   const lower = text.toLowerCase();
   if (lower.includes("update") || lower.includes("outdated")) return "Update the client or launcher, then launch again.";
+  if (lower.includes("429") || lower.includes("rate limit") || lower.includes("too many requests")) {
+    return "Microsoft or Minecraft auth is temporarily rate limited. Wait a minute, then launch again; the launcher will reuse cached Minecraft tokens after a successful sign-in.";
+  }
   if (lower.includes("microsoft") || lower.includes("account") || lower.includes("auth")) return "Link or refresh your Microsoft account, then launch again.";
   if (lower.includes("resources.download.minecraft.net") || lower.includes("minecraft asset") || lower.includes("mojang")) {
     return "Minecraft asset download failed from Mojang's CDN. Check VPN/proxy/DNS on this computer, then try Launch again.";

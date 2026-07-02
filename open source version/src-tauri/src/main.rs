@@ -19,7 +19,7 @@ use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.81";
+const VERSION: &str = "0.1.82";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -37,6 +37,7 @@ const MICROSOFT_REDIRECT_URI: &str = "http://localhost:39062/";
 const HTTP_CONNECT_TIMEOUT_SECONDS: u64 = 15;
 const HTTP_REQUEST_TIMEOUT_SECONDS: u64 = 300;
 const HTTP_DOWNLOAD_ATTEMPTS: usize = 3;
+const MINECRAFT_TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
 const XBOX_AUTH_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
 const XSTS_AUTH_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
 const MINECRAFT_LOGIN_URL: &str = "https://api.minecraftservices.com/launcher/login";
@@ -205,7 +206,9 @@ struct MicrosoftAccount {
     xuid: String,
     #[serde(rename = "refreshToken")]
     refresh_token: String,
-    #[serde(rename = "minecraftExpiresAt")]
+    #[serde(default, rename = "minecraftAccessToken")]
+    minecraft_access_token: String,
+    #[serde(default, rename = "minecraftExpiresAt")]
     minecraft_expires_at: u64,
 }
 
@@ -229,7 +232,6 @@ struct MicrosoftDeviceStart {
 struct MicrosoftToken {
     access_token: String,
     refresh_token: String,
-    expires_in_seconds: u64,
 }
 
 struct XboxToken {
@@ -240,6 +242,7 @@ struct XboxToken {
 
 struct MinecraftToken {
     access_token: String,
+    expires_in_seconds: u64,
 }
 
 struct MinecraftProfile {
@@ -247,6 +250,7 @@ struct MinecraftProfile {
     name: String,
     xuid: String,
     access_token: String,
+    expires_at: u64,
 }
 
 #[derive(Deserialize)]
@@ -510,7 +514,8 @@ fn microsoft_browser_sign_in(force_account_picker: bool) -> Result<serde_json::V
         uuid: profile.uuid,
         xuid: profile.xuid,
         refresh_token: token.refresh_token,
-        minecraft_expires_at: unix_millis() + token.expires_in_seconds.max(300) * 1000,
+        minecraft_access_token: profile.access_token,
+        minecraft_expires_at: profile.expires_at,
     };
     save_microsoft_account(&account)?;
     Ok(json!({ "status": "ready", "account": account }))
@@ -619,7 +624,8 @@ fn microsoft_device_poll(device_code: String) -> Result<serde_json::Value, Strin
         uuid: profile.uuid,
         xuid: profile.xuid,
         refresh_token: token.refresh_token,
-        minecraft_expires_at: unix_millis() + token.expires_in_seconds.max(300) * 1000,
+        minecraft_access_token: profile.access_token,
+        minecraft_expires_at: profile.expires_at,
     };
     save_microsoft_account(&account)?;
     Ok(json!({ "status": "ready", "account": account }))
@@ -1140,8 +1146,31 @@ fn minecraft_status() -> Result<MinecraftStatus, String> {
 }
 
 fn refresh_minecraft_identity(account: MicrosoftAccount) -> Result<MinecraftProfile, String> {
-    let token = refresh_microsoft_token(&account.refresh_token)?;
-    let profile = exchange_microsoft_for_minecraft(&token.access_token)?;
+    if let Some(profile) = cached_minecraft_identity(&account, MINECRAFT_TOKEN_REFRESH_BUFFER_MS) {
+        return Ok(profile);
+    }
+
+    let fallback = cached_minecraft_identity(&account, 0);
+    let token = match refresh_microsoft_token(&account.refresh_token) {
+        Ok(token) => token,
+        Err(error) if is_rate_limited_error(&error) => {
+            if let Some(profile) = fallback {
+                return Ok(profile);
+            }
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
+    let profile = match exchange_microsoft_for_minecraft(&token.access_token) {
+        Ok(profile) => profile,
+        Err(error) if is_rate_limited_error(&error) => {
+            if let Some(profile) = fallback {
+                return Ok(profile);
+            }
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    };
     let saved = MicrosoftAccount {
         name: profile.name.clone(),
         uuid: profile.uuid.clone(),
@@ -1151,7 +1180,8 @@ fn refresh_minecraft_identity(account: MicrosoftAccount) -> Result<MinecraftProf
         } else {
             token.refresh_token
         },
-        minecraft_expires_at: unix_millis() + token.expires_in_seconds.max(300) * 1000,
+        minecraft_access_token: profile.access_token.clone(),
+        minecraft_expires_at: profile.expires_at,
     };
     save_microsoft_account(&saved)?;
     Ok(MinecraftProfile {
@@ -1159,7 +1189,32 @@ fn refresh_minecraft_identity(account: MicrosoftAccount) -> Result<MinecraftProf
         name: profile.name,
         xuid: profile.xuid,
         access_token: profile.access_token,
+        expires_at: profile.expires_at,
     })
+}
+
+fn cached_minecraft_identity(account: &MicrosoftAccount, refresh_buffer_ms: u64) -> Option<MinecraftProfile> {
+    if account.minecraft_access_token.trim().is_empty()
+        || account.uuid.trim().is_empty()
+        || account.name.trim().is_empty()
+    {
+        return None;
+    }
+    if account.minecraft_expires_at <= unix_millis().saturating_add(refresh_buffer_ms) {
+        return None;
+    }
+    Some(MinecraftProfile {
+        uuid: account.uuid.replace('-', ""),
+        name: account.name.clone(),
+        xuid: account.xuid.clone(),
+        access_token: account.minecraft_access_token.clone(),
+        expires_at: account.minecraft_expires_at,
+    })
+}
+
+fn is_rate_limited_error(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    lower.contains("429") || lower.contains("rate limit") || lower.contains("too many requests")
 }
 
 fn refresh_microsoft_token(refresh_token: &str) -> Result<MicrosoftToken, String> {
@@ -2811,7 +2866,6 @@ fn parse_microsoft_token(body: &serde_json::Value) -> Result<MicrosoftToken, Str
     Ok(MicrosoftToken {
         access_token,
         refresh_token: json_string(body, "refresh_token"),
-        expires_in_seconds: json_u64(body, "expires_in"),
     })
 }
 
@@ -2822,6 +2876,7 @@ fn exchange_microsoft_for_minecraft(microsoft_access_token: &str) -> Result<Mine
     let mut profile = request_minecraft_profile(&minecraft.access_token)?;
     profile.xuid = if xsts.xuid.trim().is_empty() { xbox.xuid } else { xsts.xuid };
     profile.access_token = minecraft.access_token;
+    profile.expires_at = unix_millis() + minecraft.expires_in_seconds.max(300) * 1000;
     Ok(profile)
 }
 
@@ -2877,7 +2932,10 @@ fn request_minecraft_token(user_hash: &str, xsts_token: &str) -> Result<Minecraf
     if access_token.trim().is_empty() {
         return Err("Minecraft did not return an access token.".to_string());
     }
-    Ok(MinecraftToken { access_token })
+    Ok(MinecraftToken {
+        access_token,
+        expires_in_seconds: json_u64(&response, "expires_in").max(3600),
+    })
 }
 
 fn request_minecraft_profile(minecraft_access_token: &str) -> Result<MinecraftProfile, String> {
@@ -2906,6 +2964,7 @@ fn request_minecraft_profile(minecraft_access_token: &str) -> Result<MinecraftPr
         name,
         xuid: String::new(),
         access_token: String::new(),
+        expires_at: 0,
     })
 }
 
@@ -2924,13 +2983,40 @@ fn post_json(url: &str, body: &serde_json::Value, bearer_token: &str) -> Result<
     };
     if !status.is_success() {
         let message = json_string(&body, "message");
-        return Err(if message.trim().is_empty() {
-            format!("Backend returned HTTP {}", status.as_u16())
-        } else {
-            message
-        });
+        return Err(post_json_error_message(url, status.as_u16(), &message));
     }
     Ok(body)
+}
+
+fn post_json_error_message(url: &str, status: u16, message: &str) -> String {
+    let service = service_label_for_url(url);
+    let clean = message.trim();
+    if status == 429 {
+        if clean.is_empty() {
+            return format!("{service} rate limited this request. Try again in a minute. (HTTP 429)");
+        }
+        return format!("{clean} (HTTP 429)");
+    }
+    if clean.is_empty() {
+        format!("{service} returned HTTP {status}")
+    } else {
+        clean.to_string()
+    }
+}
+
+fn service_label_for_url(url: &str) -> &'static str {
+    let lower = url.to_lowercase();
+    if lower.contains("gamble-client.store") {
+        "Backend"
+    } else if lower.contains("minecraftservices.com") {
+        "Minecraft auth"
+    } else if lower.contains("xboxlive.com") {
+        "Xbox auth"
+    } else if lower.contains("login.microsoftonline.com") {
+        "Microsoft auth"
+    } else {
+        "Service"
+    }
 }
 
 fn fetch_client_manifest(build: &str, token: &str) -> Result<ManifestResponse, String> {
