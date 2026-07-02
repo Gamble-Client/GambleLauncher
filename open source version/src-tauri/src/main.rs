@@ -19,7 +19,7 @@ use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.82";
+const VERSION: &str = "0.1.83";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -634,7 +634,9 @@ fn microsoft_device_poll(device_code: String) -> Result<serde_json::Value, Strin
 #[tauri::command]
 fn ensure_profile(profile: String) -> Result<String, String> {
     let profile = profile_id(&profile);
-    ensure_profile_folders(&profile).map(|path| display_path(&path))
+    let path = ensure_profile_folders(&profile)?;
+    apply_minecraft_option_defaults(&profile)?;
+    Ok(display_path(&path))
 }
 
 #[tauri::command]
@@ -1028,6 +1030,7 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         return Err("Sign in before launching Minecraft.".to_string());
     }
     ensure_profile_folders(&profile)?;
+    apply_minecraft_option_defaults(&profile)?;
 
     emit_launch_progress(&app, "Account", "Refreshing Microsoft session", 1, 12);
     let account = read_microsoft_account()?.ok_or_else(|| {
@@ -2520,6 +2523,42 @@ fn set_resource_pack_enabled(profile: &str, file: &Path, enabled: bool) -> Resul
         lines.push("incompatibleResourcePacks:[]".to_string());
     }
     fs::write(options, format!("{}\n", lines.join("\n"))).map_err(error_text)
+}
+
+fn apply_minecraft_option_defaults(profile: &str) -> Result<(), String> {
+    let options = minecraft_folder(profile).join("options.txt");
+    if let Some(parent) = options.parent() {
+        fs::create_dir_all(parent).map_err(error_text)?;
+    }
+
+    let mut lines = if options.is_file() {
+        fs::read_to_string(&options).map_err(error_text)?.lines().map(ToString::to_string).collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    for (key, value) in [
+        ("bobView", "false"),
+        ("tutorialStep", "none"),
+        ("narrator", "0"),
+        ("narratorHotkey", "false"),
+        ("onboardAccessibility", "false"),
+    ] {
+        upsert_option_line(&mut lines, key, value);
+    }
+
+    fs::write(options, format!("{}\n", lines.join("\n"))).map_err(error_text)
+}
+
+fn upsert_option_line(lines: &mut Vec<String>, key: &str, value: &str) {
+    let prefix = format!("{key}:");
+    for line in lines.iter_mut() {
+        if line.starts_with(&prefix) {
+            *line = format!("{prefix}{value}");
+            return;
+        }
+    }
+    lines.push(format!("{prefix}{value}"));
 }
 
 fn parse_pack_list(value: &str) -> Vec<String> {

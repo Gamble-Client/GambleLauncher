@@ -1112,6 +1112,19 @@ pre {
   transition: width 0.18s ease;
 }
 
+.launch-progress-track.indeterminate span {
+  position: relative;
+  overflow: hidden;
+}
+
+.launch-progress-track.indeterminate span::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.42), transparent);
+  animation: launchProgressSweep 0.9s linear infinite;
+}
+
 .launch-progress-meta {
   display: flex;
   justify-content: space-between;
@@ -1127,6 +1140,15 @@ pre {
 .launch-progress-note {
   color: #8d98aa;
   line-height: 1.45;
+}
+
+@keyframes launchProgressSweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
 }
 
 .shell:not(.animations-off) .content > section,

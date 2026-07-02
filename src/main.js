@@ -141,7 +141,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(35);
   if (command === "launcher_info") {
     return {
-      version: "0.1.82",
+      version: "0.1.83",
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
       session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
@@ -169,13 +169,13 @@ async function mockInvoke(command, args = {}) {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
       return {
-        version: "0.1.82",
-        minVersion: "0.1.82",
+        version: "0.1.83",
+        minVersion: "0.1.83",
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.82-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.82-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.82_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.83-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.83-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.83_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -201,9 +201,9 @@ async function mockInvoke(command, args = {}) {
   }
   if (command === "download_launcher_update") {
     return {
-      version: "0.1.82",
-      fileName: "Gamble-Client-Launcher_0.1.82_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.82_amd64.deb",
+      version: "0.1.83",
+      fileName: "Gamble-Client-Launcher_0.1.83_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.83_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -342,7 +342,7 @@ function render() {
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.82")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || "0.1.83")}</span>
           </div>
         </div>
         <nav>
@@ -450,7 +450,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           <h2>${escapeHtml(selectedBuild.label)}</h2>
           <div class="version-strip">
             <span>Version</span>
-            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.82")} · Client ${escapeHtml(clientStatus)}</strong>
+            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.83")} · Client ${escapeHtml(clientStatus)}</strong>
           </div>
           <div class="launch-facts">
             <div>
@@ -907,13 +907,14 @@ function updatePopup() {
 
 function launchProgressModal() {
   const progress = normalizeLaunchProgress(state.launchProgress);
+  const trackClass = progress.indeterminate ? "launch-progress-track indeterminate" : "launch-progress-track";
   return `
     <section class="modal-scrim">
       <article class="update-modal launch-progress-modal">
         <span class="eyebrow">Launch progress</span>
         <h2>Preparing Minecraft</h2>
         <p>${escapeHtml(progress.message)}</p>
-        <div class="launch-progress-track" aria-label="Launch progress">
+        <div class="${trackClass}" aria-label="Launch progress">
           <span style="width:${progress.percent}%"></span>
         </div>
         <div class="launch-progress-meta">
@@ -930,15 +931,18 @@ function normalizeLaunchProgress(payload = {}) {
   const total = Math.max(1, Number(payload.total || 1));
   const current = Math.max(0, Math.min(total, Number(payload.current || 0)));
   const givenPercent = Number(payload.percent);
-  const percent = Number.isFinite(givenPercent)
+  const rawPercent = Number.isFinite(givenPercent)
     ? Math.max(0, Math.min(100, Math.round(givenPercent)))
     : Math.round((current / total) * 100);
+  const indeterminate = Boolean(payload.indeterminate) || rawPercent <= 0;
+  const percent = indeterminate ? Math.max(7, rawPercent) : rawPercent;
   return {
     phase: String(payload.phase || "Preparing"),
     message: String(payload.message || "Preparing Minecraft"),
     current,
     total,
-    percent
+    percent,
+    indeterminate
   };
 }
 
@@ -1977,15 +1981,40 @@ app.addEventListener("click", async (event) => {
     state.launchProgress = normalizeLaunchProgress({
       phase: "Starting",
       message: "Checking launcher state",
-      current: 0,
-      total: 1
+      current: 7,
+      total: 100,
+      indeterminate: true
     });
     setBusy(true, "Checking client");
     try {
       await yieldToUi();
+      state.launchProgress = normalizeLaunchProgress({
+        phase: "Status",
+        message: "Checking Minecraft status",
+        current: 8,
+        total: 100,
+        indeterminate: true
+      });
+      render();
       await refreshMinecraftStatus({ render: false, logExit: false });
       if (!state.minecraftRunning) {
+        state.launchProgress = normalizeLaunchProgress({
+          phase: "Account",
+          message: "Refreshing launcher account",
+          current: 10,
+          total: 100,
+          indeterminate: true
+        });
+        render();
         await refreshAccountForUpdate();
+        state.launchProgress = normalizeLaunchProgress({
+          phase: "Client",
+          message: "Checking client build",
+          current: 12,
+          total: 100,
+          indeterminate: true
+        });
+        render();
         await refreshManifestForUpdate();
       }
       const selectedProfile = currentProfile();
@@ -2003,6 +2032,14 @@ app.addEventListener("click", async (event) => {
       setBusy(true, "Preparing Minecraft");
       const selectedBuild = buildForAccount();
       if (selectedAccount?.uuid && state.microsoft?.uuid !== selectedAccount.uuid) {
+        state.launchProgress = normalizeLaunchProgress({
+          phase: "Account",
+          message: "Switching Microsoft account",
+          current: 14,
+          total: 100,
+          indeterminate: true
+        });
+        render();
         state.microsoft = await invoke("select_microsoft_account", { uuid: selectedAccount.uuid });
         await loadMicrosoftAccounts();
       }
