@@ -117,7 +117,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.82";
+    private static final String LAUNCHER_VERSION = "0.1.85";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -257,6 +257,8 @@ public class Main {
     private boolean startupPromptShown;
     private boolean signInPromptDismissed;
     private boolean startupUpdateCheckStarted;
+    private boolean explicitBuildSelection;
+    private boolean applyingAutomaticBuildSelection;
 
     public static void main(String[] args) throws UnsupportedLookAndFeelException, ClassNotFoundException, InstantiationException, IllegalAccessException {
         UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
@@ -736,6 +738,7 @@ public class Main {
         styleCheckBox(autoCheckUpdates);
         memoryGb.setSelectedItem(4);
         selectStoredProfile();
+        selectStoredBuild();
 
         progress.setForeground(ACCENT);
         progress.setBackground(FIELD);
@@ -760,7 +763,13 @@ public class Main {
         installButton.addActionListener(e -> installSelectedBuild(false));
         autoCheckUpdates.addActionListener(e -> saveAutoCheckUpdates(autoCheckUpdates.isSelected()));
         profileBox.addActionListener(e -> updateProfileUi(true));
-        buildBox.addActionListener(e -> refreshVersionPanel());
+        buildBox.addActionListener(e -> {
+            if (!applyingAutomaticBuildSelection) {
+                explicitBuildSelection = true;
+                saveSelectedBuild((Build) buildBox.getSelectedItem());
+            }
+            refreshVersionPanel();
+        });
         editProfileButton.addActionListener(e -> editSelectedProfile());
         accountManagerButton.addActionListener(e -> showAccountManagerMenu());
         launchButton.addActionListener(e -> launch());
@@ -1137,6 +1146,26 @@ public class Main {
         }
     }
 
+    private void selectStoredBuild() {
+        String id = Json.string(readLauncherSettings().get("selectedBuild"));
+        Build build = id.isEmpty() ? null : findBuild(id);
+        if (build == null) return;
+        applyingAutomaticBuildSelection = true;
+        try {
+            buildBox.setSelectedItem(build);
+            explicitBuildSelection = true;
+        } finally {
+            applyingAutomaticBuildSelection = false;
+        }
+    }
+
+    private void saveSelectedBuild(Build build) {
+        if (build == null) return;
+        Map<String, Object> settings = readLauncherSettings();
+        settings.put("selectedBuild", build.id);
+        saveLauncherSettings(settings, "Selected build: " + build.label + ".");
+    }
+
     private boolean readAutoCheckUpdates() {
         return jsonBoolean(readLauncherSettings().get("autoCheckUpdates"));
     }
@@ -1193,7 +1222,8 @@ public class Main {
             String json = "{"
                 + "\"autoCheckUpdates\":" + jsonBoolean(settings.get("autoCheckUpdates")) + ","
                 + "\"slotSoundsEnabled\":" + (settings.containsKey("slotSoundsEnabled") ? jsonBoolean(settings.get("slotSoundsEnabled")) : true) + ","
-                + "\"slotWinSoundsEnabled\":" + (settings.containsKey("slotWinSoundsEnabled") ? jsonBoolean(settings.get("slotWinSoundsEnabled")) : true)
+                + "\"slotWinSoundsEnabled\":" + (settings.containsKey("slotWinSoundsEnabled") ? jsonBoolean(settings.get("slotWinSoundsEnabled")) : true) + ","
+                + "\"selectedBuild\":\"" + jsonEscape(Json.string(settings.get("selectedBuild"))) + "\""
                 + "}" + System.lineSeparator();
             Files.write(getLauncherSettingsFile().toPath(), json.getBytes(StandardCharsets.UTF_8));
             log(successMessage);
@@ -4859,18 +4889,24 @@ public class Main {
         if (best == null) return;
 
         Object selected = buildBox.getSelectedItem();
+        if (explicitBuildSelection && selected instanceof Build && canUseBuild(user, ((Build) selected).id)) return;
         if (selected instanceof Build && ((Build) selected).id.equals(best.id)) return;
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
-                buildBox.setSelectedItem(best);
+                applyingAutomaticBuildSelection = true;
+                try {
+                    buildBox.setSelectedItem(best);
+                } finally {
+                    applyingAutomaticBuildSelection = false;
+                }
                 log("Selected best available build: " + best.label + ".");
             }
         });
     }
 
     private Build bestBuildForUser(LauncherUser user) {
-        if (hasOwnerAccess(user)) return findBuild("release");
+        if (hasOwnerAccess(user)) return findBuild("media");
         String[] priority = {"media", "beta_plus", "release", "ad_tier"};
         for (String buildId : priority) {
             if (canUseBuild(user, buildId)) return findBuild(buildId);

@@ -11,8 +11,10 @@ const LAUNCHER_DISMISS_KEY = "gamble.launcher.dismissedLauncherVersion";
 const CLIENT_DISMISS_KEY = "gamble.launcher.dismissedClientVersion";
 const CUSTOM_PROFILES_KEY = "gamble.launcher.customProfiles";
 const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
+const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
+const LAUNCHER_VERSION = "0.1.85";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 const PREVIEW = !("__TAURI_INTERNALS__" in window);
@@ -32,6 +34,8 @@ const builds = [
   { id: "ad_tier", label: "Ad Tier" }
 ];
 
+const initialStoredBuild = storedBuildId();
+
 const state = {
   view: "play",
   info: null,
@@ -44,7 +48,8 @@ const state = {
   social: null,
   friendUsername: "",
   selectedProfile: "gamble-client",
-  selectedBuild: "release",
+  selectedBuild: initialStoredBuild || "release",
+  selectedBuildExplicit: Boolean(initialStoredBuild),
   customProfiles: normalizeStoredProfiles(readJsonStorage(CUSTOM_PROFILES_KEY, [])),
   profileAccountOverrides: normalizeStoredObject(readJsonStorage(PROFILE_ACCOUNTS_KEY, {})),
   newProfileName: "",
@@ -141,7 +146,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(35);
   if (command === "launcher_info") {
     return {
-      version: "0.1.83",
+      version: LAUNCHER_VERSION,
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
       session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
@@ -169,13 +174,13 @@ async function mockInvoke(command, args = {}) {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
       return {
-        version: "0.1.83",
-        minVersion: "0.1.83",
+        version: LAUNCHER_VERSION,
+        minVersion: LAUNCHER_VERSION,
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.83-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.83-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.83_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.85-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.85-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.85_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -201,9 +206,9 @@ async function mockInvoke(command, args = {}) {
   }
   if (command === "download_launcher_update") {
     return {
-      version: "0.1.83",
-      fileName: "Gamble-Client-Launcher_0.1.83_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.83_amd64.deb",
+      version: LAUNCHER_VERSION,
+      fileName: "Gamble-Client-Launcher_0.1.85_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.85_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -342,7 +347,7 @@ function render() {
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.83")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || LAUNCHER_VERSION)}</span>
           </div>
         </div>
         <nav>
@@ -450,7 +455,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           <h2>${escapeHtml(selectedBuild.label)}</h2>
           <div class="version-strip">
             <span>Version</span>
-            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.83")} · Client ${escapeHtml(clientStatus)}</strong>
+            <strong>Launcher ${escapeHtml(state.info?.version || LAUNCHER_VERSION)} · Client ${escapeHtml(clientStatus)}</strong>
           </div>
           <div class="launch-facts">
             <div>
@@ -1219,14 +1224,17 @@ function adTierOnly() {
 }
 
 function buildForAccount() {
+  if (!state.account) return builds.find((item) => item.id === state.selectedBuild) || builds[0];
   const preferred = preferredBuildForAccount();
-  if (!canUseBuild(state.selectedBuild) || buildRank(state.selectedBuild) < buildRank(preferred)) state.selectedBuild = preferred;
+  if (!state.selectedBuild || !canUseBuild(state.selectedBuild) || (!state.selectedBuildExplicit && state.selectedBuild !== preferred)) {
+    state.selectedBuild = preferred;
+  }
   return builds.find((item) => item.id === state.selectedBuild) || builds[0];
 }
 
 function preferredBuildForAccount(account = state.account) {
   if (!account) return "release";
-  if (account.ownerAccess || hasPlanOrStatus(account, ["owner"])) return "release";
+  if (account.ownerAccess || hasPlanOrStatus(account, ["owner"])) return "media";
   if (account.mediaAccess || account.testerAccess || hasPlanOrStatus(account, ["media", "tester"])) return "media";
   if (account.betaAccess || hasPlanOrStatus(account, ["beta_plus", "lifetime_beta"])) return "beta_plus";
   if (hasPlanOrStatus(account, ["weekly", "monthly", "yearly", "lifetime", "owned"])) return "release";
@@ -1245,6 +1253,11 @@ function canUseBuild(buildId, account = state.account) {
 
 function buildRank(buildId) {
   return { ad_tier: 0, release: 1, beta_plus: 2, media: 3 }[buildId] ?? -1;
+}
+
+function storedBuildId() {
+  const stored = readStorage(SELECTED_BUILD_KEY);
+  return builds.some((item) => item.id === stored) ? stored : "";
 }
 
 function hasPlanOrStatus(account, values) {
@@ -1422,7 +1435,7 @@ function applyAccount(body) {
   state.account = body.user || null;
   state.ads = body.ads || body.adReward || null;
   const preferred = preferredBuildForAccount(state.account);
-  if (!canUseBuild(state.selectedBuild, state.account) || buildRank(state.selectedBuild) < buildRank(preferred)) {
+  if (!state.selectedBuild || !canUseBuild(state.selectedBuild, state.account) || (!state.selectedBuildExplicit && state.selectedBuild !== preferred)) {
     state.selectedBuild = preferred;
   }
   state.manifest = null;
@@ -2259,6 +2272,8 @@ app.addEventListener("change", async (event) => {
     await refreshManifest().catch(() => {});
   }
   if (field === "selectedBuild") {
+    state.selectedBuildExplicit = true;
+    localStorage.setItem(SELECTED_BUILD_KEY, state.selectedBuild);
     state.clientStatus = null;
     state.manifest = null;
     await refreshManifest().catch(() => {});

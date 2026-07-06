@@ -5,21 +5,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     env,
     fs::{self, File},
     io::{self, Cursor, Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.83";
+const VERSION: &str = "0.1.85";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -314,6 +317,12 @@ struct Library {
     natives: serde_json::Map<String, serde_json::Value>,
     classifier_paths: serde_json::Map<String, serde_json::Value>,
     classifier_urls: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Clone)]
+struct AssetDownload {
+    hash: String,
+    path: PathBuf,
 }
 
 #[tauri::command]
@@ -1860,6 +1869,7 @@ fn ensure_assets_with_progress(game_dir: &Path, profile: &VersionProfile, app: O
     let objects = body.get("objects").and_then(|v| v.as_object()).cloned().unwrap_or_default();
     let total = objects.len().max(1) as u32;
     let mut current = 0u32;
+    let mut missing = Vec::new();
     for item in objects.values() {
         current = current.saturating_add(1);
         let hash = json_string(item, "hash");
@@ -1868,17 +1878,68 @@ fn ensure_assets_with_progress(game_dir: &Path, profile: &VersionProfile, app: O
         }
         let path = assets.join("objects").join(&hash[0..2]).join(&hash);
         if !path.is_file() {
-            if let Some(app) = app {
-                emit_launch_progress(app, "Assets", format!("Downloading Minecraft assets {current}/{total}"), current, total);
-            }
-            download_file(&format!("{ASSET_BASE_URL}{}/{}", &hash[0..2], hash), &path)?;
+            missing.push(AssetDownload { hash, path });
         } else if let Some(app) = app {
             if current == 1 || current == total || current % 50 == 0 {
                 emit_launch_progress(app, "Assets", format!("Checking Minecraft assets {current}/{total}"), current, total);
             }
         }
     }
-    Ok(())
+    if missing.is_empty() {
+        if let Some(app) = app {
+            emit_launch_progress(app, "Assets", "Minecraft assets are ready", total, total);
+        }
+        return Ok(());
+    }
+    download_missing_assets(missing, app.cloned())
+}
+
+fn download_missing_assets(missing: Vec<AssetDownload>, app: Option<AppHandle>) -> Result<(), String> {
+    let total = missing.len() as u32;
+    let workers = std::thread::available_parallelism()
+        .map(|count| count.get().saturating_mul(2).clamp(2, 12))
+        .unwrap_or(4);
+    let queue = Arc::new(Mutex::new(VecDeque::from(missing)));
+    let done = Arc::new(AtomicU32::new(0));
+
+    if let Some(app) = app.as_ref() {
+        emit_launch_progress(app, "Assets", format!("Downloading Minecraft assets 0/{total}"), 0, total);
+    }
+
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..workers {
+            let queue = Arc::clone(&queue);
+            let done = Arc::clone(&done);
+            let app = app.clone();
+            handles.push(scope.spawn(move || -> Result<(), String> {
+                loop {
+                    let asset = {
+                        let mut queue = queue.lock().map_err(error_text)?;
+                        queue.pop_front()
+                    };
+                    let Some(asset) = asset else {
+                        return Ok(());
+                    };
+                    if !asset.path.is_file() {
+                        let url = format!("{ASSET_BASE_URL}{}/{}", &asset.hash[0..2], asset.hash);
+                        download_file(&url, &asset.path)?;
+                    }
+                    let current = done.fetch_add(1, Ordering::SeqCst).saturating_add(1);
+                    if let Some(app) = app.as_ref() {
+                        if current == 1 || current == total || current % 20 == 0 {
+                            emit_launch_progress(app, "Assets", format!("Downloading Minecraft assets {current}/{total}"), current, total);
+                        }
+                    }
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().map_err(|_| "Asset worker crashed.".to_string())??;
+        }
+        Ok(())
+    })
 }
 
 fn extract_natives_with_progress(game_dir: &Path, version_id: &str, profile: &VersionProfile, app: Option<&AppHandle>) -> Result<PathBuf, String> {
