@@ -117,7 +117,6 @@ public class FxMain extends Application {
         backend = new Main();
         runSwing(() -> {
             call("createRoot");
-            call("startDiscordRpc");
         });
         slotSoundsEnabled = backendBoolean("readSlotSoundsEnabled");
         slotWinSoundsEnabled = backendBoolean("readSlotWinSoundsEnabled");

@@ -63,18 +63,11 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.RandomAccessFile;
-import java.lang.management.ManagementFactory;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
-import java.net.UnixDomainSocketAddress;
-import java.nio.ByteBuffer;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.Selector;
-import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -182,8 +175,6 @@ public class Main {
     private static final String XSTS_AUTH_URL = "https://xsts.auth.xboxlive.com/xsts/authorize";
     private static final String MINECRAFT_LOGIN_URL = "https://api.minecraftservices.com/launcher/login";
     private static final String MINECRAFT_PROFILE_URL = "https://api.minecraftservices.com/minecraft/profile";
-    private static final long DISCORD_CLIENT_ID = 1502749052951859321L;
-
     private static final Build[] BUILDS = new Build[] {
         new Build("Release", "release"),
         new Build("Beta++", "beta_plus"),
@@ -257,8 +248,6 @@ public class Main {
     private volatile boolean captureLaunchLog;
     private final Object launchLogLock = new Object();
     private final Deque<String> recentLaunchLines = new ArrayDeque<>();
-    private LauncherDiscordRpc discordRpc;
-    private javax.swing.Timer discordRetryTimer;
     private LauncherUser launcherUser;
     private LauncherAds launcherAds;
     private SwingWorker<LauncherSession, Void> launcherSignInWorker;
@@ -287,14 +276,6 @@ public class Main {
         frame.pack();
         frame.setLocationRelativeTo(null);
         frame.setVisible(true);
-        startDiscordRpc();
-        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
-            @Override
-            public void run() {
-                if (discordRpc != null) discordRpc.stop();
-                if (discordRetryTimer != null) discordRetryTimer.stop();
-            }
-        }, "gamble-launcher-shutdown"));
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
@@ -3417,7 +3398,6 @@ public class Main {
                     log("Minecraft process started.");
                     pipeProcessOutput(process);
                     monitorMinecraftProcess(process);
-                    pauseLauncherDiscordRpcForGame();
                     started = true;
                     setBusy(false);
                 } catch (Exception e) {
@@ -3466,7 +3446,6 @@ public class Main {
             protected void done() {
                 if (minecraftProcess == process) minecraftProcess = null;
                 captureLaunchLog = false;
-                startDiscordRpc();
                 Main.this.setProgress(0, process.isAlive() ? "Kill sent" : "Killed");
                 if (process.isAlive()) log("Kill signal sent; Minecraft has not exited yet.");
                 else log("Minecraft was stopped from the launcher.");
@@ -5395,7 +5374,6 @@ public class Main {
 
     private void finishMinecraftProcess(Process process, int exitCode) {
         if (minecraftProcess == process) minecraftProcess = null;
-        startDiscordRpc();
         if (minecraftStopRequested) {
             minecraftStopRequested = false;
             captureLaunchLog = false;
@@ -5676,50 +5654,6 @@ public class Main {
         }
 
         log.setText("");
-    }
-
-    private void startDiscordRpc() {
-        if (discordRpc != null) discordRpc.stop();
-        discordRpc = new LauncherDiscordRpc(DISCORD_CLIENT_ID);
-        if (discordRpc.start()) {
-            discordRpc.setActivity("Gamble Client", "In the launcher");
-            if (discordRetryTimer != null) {
-                discordRetryTimer.stop();
-                discordRetryTimer = null;
-            }
-            log("Discord rich presence connected.");
-        } else {
-            log("Discord rich presence waiting for the desktop Discord app.");
-            scheduleDiscordRpcRetry();
-        }
-    }
-
-    private void scheduleDiscordRpcRetry() {
-        if (discordRetryTimer != null) return;
-        discordRetryTimer = new javax.swing.Timer(30000, e -> {
-            LauncherDiscordRpc retry = new LauncherDiscordRpc(DISCORD_CLIENT_ID);
-            if (!retry.start()) return;
-
-            discordRpc = retry;
-            discordRpc.setActivity("Gamble Client", "In the launcher");
-            discordRetryTimer.stop();
-            discordRetryTimer = null;
-            log("Discord rich presence connected.");
-        });
-        discordRetryTimer.setRepeats(true);
-        discordRetryTimer.start();
-    }
-
-    private void pauseLauncherDiscordRpcForGame() {
-        if (discordRetryTimer != null) {
-            discordRetryTimer.stop();
-            discordRetryTimer = null;
-        }
-        if (discordRpc != null) {
-            discordRpc.stop();
-            discordRpc = null;
-            log("Launcher Discord rich presence paused while Minecraft is running.");
-        }
     }
 
     private void setProgress(final int value, final String text) {
@@ -6695,291 +6629,6 @@ public class Main {
     private static final class AssetDownloadException extends RuntimeException {
         AssetDownloadException(String hash, IOException cause) {
             super("Asset " + hash + " failed: " + cause.getMessage(), cause);
-        }
-    }
-
-    private final class LauncherDiscordRpc {
-        private static final int HANDSHAKE = 0;
-        private static final int FRAME = 1;
-        private static final int CLOSE = 2;
-        private static final String[] UNIX_ENV_PATHS = {"XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP"};
-        private static final String[] DISCORD_FLATPAK_IDS = {
-            "com.discordapp.Discord",
-            "com.discordapp.DiscordCanary",
-            "com.discordapp.DiscordPTB",
-            "dev.vencord.Vesktop",
-            "io.github.spacingbat3.webcord"
-        };
-
-        private final long applicationId;
-        private DiscordConnection connection;
-        private String queuedActivity;
-        private boolean ready;
-        private long startSeconds;
-
-        LauncherDiscordRpc(long applicationId) {
-            this.applicationId = applicationId;
-        }
-
-        boolean start() {
-            stop();
-            connection = openDiscordConnection(new java.util.function.Consumer<DiscordPacket>() {
-                @Override
-                public void accept(DiscordPacket packet) {
-                    onPacket(packet);
-                }
-            });
-            if (connection == null) return false;
-
-            startSeconds = System.currentTimeMillis() / 1000L;
-            write(HANDSHAKE, "{\"v\":1,\"client_id\":\"" + applicationId + "\"}");
-            return true;
-        }
-
-        void setActivity(String details, String state) {
-            queuedActivity = "{\"details\":\"" + jsonEscape(details) + "\",\"state\":\"" + jsonEscape(state)
-                + "\",\"timestamps\":{\"start\":" + startSeconds + "}}";
-            if (ready) sendActivity();
-        }
-
-        void stop() {
-            if (connection != null) connection.close();
-            connection = null;
-            queuedActivity = null;
-            ready = false;
-        }
-
-        private void sendActivity() {
-            if (connection == null || queuedActivity == null) return;
-            String payload = "{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":" + getPid()
-                + ",\"activity\":" + queuedActivity + "}}";
-            write(FRAME, payload);
-            queuedActivity = null;
-        }
-
-        private void write(int opcode, String payload) {
-            if (connection == null) return;
-            String body = payload.substring(0, payload.length() - 1)
-                + ",\"nonce\":\"" + UUID.randomUUID() + "\"}";
-            byte[] data = body.getBytes(StandardCharsets.UTF_8);
-            ByteBuffer packet = ByteBuffer.allocate(data.length + 8);
-            packet.putInt(Integer.reverseBytes(opcode));
-            packet.putInt(Integer.reverseBytes(data.length));
-            packet.put(data);
-            packet.rewind();
-            connection.write(packet);
-        }
-
-        private void onPacket(DiscordPacket packet) {
-            if (packet.opcode == CLOSE) {
-                stop();
-                return;
-            }
-
-            if (packet.opcode != FRAME) return;
-            if (packet.data.contains("\"evt\":\"ERROR\"")) {
-                log("Discord RPC error from desktop client.");
-                return;
-            }
-            if (packet.data.contains("\"cmd\":\"DISPATCH\"")) {
-                ready = true;
-                if (queuedActivity != null) sendActivity();
-            }
-        }
-
-        private DiscordConnection openDiscordConnection(java.util.function.Consumer<DiscordPacket> callback) {
-            String os = System.getProperty("os.name").toLowerCase(Locale.ROOT);
-            if (os.contains("win")) {
-                for (int i = 0; i < 10; i++) {
-                    try {
-                        return new WinDiscordConnection("\\\\?\\pipe\\discord-ipc-" + i, callback);
-                    } catch (IOException ignored) {
-                    }
-                }
-                return null;
-            }
-
-            for (String prefix : unixPrefixes()) {
-                for (int i = 0; i < 10; i++) {
-                    try {
-                        return new UnixDiscordConnection(prefix + "/discord-ipc-" + i, callback);
-                    } catch (IOException ignored) {
-                    }
-                }
-            }
-            return null;
-        }
-
-        private List<String> unixPrefixes() {
-            List<String> paths = new ArrayList<>();
-            String runtimeDir = System.getenv("XDG_RUNTIME_DIR");
-            if (runtimeDir != null && !runtimeDir.isBlank()) {
-                paths.add(runtimeDir);
-                for (String appId : DISCORD_FLATPAK_IDS) paths.add(runtimeDir + "/app/" + appId);
-            }
-
-            String uid = System.getenv("UID");
-            if (uid != null && !uid.isBlank()) {
-                String runUser = "/run/user/" + uid;
-                if (!paths.contains(runUser)) paths.add(runUser);
-                for (String appId : DISCORD_FLATPAK_IDS) {
-                    String appPath = runUser + "/app/" + appId;
-                    if (!paths.contains(appPath)) paths.add(appPath);
-                }
-                String snapPath = runUser + "/snap.discord";
-                if (!paths.contains(snapPath)) paths.add(snapPath);
-            }
-
-            for (String env : UNIX_ENV_PATHS) {
-                String path = System.getenv(env);
-                if (path != null && !path.isBlank() && !paths.contains(path)) paths.add(path);
-            }
-            if (!paths.contains("/tmp")) paths.add("/tmp");
-            return paths;
-        }
-
-        private int getPid() {
-            String name = ManagementFactory.getRuntimeMXBean().getName();
-            int split = name.indexOf('@');
-            return Integer.parseInt(split >= 0 ? name.substring(0, split) : name);
-        }
-    }
-
-    private interface DiscordConnection {
-        void write(ByteBuffer buffer);
-        void close();
-    }
-
-    private static final class DiscordPacket {
-        final int opcode;
-        final String data;
-
-        DiscordPacket(int opcode, String data) {
-            this.opcode = opcode;
-            this.data = data;
-        }
-    }
-
-    private static final class UnixDiscordConnection implements DiscordConnection {
-        private final Selector selector;
-        private final SocketChannel channel;
-
-        UnixDiscordConnection(String path, java.util.function.Consumer<DiscordPacket> callback) throws IOException {
-            selector = Selector.open();
-            channel = SocketChannel.open(UnixDomainSocketAddress.of(path));
-            channel.configureBlocking(false);
-            channel.register(selector, SelectionKey.OP_READ);
-
-            Thread thread = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    readLoop(callback);
-                }
-            }, "discord-rpc-read");
-            thread.setDaemon(true);
-            thread.start();
-        }
-
-        @Override
-        public void write(ByteBuffer buffer) {
-            try {
-                channel.write(buffer);
-            } catch (IOException ignored) {
-            }
-        }
-
-        @Override
-        public void close() {
-            try {
-                selector.close();
-                channel.close();
-            } catch (IOException ignored) {
-            }
-        }
-
-        private void readLoop(java.util.function.Consumer<DiscordPacket> callback) {
-            int state = 0;
-            ByteBuffer intBuffer = ByteBuffer.allocate(4);
-            ByteBuffer dataBuffer = null;
-            int opcode = 0;
-
-            try {
-                while (true) {
-                    selector.select();
-                    if (state == 0) {
-                        channel.read(intBuffer);
-                        if (intBuffer.hasRemaining()) continue;
-                        opcode = Integer.reverseBytes(intBuffer.getInt(0));
-                        intBuffer.rewind();
-                        state = 1;
-                    } else if (state == 1) {
-                        channel.read(intBuffer);
-                        if (intBuffer.hasRemaining()) continue;
-                        dataBuffer = ByteBuffer.allocate(Integer.reverseBytes(intBuffer.getInt(0)));
-                        intBuffer.rewind();
-                        state = 2;
-                    } else {
-                        channel.read(dataBuffer);
-                        if (dataBuffer.hasRemaining()) continue;
-                        callback.accept(new DiscordPacket(opcode, StandardCharsets.UTF_8.decode(dataBuffer.rewind()).toString()));
-                        dataBuffer = null;
-                        state = 0;
-                    }
-                }
-            } catch (Exception ignored) {
-            }
-        }
-    }
-
-    private static final class WinDiscordConnection implements DiscordConnection {
-        private final RandomAccessFile pipe;
-
-        WinDiscordConnection(String path, java.util.function.Consumer<DiscordPacket> callback) throws IOException {
-            pipe = new RandomAccessFile(path, "rw");
-            Thread thread = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    readLoop(callback);
-                }
-            }, "discord-rpc-read");
-            thread.setDaemon(true);
-            thread.start();
-        }
-
-        @Override
-        public void write(ByteBuffer buffer) {
-            try {
-                pipe.write(buffer.array());
-            } catch (IOException ignored) {
-            }
-        }
-
-        @Override
-        public void close() {
-            try {
-                pipe.close();
-            } catch (IOException ignored) {
-            }
-        }
-
-        private void readLoop(java.util.function.Consumer<DiscordPacket> callback) {
-            ByteBuffer intBuffer = ByteBuffer.allocate(4);
-            try {
-                while (true) {
-                    readFully(intBuffer);
-                    int opcode = Integer.reverseBytes(intBuffer.getInt(0));
-                    readFully(intBuffer);
-                    ByteBuffer dataBuffer = ByteBuffer.allocate(Integer.reverseBytes(intBuffer.getInt(0)));
-                    readFully(dataBuffer);
-                    callback.accept(new DiscordPacket(opcode, StandardCharsets.UTF_8.decode(dataBuffer.rewind()).toString()));
-                }
-            } catch (Exception ignored) {
-            }
-        }
-
-        private void readFully(ByteBuffer buffer) throws IOException {
-            buffer.rewind();
-            while (buffer.hasRemaining()) pipe.getChannel().read(buffer);
         }
     }
 
