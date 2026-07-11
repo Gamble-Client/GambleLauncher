@@ -40,6 +40,9 @@ const MICROSOFT_REDIRECT_URI: &str = "http://localhost:39062/";
 const HTTP_CONNECT_TIMEOUT_SECONDS: u64 = 15;
 const HTTP_REQUEST_TIMEOUT_SECONDS: u64 = 300;
 const HTTP_DOWNLOAD_ATTEMPTS: usize = 3;
+const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_NATIVE_FILES: usize = 2048;
+const MAX_NATIVE_EXPANDED_BYTES: u64 = 512 * 1024 * 1024;
 const MINECRAFT_TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
 const XBOX_AUTH_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
 const XSTS_AUTH_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
@@ -57,6 +60,7 @@ const ANTISCREENSHARE_VISUAL_OFF: &[&str] = &[
 ];
 static MINECRAFT_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 static ACTIVE_LAUNCH_PAYLOAD: Mutex<Option<PathBuf>> = Mutex::new(None);
+static LAUNCH_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Serialize)]
 struct LauncherInfo {
@@ -110,7 +114,7 @@ struct AntiScreenshareStatus {
 
 #[derive(Serialize)]
 struct MicrosoftAccountState {
-    accounts: Vec<MicrosoftAccount>,
+    accounts: Vec<MicrosoftAccountView>,
     #[serde(rename = "selectedUuid")]
     selected_uuid: String,
 }
@@ -184,6 +188,10 @@ struct LauncherDownload {
     file_name: String,
     #[serde(default, rename = "downloadUrl")]
     download_url: String,
+    #[serde(default)]
+    sha256: String,
+    #[serde(default)]
+    size: u64,
 }
 
 #[derive(Serialize)]
@@ -213,6 +221,19 @@ struct MicrosoftAccount {
     minecraft_access_token: String,
     #[serde(default, rename = "minecraftExpiresAt")]
     minecraft_expires_at: u64,
+}
+
+#[derive(Clone, Serialize)]
+struct MicrosoftAccountView {
+    name: String,
+    uuid: String,
+    xuid: String,
+}
+
+impl From<&MicrosoftAccount> for MicrosoftAccountView {
+    fn from(account: &MicrosoftAccount) -> Self {
+        Self { name: account.name.clone(), uuid: account.uuid.clone(), xuid: account.xuid.clone() }
+    }
 }
 
 #[derive(Serialize)]
@@ -394,7 +415,7 @@ fn save_launcher_token(token: String) -> Result<(), String> {
         return delete_launcher_token();
     }
     fs::create_dir_all(launcher_data_folder()).map_err(error_text)?;
-    fs::write(launcher_session_file(), format!("{token}\n")).map_err(error_text)
+    write_private_file(&launcher_session_file(), format!("{token}\n").as_bytes())
 }
 
 #[tauri::command]
@@ -407,8 +428,8 @@ fn delete_launcher_token() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn read_microsoft_account() -> Result<Option<MicrosoftAccount>, String> {
-    selected_microsoft_account()
+fn read_microsoft_account() -> Result<Option<MicrosoftAccountView>, String> {
+    Ok(selected_microsoft_account()?.as_ref().map(MicrosoftAccountView::from))
 }
 
 #[tauri::command]
@@ -416,12 +437,12 @@ fn list_microsoft_accounts() -> Result<MicrosoftAccountState, String> {
     let accounts = read_microsoft_account_list()?;
     Ok(MicrosoftAccountState {
         selected_uuid: selected_microsoft_uuid().unwrap_or_else(|| accounts.first().map(|account| account.uuid.clone()).unwrap_or_default()),
-        accounts,
+        accounts: accounts.iter().map(MicrosoftAccountView::from).collect(),
     })
 }
 
 #[tauri::command]
-fn select_microsoft_account(uuid: String) -> Result<Option<MicrosoftAccount>, String> {
+fn select_microsoft_account(uuid: String) -> Result<Option<MicrosoftAccountView>, String> {
     let uuid = uuid.trim().replace('-', "");
     if uuid.is_empty() {
         return Err("Choose a Microsoft account first.".to_string());
@@ -432,7 +453,7 @@ fn select_microsoft_account(uuid: String) -> Result<Option<MicrosoftAccount>, St
         .ok_or_else(|| "That Microsoft account is not saved in this launcher.".to_string())?;
     save_selected_microsoft_uuid(&account.uuid)?;
     save_legacy_microsoft_account(&account)?;
-    Ok(Some(account))
+    Ok(Some(MicrosoftAccountView::from(&account)))
 }
 
 #[tauri::command]
@@ -470,7 +491,7 @@ fn delete_microsoft_account_by_uuid(uuid: String) -> Result<MicrosoftAccountStat
     }
 
     Ok(MicrosoftAccountState {
-        accounts,
+        accounts: accounts.iter().map(MicrosoftAccountView::from).collect(),
         selected_uuid: next_selected,
     })
 }
@@ -489,30 +510,24 @@ fn microsoft_browser_sign_in(force_account_picker: bool) -> Result<serde_json::V
     let auth_url = microsoft_authorize_url(&code_challenge, &state, force_account_picker);
     open_external(&auth_url)?;
 
-    let mut stream = wait_for_microsoft_callback(&listener)?;
-    let callback = read_microsoft_callback(&mut stream)?;
-    let title;
-    let message;
-
-    let result = if callback.get("state").map(String::as_str) != Some(state.as_str()) {
-        title = "Microsoft sign-in failed";
-        message = "The Microsoft sign-in state did not match. Try again.";
-        Err(message.to_string())
-    } else if let Some(error) = callback.get("error") {
-        title = "Microsoft sign-in failed";
-        message = callback.get("error_description").map(String::as_str).unwrap_or(error);
-        Err(message.to_string())
-    } else if let Some(code) = callback.get("code") {
-        title = "Microsoft sign-in complete";
-        message = "You can close this tab and return to the Gamble Client launcher.";
-        Ok(code.clone())
-    } else {
-        title = "Microsoft sign-in failed";
-        message = "Microsoft did not return an authorization code.";
-        Err(message.to_string())
+    let result = loop {
+        let mut stream = wait_for_microsoft_callback(&listener)?;
+        let callback = read_microsoft_callback(&mut stream)?;
+        if callback.get("state").map(String::as_str) != Some(state.as_str()) {
+            let _ = write_microsoft_callback_response(&mut stream, "Microsoft sign-in ignored", "This callback was not for the active sign-in. Return to the Microsoft tab.");
+            continue;
+        }
+        if let Some(error) = callback.get("error") {
+            let message = callback.get("error_description").map(String::as_str).unwrap_or(error);
+            let _ = write_microsoft_callback_response(&mut stream, "Microsoft sign-in failed", message);
+            break Err(message.to_string());
+        }
+        if let Some(code) = callback.get("code").filter(|code| !code.is_empty()) {
+            let _ = write_microsoft_callback_response(&mut stream, "Microsoft sign-in complete", "You can close this tab and return to the Gamble Client launcher.");
+            break Ok(code.clone());
+        }
+        let _ = write_microsoft_callback_response(&mut stream, "Microsoft sign-in ignored", "This callback did not contain a sign-in code. Return to the Microsoft tab.");
     };
-
-    let _ = write_microsoft_callback_response(&mut stream, title, message);
     drop(listener);
 
     let code = result?;
@@ -527,7 +542,7 @@ fn microsoft_browser_sign_in(force_account_picker: bool) -> Result<serde_json::V
         minecraft_expires_at: profile.expires_at,
     };
     save_microsoft_account(&account)?;
-    Ok(json!({ "status": "ready", "account": account }))
+    Ok(json!({ "status": "ready", "account": MicrosoftAccountView::from(&account) }))
 }
 
 #[tauri::command]
@@ -637,7 +652,7 @@ fn microsoft_device_poll(device_code: String) -> Result<serde_json::Value, Strin
         minecraft_expires_at: profile.expires_at,
     };
     save_microsoft_account(&account)?;
-    Ok(json!({ "status": "ready", "account": account }))
+    Ok(json!({ "status": "ready", "account": MicrosoftAccountView::from(&account) }))
 }
 
 #[tauri::command]
@@ -696,6 +711,13 @@ fn list_local_files(profile: String, kind: String) -> Result<Vec<LocalFile>, Str
 fn toggle_local_file(profile: String, kind: String, path: String) -> Result<(), String> {
     let profile = profile_id(&profile);
     let path = PathBuf::from(path);
+    let allowed_root = if kind == "resourcepacks" { resource_packs_folder(&profile) } else { mods_folder(&profile) };
+    let canonical_root = fs::canonicalize(&allowed_root).map_err(error_text)?;
+    let canonical_path = fs::canonicalize(&path).map_err(error_text)?;
+    if !canonical_path.starts_with(&canonical_root) {
+        return Err("The selected file is outside this profile's managed folder.".to_string());
+    }
+    let path = canonical_path;
     if !path.exists() {
         return Err("File does not exist anymore.".to_string());
     }
@@ -783,11 +805,12 @@ fn diagnostics(profile: String) -> Result<Diagnostics, String> {
         microsoft_saved,
         display_path(&microsoft_accounts_file()),
     );
-    let java = Command::new("java").arg("-version").output();
+    let selected_java = java_executable();
+    let java = Command::new(&selected_java).arg("-version").output();
     push_check(
         &mut checks,
         "Java runtime",
-        java.as_ref().map(|out| out.status.success()).unwrap_or(false),
+        java.as_ref().map(|out| out.status.success() && java_output_is_21_or_newer(out)).unwrap_or(false),
         java.map(|out| String::from_utf8_lossy(&out.stderr).lines().next().unwrap_or("java").to_string())
             .unwrap_or_else(|error| error.to_string()),
     );
@@ -912,18 +935,13 @@ fn download_launcher_update_blocking() -> Result<LauncherUpdateResult, String> {
         return Err("Launcher update download is not configured for this platform.".to_string());
     }
 
-    let target = downloads_folder().join(&download.file_name);
+    let safe_name = safe_file_name(&download.file_name)?;
+    let target = downloads_folder().join(safe_name);
     download_file(&download.download_url, &target)?;
+    verify_file(&target, download.size, &download.sha256)?;
     let target_text = display_path(&target);
-    let open_message = match open_external(&target_text) {
-        Ok(_) => "Opened the downloaded launcher installer.".to_string(),
-        Err(error) => {
-            if let Some(parent) = target.parent() {
-                let _ = open_external(&display_path(parent));
-            }
-            format!("Downloaded the launcher update. Open failed: {error}")
-        }
-    };
+    if let Some(parent) = target.parent() { let _ = open_external(&display_path(parent)); }
+    let open_message = "Downloaded the launcher update. Review and open the installer from your Downloads folder.".to_string();
 
     Ok(LauncherUpdateResult {
         version: if info.version.trim().is_empty() { info.min_version } else { info.version },
@@ -949,50 +967,33 @@ fn install_client_manifest_blocking(profile: String, build: String, token: Strin
     }
     ensure_profile_folders(&profile)?;
 
-    let client = http_client()?;
     let manifest = fetch_client_manifest(&build, &token)?;
 
     if manifest.file_name.is_empty() || manifest.download_url.is_empty() {
         return Err("Backend manifest did not include a jar download.".to_string());
     }
+    safe_file_name(&manifest.file_name)?;
+    if manifest.size == 0 || !is_sha256(&manifest.sha256) {
+        return Err("Backend manifest is missing required size or SHA-256 integrity metadata.".to_string());
+    }
 
+    let client_jar = payload_file(&profile, &manifest.file_name);
+    if let Some(parent) = client_jar.parent() { fs::create_dir_all(parent).map_err(error_text)?; }
+    let staging = client_jar.with_extension("jar.part");
     let existing = find_verified_client_install(&profile, &manifest);
-    let (bytes, downloaded) = if let Some(path) = existing {
-        (fs::read(path).map_err(error_text)?, false)
+    let downloaded = existing.is_none();
+    if let Some(path) = existing {
+        fs::copy(path, &staging).map_err(error_text)?;
     } else {
-        (
-            client
-                .get(&manifest.download_url)
-                .send()
-                .map_err(error_text)?
-                .error_for_status()
-                .map_err(error_text)?
-                .bytes()
-                .map_err(error_text)?
-                .to_vec(),
-            true,
-        )
-    };
-
-    if manifest.size > 0 && bytes.len() as u64 != manifest.size {
-        return Err(format!("Expected {} bytes but found {} bytes.", manifest.size, bytes.len()));
+        download_file(&manifest.download_url, &staging)?;
     }
-    if !manifest.sha256.trim().is_empty() {
-        let actual = sha256_hex(&bytes);
-        if !actual.eq_ignore_ascii_case(manifest.sha256.trim()) {
-            return Err(format!("Expected SHA-256 {} but found {}.", manifest.sha256, actual));
-        }
-    }
+    verify_file(&staging, manifest.size, &manifest.sha256)?;
 
     ensure_loader_jar(&profile)?;
     ensure_fabric_api(&profile)?;
     cleanup_managed_mod_jars(&profile)?;
     cleanup_payload_client_jars(&profile)?;
-    let client_jar = payload_file(&profile, &manifest.file_name);
-    if let Some(parent) = client_jar.parent() {
-        fs::create_dir_all(parent).map_err(error_text)?;
-    }
-    fs::write(&client_jar, bytes).map_err(error_text)?;
+    fs::rename(&staging, &client_jar).map_err(error_text)?;
     write_install_marker(&profile, &build, &manifest, &client_jar)?;
 
     Ok(InstallResult {
@@ -1017,6 +1018,7 @@ async fn launch_game(app: AppHandle, input: LaunchRequest) -> Result<String, Str
 }
 
 fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, String> {
+    let _launch_guard = LAUNCH_LOCK.try_lock().map_err(|_| "A launch operation is already in progress.".to_string())?;
     {
         let mut running = MINECRAFT_PROCESS.lock().map_err(error_text)?;
         if let Some(child) = running.as_mut() {
@@ -1042,7 +1044,7 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
     apply_minecraft_option_defaults(&profile)?;
 
     emit_launch_progress(&app, "Account", "Refreshing Microsoft session", 1, 12);
-    let account = read_microsoft_account()?.ok_or_else(|| {
+    let account = selected_microsoft_account()?.ok_or_else(|| {
         "Microsoft is linked on the site, but this launcher does not have a local Minecraft token yet. Connect Microsoft in the launcher first.".to_string()
     })?;
     let mut identity = refresh_minecraft_identity(account)?;
@@ -2059,15 +2061,23 @@ fn download_file(url: &str, path: &Path) -> Result<(), String> {
 }
 
 fn download_file_once(url: &str, path: &Path) -> Result<(), String> {
-    let bytes = http_client()?
+    let mut response = http_client()?
         .get(url)
         .send()
         .map_err(error_text)?
         .error_for_status()
-        .map_err(error_text)?
-        .bytes()
         .map_err(error_text)?;
-    fs::write(path, bytes).map_err(error_text)
+    if response.content_length().is_some_and(|size| size > MAX_DOWNLOAD_BYTES) {
+        return Err("Download exceeds the 512 MiB safety limit.".to_string());
+    }
+    let temp = path.with_extension(format!("{}.part", path.extension().and_then(|value| value.to_str()).unwrap_or("download")));
+    let mut output = File::create(&temp).map_err(error_text)?;
+    let copied = io::copy(&mut response.take(MAX_DOWNLOAD_BYTES + 1), &mut output).map_err(error_text)?;
+    if copied > MAX_DOWNLOAD_BYTES {
+        let _ = fs::remove_file(&temp);
+        return Err("Download exceeds the 512 MiB safety limit.".to_string());
+    }
+    fs::rename(temp, path).map_err(error_text)
 }
 
 fn download_failure_message(url: &str, error: &str) -> String {
@@ -2087,8 +2097,12 @@ fn download_failure_message(url: &str, error: &str) -> String {
 fn unzip_natives(zip_path: &Path, target: &Path) -> Result<(), String> {
     let file = File::open(zip_path).map_err(error_text)?;
     let mut archive = ZipArchive::new(file).map_err(error_text)?;
+    if archive.len() > MAX_NATIVE_FILES { return Err("Native archive contains too many files.".to_string()); }
+    let mut expanded = 0u64;
     for i in 0..archive.len() {
         let mut item = archive.by_index(i).map_err(error_text)?;
+        expanded = expanded.saturating_add(item.size());
+        if expanded > MAX_NATIVE_EXPANDED_BYTES { return Err("Native archive expands beyond the 512 MiB safety limit.".to_string()); }
         let name = item.name().to_string();
         if item.is_dir() || name.starts_with("META-INF/") || name.contains("..") {
             continue;
@@ -2215,14 +2229,19 @@ fn split_args(value: &str) -> Result<Vec<String>, String> {
     let mut single = false;
     let mut double = false;
     let mut escaping = false;
-    for ch in value.chars() {
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
         if escaping {
             current.push(ch);
             escaping = false;
             continue;
         }
         if ch == '\\' && !single {
-            escaping = true;
+            if chars.peek().is_some_and(|next| next.is_whitespace() || *next == '\\' || *next == '"' || *next == '\'') {
+                escaping = true;
+                continue;
+            }
+            current.push(ch);
             continue;
         }
         if ch == '\'' && !double {
@@ -2333,18 +2352,9 @@ fn emit_launch_progress(app: &AppHandle, phase: &str, message: impl Into<String>
 
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
-    let allowed = [
-        "https://gamble-client.store",
-        "https://dash.gamble-client.store",
-        "https://admin.gamble-client.store",
-        "https://profile.gamble-client.store",
-        "https://discord.gg",
-        "https://login.microsoftonline.com",
-        "https://www.microsoft.com",
-        "https://microsoft.com",
-    ];
-
-    if !allowed.iter().any(|prefix| url.starts_with(prefix)) {
+    let parsed = reqwest::Url::parse(&url).map_err(|_| "URL is invalid.".to_string())?;
+    let allowed = ["gamble-client.store", "dash.gamble-client.store", "admin.gamble-client.store", "profile.gamble-client.store", "discord.gg", "login.microsoftonline.com", "www.microsoft.com", "microsoft.com"];
+    if parsed.scheme() != "https" || !parsed.host_str().is_some_and(|host| allowed.contains(&host)) || !parsed.username().is_empty() || parsed.password().is_some() {
         return Err("URL is not allowed.".to_string());
     }
     open_external(&url)
@@ -2505,6 +2515,18 @@ fn payloads_folder(profile: &str) -> PathBuf {
 
 fn payload_file(profile: &str, file_name: &str) -> PathBuf {
     payloads_folder(profile).join(file_name)
+}
+
+fn safe_file_name(value: &str) -> Result<&str, String> {
+    let path = Path::new(value);
+    if value.trim().is_empty() || path.is_absolute() || path.components().count() != 1 || path.file_name().and_then(|name| name.to_str()) != Some(value) {
+        return Err("Server manifest filename is unsafe.".to_string());
+    }
+    Ok(value)
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn ensure_profile_folders(profile: &str) -> Result<PathBuf, String> {
@@ -2925,11 +2947,10 @@ fn upsert_microsoft_account(accounts: &mut Vec<MicrosoftAccount>, mut account: M
 
 fn write_microsoft_account_list(accounts: &[MicrosoftAccount]) -> Result<(), String> {
     fs::create_dir_all(launcher_data_folder()).map_err(error_text)?;
-    fs::write(
-        microsoft_accounts_file(),
-        serde_json::to_string_pretty(accounts).map_err(error_text)? + "\n",
+    write_private_file(
+        &microsoft_accounts_file(),
+        (serde_json::to_string_pretty(accounts).map_err(error_text)? + "\n").as_bytes(),
     )
-    .map_err(error_text)
 }
 
 fn selected_microsoft_uuid() -> Option<String> {
@@ -2938,16 +2959,15 @@ fn selected_microsoft_uuid() -> Option<String> {
 
 fn save_selected_microsoft_uuid(uuid: &str) -> Result<(), String> {
     fs::create_dir_all(launcher_data_folder()).map_err(error_text)?;
-    fs::write(selected_microsoft_account_file(), format!("{}\n", uuid.trim().replace('-', ""))).map_err(error_text)
+    write_private_file(&selected_microsoft_account_file(), format!("{}\n", uuid.trim().replace('-', "")).as_bytes())
 }
 
 fn save_legacy_microsoft_account(account: &MicrosoftAccount) -> Result<(), String> {
     fs::create_dir_all(launcher_data_folder()).map_err(error_text)?;
-    fs::write(
-        microsoft_account_file(),
-        serde_json::to_string_pretty(account).map_err(error_text)? + "\n",
+    write_private_file(
+        &microsoft_account_file(),
+        (serde_json::to_string_pretty(account).map_err(error_text)? + "\n").as_bytes(),
     )
-    .map_err(error_text)
 }
 
 fn save_microsoft_account(account: &MicrosoftAccount) -> Result<(), String> {
@@ -3154,6 +3174,8 @@ fn preferred_launcher_download(info: &LauncherVersionResponse) -> LauncherDownlo
         .unwrap_or_else(|| LauncherDownload {
             file_name: info.file_name.clone(),
             download_url: info.download_url.clone(),
+            sha256: String::new(),
+            size: 0,
         })
 }
 
@@ -3173,18 +3195,19 @@ fn linux_package_preference() -> &'static str {
 }
 
 fn verify_file(path: &Path, expected_size: u64, expected_sha: &str) -> Result<(), String> {
+    if expected_size == 0 || !is_sha256(expected_sha) {
+        return Err("Required size or SHA-256 integrity metadata is missing.".to_string());
+    }
     let metadata = path.metadata().map_err(error_text)?;
-    if expected_size > 0 && metadata.len() != expected_size {
+    if metadata.len() != expected_size {
         return Err(format!("Expected {expected_size} bytes but found {} bytes.", metadata.len()));
     }
-    if !expected_sha.trim().is_empty() {
-        let mut file = File::open(path).map_err(error_text)?;
-        let mut data = Vec::new();
-        file.read_to_end(&mut data).map_err(error_text)?;
-        let actual = sha256_hex(&data);
-        if !actual.eq_ignore_ascii_case(expected_sha.trim()) {
-            return Err(format!("Expected SHA-256 {} but found {}.", expected_sha, actual));
-        }
+    let mut file = File::open(path).map_err(error_text)?;
+    let mut data = Vec::new();
+    file.read_to_end(&mut data).map_err(error_text)?;
+    let actual = sha256_hex(&data);
+    if !actual.eq_ignore_ascii_case(expected_sha.trim()) {
+        return Err(format!("Expected SHA-256 {} but found {}.", expected_sha, actual));
     }
     Ok(())
 }
@@ -3252,8 +3275,27 @@ fn push_check(checks: &mut Vec<DiagnosticCheck>, label: &str, ok: bool, detail: 
     });
 }
 
+fn java_output_is_21_or_newer(output: &std::process::Output) -> bool {
+    let text = format!("{} {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let version = text.split('"').nth(1).unwrap_or(&text);
+    let first = version.split('.').next().unwrap_or("").trim().parse::<u32>().unwrap_or(0);
+    let feature = if first == 1 { version.split('.').nth(1).and_then(|part| part.parse().ok()).unwrap_or(0) } else { first };
+    feature >= 21
+}
+
 fn read_trimmed(path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map(|value| value.trim().to_string()).map_err(error_text)
+}
+
+fn write_private_file(path: &Path, data: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(error_text)?; }
+    fs::write(path, data).map_err(error_text)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(error_text)?;
+    }
+    Ok(())
 }
 
 fn timestamp() -> String {
@@ -3281,8 +3323,8 @@ fn error_text<E: std::fmt::Display>(error: E) -> String {
 fn open_external(target: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", target]);
+        let mut command = Command::new("explorer.exe");
+        command.arg(target);
         command
     };
 

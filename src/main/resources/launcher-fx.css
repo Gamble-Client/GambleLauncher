@@ -1,24 +1,24 @@
 .app {
-    -fx-background-color: #121016;
-    -fx-font-family: "Inter", "Segoe UI", sans-serif;
+    -fx-background-color: #07090a;
+    -fx-font-family: "Arial Narrow", "Segoe UI", sans-serif;
     -fx-font-size: 15px;
 }
 
 .sidebar {
     -fx-padding: 20;
     -fx-spacing: 10;
-    -fx-background-color: linear-gradient(from 0% 0% to 100% 100%, #261d27, #151820 62%, #16171f);
-    -fx-border-color: rgba(230, 146, 35, 0.18);
+    -fx-background-color: linear-gradient(from 0% 0% to 100% 100%, #14120d, #090b0c 42%, #080a0b);
+    -fx-border-color: rgba(255, 176, 0, 0.28);
     -fx-border-width: 0 1 0 0;
 }
 
 .content {
     -fx-padding: 24;
-    -fx-background-color: #121016;
+    -fx-background-color: #07090a;
 }
 
 .content-host {
-    -fx-background-color: #121016;
+    -fx-background-color: #07090a;
 }
 
 .content-scroll,
@@ -35,7 +35,7 @@
 }
 
 .content-scroll > .viewport {
-    -fx-background-color: #121016;
+    -fx-background-color: #07090a;
     -fx-background-insets: 0;
 }
 
@@ -47,7 +47,7 @@
     -fx-text-fill: white;
     -fx-font-size: 29px;
     -fx-font-weight: 800;
-    -fx-effect: dropshadow(gaussian, rgba(230, 146, 35, 0.24), 16, 0.18, 0, 0);
+    -fx-effect: none;
 }
 
 .heading {
@@ -82,10 +82,10 @@
 .card,
 .log-card,
 .modal {
-    -fx-background-color: linear-gradient(to bottom right, rgba(31, 27, 38, 0.98), rgba(20, 19, 27, 0.98));
-    -fx-background-radius: 8;
-    -fx-border-color: rgba(255, 255, 255, 0.10);
-    -fx-border-radius: 8;
+    -fx-background-color: linear-gradient(to bottom right, rgba(22, 24, 25, 0.98), rgba(10, 12, 13, 0.98));
+    -fx-background-radius: 2;
+    -fx-border-color: rgba(255, 255, 255, 0.12);
+    -fx-border-radius: 2;
     -fx-padding: 16;
 }
 
@@ -267,18 +267,52 @@
 }
 
 .primary {
-    -fx-background-color: #e69223;
-    -fx-text-fill: #121016;
+    -fx-background-color: #ffb000;
+    -fx-background-radius: 2;
+    -fx-border-radius: 2;
+    -fx-text-fill: #07090a;
 }
 
 .primary:hover {
-    -fx-background-color: #f0a33d;
+    -fx-background-color: #ffc137;
 }
 
 .secondary {
-    -fx-background-color: linear-gradient(to bottom, #2b2632, #211d29);
+    -fx-background-color: linear-gradient(to bottom, #171a1b, #101213);
+    -fx-background-radius: 2;
+    -fx-border-radius: 2;
     -fx-text-fill: white;
     -fx-border-color: rgba(255, 255, 255, 0.09);
+}
+
+.log-scroll,
+.log-scroll:focused,
+.log-scroll > .viewport {
+    -fx-background-color: #090b0c;
+    -fx-background: #090b0c;
+    -fx-border-color: transparent;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+
+.log-lines {
+    -fx-padding: 10 12 14 12;
+    -fx-background-color: #090b0c;
+}
+
+.log-line {
+    -fx-font-family: "JetBrains Mono", "Consolas", monospace;
+    -fx-font-size: 12px;
+    -fx-text-fill: #cbd1d3;
+}
+
+.log-line.warning {
+    -fx-text-fill: #ff9f1c;
+}
+
+.log-line.error {
+    -fx-text-fill: #ff5148;
+    -fx-font-weight: 800;
 }
 
 .secondary:hover {

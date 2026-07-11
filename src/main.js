@@ -6,7 +6,6 @@ import logoUrl from "./assets/cg-mod-icon.png";
 
 const SITE = "https://gamble-client.store";
 const DASH = "https://dash.gamble-client.store";
-const TOKEN_KEY = "gamble.launcher.token";
 const LAUNCHER_DISMISS_KEY = "gamble.launcher.dismissedLauncherVersion";
 const CLIENT_DISMISS_KEY = "gamble.launcher.dismissedClientVersion";
 const CUSTOM_PROFILES_KEY = "gamble.launcher.customProfiles";
@@ -306,7 +305,7 @@ function scrollKey(node, index) {
   if (node.classList.contains("content")) return "content";
   if (node.classList.contains("file-list")) return `file-list:${state.view}`;
   if (node.classList.contains("diagnostics-list")) return "diagnostics-list";
-  if (node.tagName === "PRE") return "log";
+  if (node.classList.contains("log-lines") || node.tagName === "PRE") return "log";
   return `scroll:${index}`;
 }
 
@@ -315,7 +314,7 @@ function restoreScrollState(snapshot) {
   const restore = () => {
     for (const entry of snapshot.entries || []) {
       const node = app.querySelector(`[data-scroll-key="${cssEscape(entry.key)}"]`)
-        || Array.from(app.querySelectorAll(".content, .file-list, .diagnostics-list, pre")).find((item, index) => scrollKey(item, index) === entry.key);
+        || Array.from(app.querySelectorAll(".content, .file-list, .diagnostics-list, .log-lines, pre")).find((item, index) => scrollKey(item, index) === entry.key);
       if (!node) continue;
       node.scrollLeft = entry.left;
       node.scrollTop = Math.min(entry.top, Math.max(0, node.scrollHeight - node.clientHeight));
@@ -351,11 +350,11 @@ function render() {
           </div>
         </div>
         <nav>
-          ${navButton("play", "Play")}
-          ${navButton("accounts", "Accounts")}
-          ${navButton("social", "Social")}
-          ${navButton("updates", "Updates")}
-          ${navButton("profiles", "Profiles")}
+          ${navButton("play", "Play", "01")}
+          ${navButton("accounts", "Accounts", "02")}
+          ${navButton("social", "Social", "03")}
+          ${navButton("updates", "Updates", "04")}
+          ${navButton("profiles", "Profiles", "05")}
           <button class="nav-item nav-action" type="button" data-open="${DASH}/dashboard.html">Dashboard</button>
           <button class="nav-item nav-action" type="button" data-open="https://discord.gg/YPescfEt">Discord</button>
         </nav>
@@ -387,8 +386,8 @@ function render() {
   if (preserveScroll) restoreScrollState(scrollState);
 }
 
-function navButton(id, label) {
-  return `<button class="nav-item ${state.view === id ? "active" : ""}" type="button" data-view="${id}">${escapeHtml(label)}</button>`;
+function navButton(id, label, index) {
+  return `<button class="nav-item ${state.view === id ? "active" : ""}" type="button" data-view="${id}"><span>${escapeHtml(index)}</span><strong>${escapeHtml(label)}</strong></button>`;
 }
 
 function allProfiles() {
@@ -1161,24 +1160,35 @@ function sponsorOverlay() {
     <section class="sponsor-panel">
       <div>
         <span class="eyebrow">Sponsor break</span>
-        <h2>${state.sponsor.remaining}s</h2>
+        <h2 data-sponsor-countdown>${state.sponsor.remaining}s</h2>
         <p>${escapeHtml(state.sponsor.message || "Keep the launcher open until the timer finishes.")}</p>
       </div>
-      ${url ? `<video src="${escapeAttr(url)}" controls autoplay muted></video>` : `<div class="sponsor-fallback">Sponsor media is playing as a timed break on this device.</div>`}
+      ${url ? `<video data-sponsor-media src="${escapeAttr(url)}" controls autoplay muted playsinline></video>` : `<div class="sponsor-fallback">Sponsor media is unavailable. No reward will be granted.</div>`}
     </section>
   `;
 }
 
 function logView() {
+  const lines = state.log.slice(-100).map((line) => {
+    const severity = logSeverity(line);
+    return `<span class="log-line ${severity}">${escapeHtml(line)}</span>`;
+  }).join("");
   return `
     <section class="log-card">
       <div class="log-head">
-        <strong>Launcher Log</strong>
+        <div><span class="eyebrow">Live output</span><strong>Launcher Log</strong></div>
         <button type="button" data-action="clear-log">Clear</button>
       </div>
-      <pre data-scroll-key="launcher-log">${escapeHtml(state.log.slice(-80).join("\n"))}</pre>
+      <div class="log-lines" role="log" aria-live="polite" data-scroll-key="launcher-log">${lines || '<span class="log-line muted">Waiting for launcher activity…</span>'}</div>
     </section>
   `;
+}
+
+function logSeverity(line) {
+  const value = String(line || "").toLowerCase();
+  if (/\b(error|failed|failure|fatal|exception|crash|broken|denied|invalid)\b/.test(value)) return "error";
+  if (/\b(warn|warning|retry|stale|missing|unavailable|offline)\b/.test(value)) return "warning";
+  return "normal";
 }
 
 function viewTitle() {
@@ -1374,7 +1384,7 @@ async function boot() {
     log(`Launcher info failed: ${error}`);
   }
 
-  state.token = localStorage.getItem(TOKEN_KEY) || await invoke("read_launcher_token").catch(() => "");
+  state.token = await invoke("read_launcher_token").catch(() => "");
   await loadMicrosoftAccounts();
   await Promise.allSettled([refreshVersion(), refreshFiles(), restoreSession()]);
   await invoke("ensure_profile", { profile: state.selectedProfile }).catch(() => {});
@@ -1407,7 +1417,6 @@ async function restoreSession() {
     state.token = "";
     state.account = null;
     state.ads = null;
-    localStorage.removeItem(TOKEN_KEY);
     await invoke("delete_launcher_token").catch(() => {});
     log(`Stored sign-in expired: ${error.message || error}`);
   }
@@ -1548,7 +1557,6 @@ async function pollSignIn(start) {
     }
     if (body.status === "ready" && body.token) {
       state.token = body.token;
-      localStorage.setItem(TOKEN_KEY, state.token);
       await invoke("save_launcher_token", { token: state.token });
       applyAccount(body);
       await refreshSpotifyStatus();
@@ -1768,16 +1776,13 @@ async function startSponsor() {
     state.sponsor = {
       remaining: seconds,
       adUrl: ads.adUrl || start.adUrl || "",
+      challenge: start.challenge || "",
       message: start.message || ads.message || ""
     };
     log(`Sponsor break started: ${seconds}s`);
     render();
-    for (let remaining = seconds; remaining > 0; remaining -= 1) {
-      await sleep(1000);
-      state.sponsor.remaining = remaining - 1;
-      render();
-    }
-    const complete = await api("/api/launcher/ad-reward/complete", { method: "POST", body: "{}" });
+    await runSponsorPlayback(seconds);
+    const complete = await api("/api/launcher/ad-reward/complete", { method: "POST", body: JSON.stringify({ challenge: state.sponsor.challenge }) });
     applyAccount(complete);
     state.sponsor = null;
     log(complete.message || "Sponsored access refreshed.");
@@ -1786,6 +1791,21 @@ async function startSponsor() {
     log(`Sponsor break failed: ${error.message || error}`);
   } finally {
     setBusy(false);
+  }
+}
+
+async function runSponsorPlayback(seconds) {
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  const video = document.querySelector("[data-sponsor-media]");
+  if (!video) throw new Error("Sponsor media is unavailable; reward was not granted.");
+  let watched = 0;
+  while (watched < seconds) {
+    await sleep(1000);
+    if (!video.isConnected) throw new Error("Sponsor media was closed; reward was not granted.");
+    if (!video.paused && !video.ended && video.readyState >= 2 && !document.hidden) watched += 1;
+    state.sponsor.remaining = Math.max(0, seconds - watched);
+    const countdown = document.querySelector("[data-sponsor-countdown]");
+    if (countdown) countdown.textContent = `${state.sponsor.remaining}s`;
   }
 }
 
@@ -1971,7 +1991,6 @@ app.addEventListener("click", async (event) => {
     state.social = null;
     state.clientStatus = null;
     state.manifest = null;
-    localStorage.removeItem(TOKEN_KEY);
     await invoke("delete_launcher_token").catch(() => {});
     log("Signed out.");
     render();
