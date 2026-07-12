@@ -877,7 +877,7 @@ fn client_install_status_blocking(profile: String, build: String, token: String)
     Ok(ClientInstallStatus {
         file_name: manifest.file_name.clone(),
         build: manifest.build.clone(),
-        build_version: manifest.build_version.clone(),
+        build_version: public_client_version(&manifest.build_version),
         path: display_path(installed_path),
         size: installed_path.metadata().map(|metadata| metadata.len()).unwrap_or(0),
         sha256: manifest.sha256.clone(),
@@ -989,7 +989,7 @@ fn install_client_manifest_blocking(profile: String, build: String, token: Strin
     Ok(InstallResult {
         file_name: manifest.file_name.clone(),
         build: manifest.build.clone(),
-        build_version: manifest.build_version.clone(),
+        build_version: public_client_version(&manifest.build_version),
         path: display_path(&client_jar),
         size: client_jar.metadata().map(|m| m.len()).unwrap_or(0),
         sha256: manifest.sha256.clone(),
@@ -3130,9 +3130,18 @@ fn verify_file(path: &Path, expected_size: u64, expected_sha: &str) -> Result<()
 
 fn display_version(manifest: &ManifestResponse) -> String {
     if !manifest.build_version.trim().is_empty() {
-        return manifest.build_version.clone();
+        return public_client_version(&manifest.build_version);
     }
     manifest.file_name.clone()
+}
+
+fn public_client_version(value: &str) -> String {
+    let text = value.trim();
+    let parts: Vec<&str> = text.split('.').collect();
+    if parts.len() >= 3 && parts[0] == "1" && parts[1] == "0" && parts[2].chars().all(|c| c.is_ascii_digit()) {
+        return format!("1.{}", parts[2]);
+    }
+    text.to_string()
 }
 
 fn sha256_hex(data: &[u8]) -> String {

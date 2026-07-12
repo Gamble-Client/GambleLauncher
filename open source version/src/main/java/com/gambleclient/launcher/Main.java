@@ -2587,9 +2587,7 @@ public class Main {
             int day = Integer.parseInt(digits.substring(6, 8));
             int dayOfYear = dayOfYear(year, month, day);
             if (dayOfYear <= 0) return "";
-            String version = "1." + Math.max(0, year - 2026) + "." + dayOfYear;
-            if (digits.length() >= 12) version += "." + digits.substring(8, 12);
-            return version;
+            return "1." + dayOfYear;
         } catch (NumberFormatException e) {
             return "";
         }
@@ -3286,6 +3284,9 @@ public class Main {
         String text = value == null ? "" : value.trim();
         if (text.isEmpty()) return "unknown";
         String[] parts = text.split("\\.");
+        if (parts.length >= 3 && "1".equals(parts[0]) && "0".equals(parts[1]) && parts[2].matches("\\d+")) {
+            return "1." + parts[2];
+        }
         if (parts.length >= 4 && parts[0].matches("\\d+") && parts[1].matches("\\d+") && parts[2].matches("\\d+")) {
             return parts[0] + "." + parts[1] + "." + parts[2];
         }

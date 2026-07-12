@@ -122,7 +122,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.86";
+    private static final String LAUNCHER_VERSION = "0.1.87";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -2622,9 +2622,7 @@ public class Main {
             int day = Integer.parseInt(digits.substring(6, 8));
             int dayOfYear = dayOfYear(year, month, day);
             if (dayOfYear <= 0) return "";
-            String version = "1." + Math.max(0, year - 2026) + "." + dayOfYear;
-            if (digits.length() >= 12) version += "." + digits.substring(8, 12);
-            return version;
+            return "1." + dayOfYear;
         } catch (NumberFormatException e) {
             return "";
         }
@@ -3315,6 +3313,9 @@ public class Main {
         String text = value == null ? "" : value.trim();
         if (text.isEmpty()) return "unknown";
         String[] parts = text.split("\\.");
+        if (parts.length >= 3 && "1".equals(parts[0]) && "0".equals(parts[1]) && parts[2].matches("\\d+")) {
+            return "1." + parts[2];
+        }
         if (parts.length >= 4 && parts[0].matches("\\d+") && parts[1].matches("\\d+") && parts[2].matches("\\d+")) {
             return parts[0] + "." + parts[1] + "." + parts[2];
         }
