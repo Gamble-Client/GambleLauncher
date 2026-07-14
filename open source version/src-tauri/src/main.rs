@@ -3226,11 +3226,24 @@ fn error_text<E: std::fmt::Display>(error: E) -> String {
     error.to_string()
 }
 
+fn is_browser_url(target: &str) -> bool {
+    reqwest::Url::parse(target)
+        .map(|url| matches!(url.scheme(), "http" | "https"))
+        .unwrap_or(false)
+}
+
 fn open_external(target: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", target]);
+        let command = if is_browser_url(target) {
+            let mut command = Command::new("rundll32.exe");
+            command.args(["url.dll,FileProtocolHandler", target]);
+            command
+        } else {
+            let mut command = Command::new("explorer.exe");
+            command.arg(target);
+            command
+        };
         command
     };
 
@@ -3249,4 +3262,20 @@ fn open_external(target: &str) -> Result<(), String> {
     };
 
     command.spawn().map(|_| ()).map_err(|error| format!("Could not open: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_browser_url;
+
+    #[test]
+    fn browser_urls_are_distinguished_from_filesystem_paths() {
+        assert!(is_browser_url(
+            "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=test&prompt=select_account"
+        ));
+        assert!(is_browser_url("http://127.0.0.1:18765/public"));
+        assert!(!is_browser_url(r"C:\\Users\\Player\\AppData\\Roaming\\.gambleclient"));
+        assert!(!is_browser_url("/home/player/.gambleclient"));
+        assert!(!is_browser_url("javascript:alert(1)"));
+    }
 }
