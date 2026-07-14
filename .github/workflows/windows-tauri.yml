@@ -31,6 +31,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Read package version
         id: package
         shell: pwsh
@@ -44,10 +49,36 @@ jobs:
       - name: Build Windows bundles
         run: npm run tauri -- build --bundles nsis
 
+      - name: Upload Windows installer directly to R2
+        shell: pwsh
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
+          if (-not $installer) { throw "Windows installer was not produced." }
+          $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
+          $manifestName = "launcher-windows-${{ steps.package.outputs.version }}.json"
+          $manifest = @{
+            version = "${{ steps.package.outputs.version }}"
+            commit = "${{ github.sha }}"
+            artifacts = @{
+              windows = @{
+                fileName = $installer.Name
+                size = $installer.Length
+                sha256 = $hash
+              }
+            }
+          } | ConvertTo-Json -Depth 5
+          $manifest | Set-Content -Path $manifestName -Encoding utf8NoBOM
+          npx --yes wrangler@4 r2 object put "gamble-client-jars/$($installer.Name)" --file "$($installer.FullName)" --remote
+          npx --yes wrangler@4 r2 object put "gamble-client-jars/release-manifests/$manifestName" --file "$manifestName" --remote
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: gamble-client-launcher-windows-${{ steps.package.outputs.version }}
           path: |
             src-tauri/target/release/bundle/nsis/*.exe
+            launcher-windows-${{ steps.package.outputs.version }}.json
           if-no-files-found: error

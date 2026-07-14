@@ -123,7 +123,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.91";
+    private static final String LAUNCHER_VERSION = "0.1.92";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -2392,15 +2392,13 @@ public class Main {
                     int status = httpStatus(e);
                     boolean rejected = status == 401 || status == 403;
                     if (rejected) {
-                        launcherToken = "";
-                        deleteLauncherToken();
                         signInPromptDismissed = false;
                     }
                     updateAccountUi();
                     updateAdUi();
                     refreshVersionPanel();
                     if (rejected) {
-                        log("Stored launcher sign-in expired.");
+                        log("The server rejected the stored launcher sign-in, but its credential was preserved.");
                         maybePromptForSignIn();
                     } else {
                         log("Could not verify the stored sign-in yet; the saved session was kept: " + rootMessage(e));

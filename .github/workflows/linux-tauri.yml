@@ -31,6 +31,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -58,6 +63,43 @@ jobs:
       - name: Build Linux bundles
         run: npm run tauri -- build --bundles rpm,deb
 
+      - name: Upload Linux packages directly to R2
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          rpm_file="$(find src-tauri/target/release/bundle/rpm -maxdepth 1 -type f -name '*.rpm' -print -quit)"
+          deb_file="$(find src-tauri/target/release/bundle/deb -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$rpm_file"
+          test -n "$deb_file"
+          manifest_name="launcher-linux-${{ steps.package.outputs.version }}.json"
+          node - "$rpm_file" "$deb_file" "$manifest_name" <<'NODE'
+          const fs = require('fs');
+          const crypto = require('crypto');
+          const path = require('path');
+          const [rpm, deb, output] = process.argv.slice(2);
+          const artifact = (fileName) => {
+            const data = fs.readFileSync(fileName);
+            return {
+              fileName: path.basename(fileName),
+              size: data.length,
+              sha256: crypto.createHash('sha256').update(data).digest('hex')
+            };
+          };
+          fs.writeFileSync(output, JSON.stringify({
+            version: '${{ steps.package.outputs.version }}',
+            commit: '${{ github.sha }}',
+            artifacts: { linuxRpm: artifact(rpm), linuxDeb: artifact(deb) }
+          }, null, 2) + '\n');
+          NODE
+          npx --yes wrangler@4 r2 object put "gamble-client-jars/$(basename "$rpm_file")" --file "$rpm_file" --remote &
+          rpm_upload=$!
+          npx --yes wrangler@4 r2 object put "gamble-client-jars/$(basename "$deb_file")" --file "$deb_file" --remote &
+          deb_upload=$!
+          wait "$rpm_upload"
+          wait "$deb_upload"
+          npx --yes wrangler@4 r2 object put "gamble-client-jars/release-manifests/$manifest_name" --file "$manifest_name" --remote
+
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -65,4 +107,5 @@ jobs:
           path: |
             src-tauri/target/release/bundle/rpm/*.rpm
             src-tauri/target/release/bundle/deb/*.deb
+            launcher-linux-${{ steps.package.outputs.version }}.json
           if-no-files-found: error

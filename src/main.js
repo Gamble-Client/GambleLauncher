@@ -13,7 +13,7 @@ const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
-const LAUNCHER_VERSION = "0.1.91";
+const LAUNCHER_VERSION = "0.1.92";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 const PREVIEW = !("__TAURI_INTERNALS__" in window);
@@ -177,9 +177,9 @@ async function mockInvoke(command, args = {}) {
         minVersion: LAUNCHER_VERSION,
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.91-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.91-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.91_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.92-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.92-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.92_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -206,8 +206,8 @@ async function mockInvoke(command, args = {}) {
   if (command === "download_launcher_update") {
     return {
       version: LAUNCHER_VERSION,
-      fileName: "Gamble-Client-Launcher_0.1.91_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.91_amd64.deb",
+      fileName: "Gamble-Client-Launcher_0.1.92_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.92_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -1403,7 +1403,7 @@ async function loadMicrosoftAccounts() {
   state.microsoft = await invoke("read_microsoft_account").catch(() => null);
 }
 
-async function restoreSession() {
+async function restoreSession(attempt = 0) {
   if (!state.token) {
     log("Sign in to continue.");
     return;
@@ -1416,11 +1416,14 @@ async function restoreSession() {
   } catch (error) {
     const message = String(error?.message || error || "");
     if (/HTTP\s+(401|403)\b/.test(message)) {
-      state.token = "";
+      if (attempt < 2) {
+        log(`Account validation was rejected; retrying without removing the saved sign-in (${attempt + 1}/2).`);
+        await new Promise((resolve) => setTimeout(resolve, 1200 * (attempt + 1)));
+        return restoreSession(attempt + 1);
+      }
       state.account = null;
       state.ads = null;
-      await invoke("delete_launcher_token").catch(() => {});
-      log(`Stored sign-in expired: ${message}`);
+      log(`The server rejected the saved sign-in, but the credential was preserved: ${message}`);
     } else {
       log(`Could not verify the saved sign-in yet; it was kept for the next retry: ${message}`);
     }

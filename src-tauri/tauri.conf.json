@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Gamble Client Launcher",
-  "version": "0.1.91",
+  "version": "0.1.92",
   "identifier": "store.gamble-client.launcher",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https://mc-heads.net data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https://mc-heads.net https://cdn.discordapp.com https://media.discordapp.net https://gamble-client.store data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
     }
   },
   "bundle": {

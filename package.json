@@ -1,6 +1,6 @@
 {
   "name": "gamble-client-launcher-tauri",
-  "version": "0.1.91",
+  "version": "0.1.92",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,6 +16,6 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.0",
-    "vite": "^7.2.7"
+    "vite": "^8.1.4"
   }
 }
