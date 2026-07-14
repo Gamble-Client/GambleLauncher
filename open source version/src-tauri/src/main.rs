@@ -25,7 +25,7 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-const VERSION: &str = "0.1.92";
+const VERSION: &str = "0.1.93";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -670,6 +670,28 @@ fn ensure_profile(profile: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn delete_profile(profile: String) -> Result<(), String> {
+    let profile = profile_id(&profile);
+    if profile == "gamble-client" || profile == "vanilla" || profile == "fabric" {
+        return Err("Built-in profiles cannot be deleted.".to_string());
+    }
+    if minecraft_status()?.running {
+        return Err("Close Minecraft before deleting a profile.".to_string());
+    }
+
+    let profiles_root = managed_root().join("profiles");
+    let path = profiles_root.join(&profile);
+    if path.exists() {
+        let metadata = fs::symlink_metadata(&path).map_err(error_text)?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err("The managed profile path is not a normal directory.".to_string());
+        }
+        fs::remove_dir_all(&path).map_err(|error| format!("Could not delete {}: {error}", display_path(&path)))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn list_local_files(profile: String, kind: String) -> Result<Vec<LocalFile>, String> {
     let profile = profile_id(&profile);
     let folder = if kind == "resourcepacks" {
@@ -1094,14 +1116,17 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
 
     emit_launch_progress(&app, "Profile", "Preparing Minecraft profile", 4, 13);
     let profile_dir = minecraft_folder(&profile);
-    let version_id = if profile == "vanilla" {
-        ensure_vanilla_version_json_with_progress(&profile_dir, MINECRAFT_VERSION, Some(&app))?;
-        MINECRAFT_VERSION.to_string()
-    } else {
-        ensure_fabric_version_json_with_progress(&profile_dir, Some(&app))?;
-        ensure_vanilla_version_json_with_progress(&profile_dir, MINECRAFT_VERSION, Some(&app))?;
-        ensure_fabric_api_with_progress(&profile, Some(&app))?;
-        format!("fabric-loader-{FABRIC_LOADER_VERSION}-{MINECRAFT_VERSION}")
+    let version_id = match profile_kind(&profile) {
+        ProfileKind::Vanilla => {
+            ensure_vanilla_version_json_with_progress(&profile_dir, MINECRAFT_VERSION, Some(&app))?;
+            MINECRAFT_VERSION.to_string()
+        }
+        ProfileKind::Fabric | ProfileKind::Client => {
+            ensure_fabric_version_json_with_progress(&profile_dir, Some(&app))?;
+            ensure_vanilla_version_json_with_progress(&profile_dir, MINECRAFT_VERSION, Some(&app))?;
+            ensure_fabric_api_with_progress(&profile, Some(&app))?;
+            format!("fabric-loader-{FABRIC_LOADER_VERSION}-{MINECRAFT_VERSION}")
+        }
     };
     emit_launch_progress(&app, "Profile", "Reading Minecraft launch profile", 7, 13);
     let version = load_version_profile(&profile_dir, &version_id)?;
@@ -2027,13 +2052,13 @@ fn build_minecraft_command(
     if let Some(ticket) = launch_ticket_file {
         command.push(format!("-Dgamble.launchTicketFile={}", display_path(ticket)));
     }
-    if profile_id == "gamble-client" && !build.is_empty() {
+    if profile_installs_client(profile_id) && !build.is_empty() {
         command.push(format!("-Dgamble.launchBuild={build}"));
     }
     if let Some(payload) = payload.filter(|path| path.parent() != Some(&game_dir.join("mods"))) {
         command.push(format!("-Dfabric.addMods={}", display_path(payload)));
     }
-    if profile_id != "vanilla" && !profile.client_version_id.is_empty() {
+    if matches!(profile_kind(profile_id), ProfileKind::Fabric | ProfileKind::Client) && !profile.client_version_id.is_empty() {
         let jar = game_dir.join("versions").join(&profile.client_version_id).join(format!("{}.jar", profile.client_version_id));
         command.push(format!("-Dfabric.gameJarPath={}", display_path(&jar)));
     }
@@ -2573,6 +2598,7 @@ fn main() {
             microsoft_device_start,
             microsoft_device_poll,
             ensure_profile,
+            delete_profile,
             list_local_files,
             toggle_local_file,
             add_resource_packs,
@@ -2617,7 +2643,24 @@ fn profile_id(value: &str) -> String {
 }
 
 fn profile_installs_client(profile: &str) -> bool {
-    profile != "vanilla" && profile != "fabric"
+    matches!(profile_kind(profile), ProfileKind::Client)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProfileKind {
+    Client,
+    Fabric,
+    Vanilla,
+}
+
+fn profile_kind(profile: &str) -> ProfileKind {
+    if profile == "vanilla" || profile.starts_with("vanilla-") {
+        ProfileKind::Vanilla
+    } else if profile == "fabric" || profile.starts_with("fabric-") {
+        ProfileKind::Fabric
+    } else {
+        ProfileKind::Client
+    }
 }
 
 fn managed_root() -> PathBuf {
@@ -2745,7 +2788,7 @@ fn ensure_profile_folders(profile: &str) -> Result<PathBuf, String> {
     fs::create_dir_all(&root).map_err(error_text)?;
     fs::create_dir_all(resource_packs_folder(profile)).map_err(error_text)?;
     fs::create_dir_all(profile_data_folder(profile)).map_err(error_text)?;
-    if profile != "vanilla" {
+    if profile_kind(profile) != ProfileKind::Vanilla {
         fs::create_dir_all(mods_folder(profile)).map_err(error_text)?;
     }
     Ok(root)

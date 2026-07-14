@@ -679,6 +679,27 @@ p {
   display: block;
 }
 
+.profile-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.profile-type-select {
+  width: min(170px, 32vw);
+}
+
+.primary-small.danger {
+  border-color: rgba(248, 113, 113, 0.6);
+  background: #7f1d1d;
+  color: #fff;
+}
+
+.primary-small.danger:hover {
+  background: #991b1b;
+}
+
 .profile-card span {
   color: var(--muted);
   font-size: 0.72rem;

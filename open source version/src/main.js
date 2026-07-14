@@ -13,7 +13,7 @@ const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
-const LAUNCHER_VERSION = "0.1.92";
+const LAUNCHER_VERSION = "0.1.93";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 const PREVIEW = !("__TAURI_INTERNALS__" in window);
@@ -21,9 +21,9 @@ const PREVIEW = !("__TAURI_INTERNALS__" in window);
 const app = document.querySelector("#app");
 
 const profiles = [
-  { id: "gamble-client", label: "With Gamble Client", fabric: true, client: true },
-  { id: "vanilla", label: "Vanilla", fabric: false, client: false },
-  { id: "fabric", label: "Fabric", fabric: true, client: false }
+  { id: "gamble-client", label: "With Gamble Client", loader: "fabric", client: true },
+  { id: "vanilla", label: "Vanilla", loader: "vanilla", client: false },
+  { id: "fabric", label: "Fabric", loader: "fabric", client: false }
 ];
 
 const builds = [
@@ -52,6 +52,7 @@ const state = {
   customProfiles: normalizeStoredProfiles(readJsonStorage(CUSTOM_PROFILES_KEY, [])),
   profileAccountOverrides: normalizeStoredObject(readJsonStorage(PROFILE_ACCOUNTS_KEY, {})),
   newProfileName: "",
+  newProfileType: "fabric",
   memory: defaultMemory(),
   username: defaultUsername(),
   javaArgs: defaultJavaArgs(),
@@ -100,7 +101,13 @@ function readJsonStorage(key, fallback) {
 }
 
 function normalizeStoredProfiles(value) {
-  return Array.isArray(value) ? value : [];
+  if (!Array.isArray(value)) return [];
+  return value.filter((profile) => profile && profile.id && profile.label).map((profile) => ({
+    ...profile,
+    loader: ["fabric", "vanilla"].includes(profile.loader) ? profile.loader : (profile.fabric === false ? "vanilla" : "fabric"),
+    client: Boolean(profile.client),
+    custom: true
+  }));
 }
 
 function normalizeStoredObject(value) {
@@ -167,7 +174,7 @@ async function mockInvoke(command, args = {}) {
   if (command === "delete_microsoft_account_by_uuid") {
     return { selectedUuid: state.microsoft?.uuid || "", accounts: state.microsoftAccounts.filter((account) => account.uuid !== args.uuid) };
   }
-  if (command === "save_launcher_token" || command === "ensure_profile" || command === "open_url") return "";
+  if (command === "save_launcher_token" || command === "ensure_profile" || command === "delete_profile" || command === "open_url") return "";
   if (command === "delete_launcher_token" || command === "delete_microsoft_account") return null;
   if (command === "launcher_api") {
     const path = args.input?.path || "";
@@ -177,9 +184,9 @@ async function mockInvoke(command, args = {}) {
         minVersion: LAUNCHER_VERSION,
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.92-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.92-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.92_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.93-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.93-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.93_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -206,8 +213,8 @@ async function mockInvoke(command, args = {}) {
   if (command === "download_launcher_update") {
     return {
       version: LAUNCHER_VERSION,
-      fileName: "Gamble-Client-Launcher_0.1.92_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.92_amd64.deb",
+      fileName: "Gamble-Client-Launcher_0.1.93_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.93_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -395,6 +402,16 @@ function allProfiles() {
   return [...profiles, ...custom.filter((profile) => profile?.id && profile?.label)];
 }
 
+function profileHasMods(profile) {
+  return profile?.loader !== "vanilla";
+}
+
+function profileTypeLabel(profile) {
+  if (profile?.client) return "Gamble Client";
+  if (profile?.loader === "fabric") return "Fabric";
+  return "Vanilla";
+}
+
 function currentProfile() {
   return allProfiles().find((item) => item.id === state.selectedProfile) || profiles[0];
 }
@@ -495,7 +512,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
       </article>
       <article class="action-tile">
         <span>Mods</span>
-        <strong>${profile.fabric ? `${enabledMods} enabled` : "Vanilla"}</strong>
+        <strong>${profileHasMods(profile) ? `${enabledMods} enabled` : "Vanilla"}</strong>
         <button type="button" data-view="profiles">Manage</button>
       </article>
       <article class="action-tile">
@@ -706,6 +723,11 @@ function profilesView(profile, selectedBuild) {
       </div>
       <div class="top-actions">
         <input class="inline-input" data-field="newProfileName" value="${escapeAttr(state.newProfileName)}" placeholder="New profile name">
+        <select class="inline-input profile-type-select" data-field="newProfileType">
+          <option value="fabric" ${state.newProfileType === "fabric" ? "selected" : ""}>Fabric</option>
+          <option value="client" ${state.newProfileType === "client" ? "selected" : ""}>Gamble Client</option>
+          <option value="vanilla" ${state.newProfileType === "vanilla" ? "selected" : ""}>Vanilla</option>
+        </select>
         <button class="primary-small" type="button" data-action="create-profile" ${state.busy ? "disabled" : ""}>Create</button>
       </div>
     </section>
@@ -714,11 +736,14 @@ function profilesView(profile, selectedBuild) {
         ${profilesList.map((item) => `
           <article class="profile-card ${item.id === profile.id ? "active" : ""}">
             <div>
-              <span>${escapeHtml(item.client ? "Gamble Client" : item.fabric ? "Fabric" : "Vanilla")}</span>
+              <span>${escapeHtml(profileTypeLabel(item))}</span>
               <strong>${escapeHtml(item.label)}</strong>
               <small>${escapeHtml(profileAccountLabel(item))}</small>
             </div>
-            <button class="ghost" type="button" data-action="select-profile" data-profile="${escapeAttr(item.id)}" ${item.id === profile.id ? "disabled" : ""}>Use</button>
+            <div class="profile-card-actions">
+              <button class="ghost" type="button" data-action="select-profile" data-profile="${escapeAttr(item.id)}" ${item.id === profile.id ? "disabled" : ""}>Use</button>
+              ${item.custom ? `<button class="ghost danger" type="button" data-action="request-delete-profile" data-profile="${escapeAttr(item.id)}" ${state.busy || state.minecraftRunning ? "disabled" : ""}>Delete</button>` : ""}
+            </div>
           </article>
         `).join("")}
       </div>
@@ -869,7 +894,10 @@ function updatePopup() {
           <h2>${escapeHtml(state.popup.title || "Launcher notice")}</h2>
           <p>${escapeHtml(state.popup.message || "")}</p>
           <div class="top-actions">
-            <button class="primary-small" type="button" data-action="dismiss-popup">OK</button>
+            ${state.popup.confirmAction ? `
+              <button class="ghost" type="button" data-action="dismiss-popup">Cancel</button>
+              <button class="primary-small danger" type="button" data-action="${escapeAttr(state.popup.confirmAction)}">${escapeHtml(state.popup.confirmLabel || "Confirm")}</button>
+            ` : `<button class="primary-small" type="button" data-action="dismiss-popup">OK</button>`}
           </div>
         </article>
       </section>
@@ -1052,7 +1080,7 @@ function microsoftPanel() {
 
 function fileView(kind, profile, files) {
   const isPacks = kind === "packs";
-  const disabled = kind === "mods" && !profile.fabric;
+  const disabled = kind === "mods" && !profileHasMods(profile);
   return `
     <section class="screen-band">
       <div>
@@ -1074,7 +1102,7 @@ function fileView(kind, profile, files) {
 
 function fileSection(kind, profile, files) {
   const isPacks = kind === "packs";
-  const disabled = kind === "mods" && !profile.fabric;
+  const disabled = kind === "mods" && !profileHasMods(profile);
   return `
     <section class="profile-file-section">
       <div class="section-head">
@@ -1467,8 +1495,15 @@ function createProfile() {
     return;
   }
 
-  const id = uniqueProfileId(label);
-  const profile = { id, label, fabric: true, client: true, custom: true };
+  const type = ["client", "fabric", "vanilla"].includes(state.newProfileType) ? state.newProfileType : "fabric";
+  const id = uniqueProfileId(label, type);
+  const profile = {
+    id,
+    label,
+    loader: type === "client" ? "fabric" : type,
+    client: type === "client",
+    custom: true
+  };
   state.customProfiles = [...(state.customProfiles || []), profile];
   state.selectedProfile = id;
   state.newProfileName = "";
@@ -1476,8 +1511,8 @@ function createProfile() {
   log(`Created profile: ${label}`);
 }
 
-function uniqueProfileId(label) {
-  const base = `custom-${label.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "profile"}`;
+function uniqueProfileId(label, type = "fabric") {
+  const base = `${type}-${label.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "profile"}`;
   const used = new Set(allProfiles().map((profile) => profile.id));
   if (!used.has(base)) return base;
   for (let index = 2; index < 1000; index += 1) {
@@ -2198,6 +2233,40 @@ app.addEventListener("click", async (event) => {
     await refreshAntiScreenshareStatus();
     await refreshManifest().catch(() => {});
     render();
+  } else if (action === "request-delete-profile") {
+    const target = profileById(actionEl.dataset.profile);
+    if (!target?.custom) return;
+    state.popup = {
+      title: `Delete ${target.label}?`,
+      message: "This permanently removes the profile folder, its mods, resource packs, settings, and local client data.",
+      kind: "Profile",
+      confirmAction: "confirm-delete-profile",
+      confirmLabel: "Delete profile",
+      profileId: target.id
+    };
+    render();
+  } else if (action === "confirm-delete-profile") {
+    const profileId = state.popup?.profileId;
+    const target = profileById(profileId);
+    state.popup = null;
+    if (!target?.custom) return;
+    setBusy(true, "Deleting profile");
+    try {
+      await invoke("delete_profile", { profile: profileId });
+      state.customProfiles = (state.customProfiles || []).filter((item) => item.id !== profileId);
+      delete state.profileAccountOverrides[profileId];
+      saveCustomProfiles();
+      saveProfileAccountOverrides();
+      if (state.selectedProfile === profileId) state.selectedProfile = "gamble-client";
+      await refreshFiles();
+      await refreshAntiScreenshareStatus();
+      await refreshManifest().catch(() => {});
+      log(`Deleted profile: ${target.label}`);
+    } catch (error) {
+      showPopup("Profile delete failed", String(error?.message || error), "Profile");
+    } finally {
+      setBusy(false);
+    }
   } else if (action === "create-profile") {
     createProfile();
     await refreshFiles();
