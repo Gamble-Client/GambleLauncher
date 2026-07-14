@@ -46,9 +46,11 @@ npm run tauri:build
 The launcher jar is written to:
 
 ```text
-build/libs/gamble-client-launcher-0.1.82.jar
+build/libs/gamble-client-launcher-0.1.91.jar
 ```
 
 ## Notes for reviewers
 
 The launcher downloads public release metadata from Gamble Client services, verifies downloaded payload hashes, stages the client jar for the current Minecraft launch, and removes temporary launch payloads after Minecraft closes. The protected client jar is intentionally downloaded at runtime instead of being stored in this source folder.
+
+Read `SECURITY.md` before reviewing or publishing a build. It documents the current trust boundaries and the remaining work required before the project should be described as fully audited.

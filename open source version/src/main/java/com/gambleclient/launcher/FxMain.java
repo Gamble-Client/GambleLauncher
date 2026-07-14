@@ -18,7 +18,6 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
-import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
@@ -44,7 +43,6 @@ import javafx.util.Duration;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JProgressBar;
-import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import java.awt.Desktop;
@@ -80,7 +78,8 @@ public class FxMain extends Application {
     private StackPane appRoot;
     private StackPane contentHost;
     private BorderPane launchPane;
-    private TextArea log;
+    private VBox logLines;
+    private ScrollPane logScroll;
     private ProgressBar progress;
     private Label progressText;
     private Label accountNameLabel;
@@ -257,11 +256,13 @@ public class FxMain extends Application {
         copy.setOnAction(e -> runBackend("copyLauncherLog"));
         logHead.getChildren().addAll(logTitle, logPush, copy);
         HBox.setHgrow(logPush, Priority.ALWAYS);
-        log = new TextArea();
-        log.setEditable(false);
-        log.setWrapText(true);
-        VBox.setVgrow(log, Priority.ALWAYS);
-        logBox.getChildren().addAll(logHead, log);
+        logLines = new VBox(3);
+        logLines.getStyleClass().add("log-lines");
+        logScroll = new ScrollPane(logLines);
+        logScroll.setFitToWidth(true);
+        logScroll.getStyleClass().add("log-scroll");
+        VBox.setVgrow(logScroll, Priority.ALWAYS);
+        logBox.getChildren().addAll(logHead, logScroll);
         BorderPane.setMargin(logBox, new Insets(18, 0, 0, 0));
         pane.setCenter(logBox);
 
@@ -733,8 +734,7 @@ public class FxMain extends Application {
         String text = swingText("log");
         if (!text.equals(lastLog)) {
             lastLog = text;
-            log.setText(text);
-            log.positionCaret(text.length());
+            renderLogText(text);
         }
 
         JButton button = (JButton) field("launchButton");
@@ -1120,22 +1120,23 @@ public class FxMain extends Application {
         overlay.getChildren().add(modal);
         appRoot.getChildren().add(overlay);
 
-        Timeline timer = new Timeline();
+        final int[] watchedSeconds = new int[] {0};
+        Timeline timer = new Timeline(new KeyFrame(Duration.seconds(1), event -> {
+            if (sponsorMediaPlayer == null || sponsorMediaPlayer.getStatus() != MediaPlayer.Status.PLAYING) return;
+            int tick = Math.min(seconds, ++watchedSeconds[0]);
+            int remaining = Math.max(0, seconds - tick);
+            countdown.setText(remaining == 0 ? "Finishing..." : remaining + "s left");
+            bar.setProgress(Math.min(1.0, tick / (double) Math.max(1, seconds)));
+            if (tick >= seconds) {
+                timerRef[0].stop();
+                stopSponsorMedia();
+                appRoot.getChildren().remove(overlay);
+                String result = backendString("completeSponsorBreakForOverlay");
+                if (!result.isBlank()) appendLog(result);
+            }
+        }));
         timerRef[0] = timer;
-        for (int elapsed = 0; elapsed <= seconds; elapsed++) {
-            final int tick = elapsed;
-            timer.getKeyFrames().add(new KeyFrame(Duration.seconds(tick), event -> {
-                int remaining = Math.max(0, seconds - tick);
-                countdown.setText(remaining == 0 ? "Finishing..." : remaining + "s left");
-                bar.setProgress(Math.min(1.0, tick / (double) Math.max(1, seconds)));
-            }));
-        }
-        timer.setOnFinished(event -> {
-            stopSponsorMedia();
-            appRoot.getChildren().remove(overlay);
-            String result = backendString("completeSponsorBreakForOverlay");
-            if (!result.isBlank()) appendLog(result);
-        });
+        timer.setCycleCount(Timeline.INDEFINITE);
         timer.play();
     }
 
@@ -1178,8 +1179,17 @@ public class FxMain extends Application {
         connection.setConnectTimeout(8000);
         connection.setReadTimeout(20000);
         connection.setRequestProperty("User-Agent", "GambleClientLauncher/" + backendString("launcherVersion"));
-        try (InputStream input = connection.getInputStream()) {
-            Files.copy(input, temp, StandardCopyOption.REPLACE_EXISTING);
+        long declaredSize = connection.getContentLengthLong();
+        long maxBytes = 64L * 1024L * 1024L;
+        if (declaredSize > maxBytes) throw new IOException("Sponsor media exceeds the 64 MiB limit.");
+        try (InputStream input = connection.getInputStream(); java.io.OutputStream output = Files.newOutputStream(temp)) {
+            byte[] buffer = new byte[16384];
+            long total = 0;
+            for (int read; (read = input.read(buffer)) >= 0; ) {
+                total += read;
+                if (total > maxBytes) throw new IOException("Sponsor media exceeds the 64 MiB limit.");
+                output.write(buffer, 0, read);
+            }
         }
         if (Files.size(temp) <= 0) throw new IOException("Sponsor media download was empty.");
         return temp.toUri().toString();
@@ -1294,11 +1304,19 @@ public class FxMain extends Application {
 
     private String resolveAdUrl(String value) {
         String text = value == null ? "" : value.trim();
-        if (text.startsWith("http://") || text.startsWith("https://")) return text;
         String base = backendString("siteUrl");
         if (base.isBlank()) base = "https://gamble-client.store";
-        if (!text.startsWith("/")) text = "/" + text;
-        return base.replaceAll("/+$", "") + text;
+        try {
+            URI uri = URI.create(text.startsWith("http://") || text.startsWith("https://") ? text : base.replaceAll("/+$", "") + (text.startsWith("/") ? text : "/" + text));
+            String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
+            if (!"https".equalsIgnoreCase(uri.getScheme()) || (!host.equals("gamble-client.store") && !host.endsWith(".gamble-client.store")) || uri.getUserInfo() != null || uri.getPort() != -1) {
+                throw new IllegalArgumentException("Sponsor media host is not allowed.");
+            }
+            return uri.toString();
+        } catch (RuntimeException error) {
+            appendLog("Rejected sponsor media URL: " + error.getMessage());
+            return "";
+        }
     }
 
     private String compactDuration(long seconds) {
@@ -2125,7 +2143,7 @@ public class FxMain extends Application {
     }
 
     private String swingText(String field) {
-        return ((JTextArea) field(field)).getText();
+        return ((javax.swing.text.JTextComponent) field(field)).getText();
     }
 
     private String labelText(String field) {
@@ -2329,11 +2347,36 @@ public class FxMain extends Application {
     }
 
     private void appendLog(String message) {
-        if (log == null) {
+        if (logLines == null) {
             System.err.println(message);
             return;
         }
-        Platform.runLater(() -> log.appendText((log.getText().isEmpty() ? "" : "\n") + message));
+        Platform.runLater(() -> {
+            lastLog = lastLog.isEmpty() ? message : lastLog + "\n" + message;
+            renderLogText(lastLog);
+        });
+    }
+
+    private void renderLogText(String text) {
+        logLines.getChildren().clear();
+        String[] lines = (text == null ? "" : text).split("\\R", -1);
+        int start = Math.max(0, lines.length - 120);
+        for (int i = start; i < lines.length; i++) {
+            if (lines[i].isEmpty()) continue;
+            Label line = new Label(lines[i]);
+            line.setWrapText(true);
+            line.setMaxWidth(Double.MAX_VALUE);
+            line.getStyleClass().addAll("log-line", logSeverity(lines[i]));
+            logLines.getChildren().add(line);
+        }
+        Platform.runLater(() -> logScroll.setVvalue(1.0));
+    }
+
+    private String logSeverity(String line) {
+        String value = line == null ? "" : line.toLowerCase(Locale.ROOT);
+        if (value.matches(".*\\b(error|failed|failure|fatal|exception|crash|broken|denied|invalid)\\b.*")) return "error";
+        if (value.matches(".*\\b(warn|warning|retry|stale|missing|unavailable|offline)\\b.*")) return "warning";
+        return "normal";
     }
 
     private String rootMessage(Throwable throwable) {

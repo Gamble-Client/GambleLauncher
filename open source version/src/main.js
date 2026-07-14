@@ -6,13 +6,14 @@ import logoUrl from "./assets/cg-mod-icon.png";
 
 const SITE = "https://gamble-client.store";
 const DASH = "https://dash.gamble-client.store";
-const TOKEN_KEY = "gamble.launcher.token";
 const LAUNCHER_DISMISS_KEY = "gamble.launcher.dismissedLauncherVersion";
 const CLIENT_DISMISS_KEY = "gamble.launcher.dismissedClientVersion";
 const CUSTOM_PROFILES_KEY = "gamble.launcher.customProfiles";
 const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
+const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
+const LAUNCHER_VERSION = "0.1.91";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 const PREVIEW = !("__TAURI_INTERNALS__" in window);
@@ -32,6 +33,8 @@ const builds = [
   { id: "ad_tier", label: "Ad Tier" }
 ];
 
+const initialStoredBuild = storedBuildId();
+
 const state = {
   view: "play",
   info: null,
@@ -44,7 +47,8 @@ const state = {
   social: null,
   friendUsername: "",
   selectedProfile: "gamble-client",
-  selectedBuild: "release",
+  selectedBuild: initialStoredBuild || "release",
+  selectedBuildExplicit: Boolean(initialStoredBuild),
   customProfiles: normalizeStoredProfiles(readJsonStorage(CUSTOM_PROFILES_KEY, [])),
   profileAccountOverrides: normalizeStoredObject(readJsonStorage(PROFILE_ACCOUNTS_KEY, {})),
   newProfileName: "",
@@ -141,7 +145,7 @@ async function mockInvoke(command, args = {}) {
   await sleep(35);
   if (command === "launcher_info") {
     return {
-      version: "0.1.83",
+      version: LAUNCHER_VERSION,
       managed_root: "/home/theac/.local/share/gamble-client/minecraft",
       data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
       session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
@@ -169,13 +173,13 @@ async function mockInvoke(command, args = {}) {
     const path = args.input?.path || "";
     if (path === "/api/launcher/version") {
       return {
-        version: "0.1.83",
-        minVersion: "0.1.83",
+        version: LAUNCHER_VERSION,
+        minVersion: LAUNCHER_VERSION,
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.83-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.83-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.83_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.91-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.91-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.91_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -201,9 +205,9 @@ async function mockInvoke(command, args = {}) {
   }
   if (command === "download_launcher_update") {
     return {
-      version: "0.1.83",
-      fileName: "Gamble-Client-Launcher_0.1.83_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.83_amd64.deb",
+      version: LAUNCHER_VERSION,
+      fileName: "Gamble-Client-Launcher_0.1.91_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.91_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -301,7 +305,7 @@ function scrollKey(node, index) {
   if (node.classList.contains("content")) return "content";
   if (node.classList.contains("file-list")) return `file-list:${state.view}`;
   if (node.classList.contains("diagnostics-list")) return "diagnostics-list";
-  if (node.tagName === "PRE") return "log";
+  if (node.classList.contains("log-lines") || node.tagName === "PRE") return "log";
   return `scroll:${index}`;
 }
 
@@ -310,7 +314,7 @@ function restoreScrollState(snapshot) {
   const restore = () => {
     for (const entry of snapshot.entries || []) {
       const node = app.querySelector(`[data-scroll-key="${cssEscape(entry.key)}"]`)
-        || Array.from(app.querySelectorAll(".content, .file-list, .diagnostics-list, pre")).find((item, index) => scrollKey(item, index) === entry.key);
+        || Array.from(app.querySelectorAll(".content, .file-list, .diagnostics-list, .log-lines, pre")).find((item, index) => scrollKey(item, index) === entry.key);
       if (!node) continue;
       node.scrollLeft = entry.left;
       node.scrollTop = Math.min(entry.top, Math.max(0, node.scrollHeight - node.clientHeight));
@@ -342,15 +346,15 @@ function render() {
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || "0.1.83")}</span>
+            <span>Launcher ${escapeHtml(state.info?.version || LAUNCHER_VERSION)}</span>
           </div>
         </div>
         <nav>
-          ${navButton("play", "Play")}
-          ${navButton("accounts", "Accounts")}
-          ${navButton("social", "Social")}
-          ${navButton("updates", "Updates")}
-          ${navButton("profiles", "Profiles")}
+          ${navButton("play", "Play", "01")}
+          ${navButton("accounts", "Accounts", "02")}
+          ${navButton("social", "Social", "03")}
+          ${navButton("updates", "Updates", "04")}
+          ${navButton("profiles", "Profiles", "05")}
           <button class="nav-item nav-action" type="button" data-open="${DASH}/dashboard.html">Dashboard</button>
           <button class="nav-item nav-action" type="button" data-open="https://discord.gg/YPescfEt">Discord</button>
         </nav>
@@ -382,8 +386,8 @@ function render() {
   if (preserveScroll) restoreScrollState(scrollState);
 }
 
-function navButton(id, label) {
-  return `<button class="nav-item ${state.view === id ? "active" : ""}" type="button" data-view="${id}">${escapeHtml(label)}</button>`;
+function navButton(id, label, index) {
+  return `<button class="nav-item ${state.view === id ? "active" : ""}" type="button" data-view="${id}"><span>${escapeHtml(index)}</span><strong>${escapeHtml(label)}</strong></button>`;
 }
 
 function allProfiles() {
@@ -450,7 +454,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           <h2>${escapeHtml(selectedBuild.label)}</h2>
           <div class="version-strip">
             <span>Version</span>
-            <strong>Launcher ${escapeHtml(state.info?.version || "0.1.83")} · Client ${escapeHtml(clientStatus)}</strong>
+            <strong>Launcher ${escapeHtml(state.info?.version || LAUNCHER_VERSION)} · Client ${escapeHtml(clientStatus)}</strong>
           </div>
           <div class="launch-facts">
             <div>
@@ -1156,24 +1160,35 @@ function sponsorOverlay() {
     <section class="sponsor-panel">
       <div>
         <span class="eyebrow">Sponsor break</span>
-        <h2>${state.sponsor.remaining}s</h2>
+        <h2 data-sponsor-countdown>${state.sponsor.remaining}s</h2>
         <p>${escapeHtml(state.sponsor.message || "Keep the launcher open until the timer finishes.")}</p>
       </div>
-      ${url ? `<video src="${escapeAttr(url)}" controls autoplay muted></video>` : `<div class="sponsor-fallback">Sponsor media is playing as a timed break on this device.</div>`}
+      ${url ? `<video data-sponsor-media src="${escapeAttr(url)}" controls autoplay muted playsinline></video>` : `<div class="sponsor-fallback">Sponsor media is unavailable. No reward will be granted.</div>`}
     </section>
   `;
 }
 
 function logView() {
+  const lines = state.log.slice(-100).map((line) => {
+    const severity = logSeverity(line);
+    return `<span class="log-line ${severity}">${escapeHtml(line)}</span>`;
+  }).join("");
   return `
     <section class="log-card">
       <div class="log-head">
-        <strong>Launcher Log</strong>
+        <div><span class="eyebrow">Live output</span><strong>Launcher Log</strong></div>
         <button type="button" data-action="clear-log">Clear</button>
       </div>
-      <pre data-scroll-key="launcher-log">${escapeHtml(state.log.slice(-80).join("\n"))}</pre>
+      <div class="log-lines" role="log" aria-live="polite" data-scroll-key="launcher-log">${lines || '<span class="log-line muted">Waiting for launcher activity…</span>'}</div>
     </section>
   `;
+}
+
+function logSeverity(line) {
+  const value = String(line || "").toLowerCase();
+  if (/\b(error|failed|failure|fatal|exception|crash|broken|denied|invalid)\b/.test(value)) return "error";
+  if (/\b(warn|warning|retry|stale|missing|unavailable|offline)\b/.test(value)) return "warning";
+  return "normal";
 }
 
 function viewTitle() {
@@ -1219,14 +1234,17 @@ function adTierOnly() {
 }
 
 function buildForAccount() {
+  if (!state.account) return builds.find((item) => item.id === state.selectedBuild) || builds[0];
   const preferred = preferredBuildForAccount();
-  if (!canUseBuild(state.selectedBuild) || buildRank(state.selectedBuild) < buildRank(preferred)) state.selectedBuild = preferred;
+  if (!state.selectedBuild || !canUseBuild(state.selectedBuild) || (!state.selectedBuildExplicit && state.selectedBuild !== preferred)) {
+    state.selectedBuild = preferred;
+  }
   return builds.find((item) => item.id === state.selectedBuild) || builds[0];
 }
 
 function preferredBuildForAccount(account = state.account) {
   if (!account) return "release";
-  if (account.ownerAccess || hasPlanOrStatus(account, ["owner"])) return "release";
+  if (account.ownerAccess || hasPlanOrStatus(account, ["owner"])) return "media";
   if (account.mediaAccess || account.testerAccess || hasPlanOrStatus(account, ["media", "tester"])) return "media";
   if (account.betaAccess || hasPlanOrStatus(account, ["beta_plus", "lifetime_beta"])) return "beta_plus";
   if (hasPlanOrStatus(account, ["weekly", "monthly", "yearly", "lifetime", "owned"])) return "release";
@@ -1245,6 +1263,11 @@ function canUseBuild(buildId, account = state.account) {
 
 function buildRank(buildId) {
   return { ad_tier: 0, release: 1, beta_plus: 2, media: 3 }[buildId] ?? -1;
+}
+
+function storedBuildId() {
+  const stored = readStorage(SELECTED_BUILD_KEY);
+  return builds.some((item) => item.id === stored) ? stored : "";
 }
 
 function hasPlanOrStatus(account, values) {
@@ -1335,7 +1358,7 @@ function knownLaunchMessage(error) {
   if (lower.includes("resources.download.minecraft.net") || lower.includes("minecraft asset") || lower.includes("mojang")) {
     return "Minecraft asset download failed from Mojang's CDN. Check VPN/proxy/DNS on this computer, then try Launch again.";
   }
-  if (lower.includes("java")) return `Java launch check failed.\n\n${text}\n\nSettings > Diagnostics has been opened with the detected runtime and launch-log location.`;
+  if (lower.includes("java")) return `Managed Java setup failed.\n\n${text}\n\nThe native launcher installs Java 21 itself; you should not need a separate Java download. Settings > Diagnostics now contains the runtime check and launch-log location.`;
   return text;
 }
 
@@ -1361,7 +1384,7 @@ async function boot() {
     log(`Launcher info failed: ${error}`);
   }
 
-  state.token = localStorage.getItem(TOKEN_KEY) || await invoke("read_launcher_token").catch(() => "");
+  state.token = await invoke("read_launcher_token").catch(() => "");
   await loadMicrosoftAccounts();
   await Promise.allSettled([refreshVersion(), refreshFiles(), restoreSession()]);
   await invoke("ensure_profile", { profile: state.selectedProfile }).catch(() => {});
@@ -1391,12 +1414,16 @@ async function restoreSession() {
     await invoke("save_launcher_token", { token: state.token });
     log(`Restored account: ${accountTitle()}`);
   } catch (error) {
-    state.token = "";
-    state.account = null;
-    state.ads = null;
-    localStorage.removeItem(TOKEN_KEY);
-    await invoke("delete_launcher_token").catch(() => {});
-    log(`Stored sign-in expired: ${error.message || error}`);
+    const message = String(error?.message || error || "");
+    if (/HTTP\s+(401|403)\b/.test(message)) {
+      state.token = "";
+      state.account = null;
+      state.ads = null;
+      await invoke("delete_launcher_token").catch(() => {});
+      log(`Stored sign-in expired: ${message}`);
+    } else {
+      log(`Could not verify the saved sign-in yet; it was kept for the next retry: ${message}`);
+    }
   }
 }
 
@@ -1422,7 +1449,7 @@ function applyAccount(body) {
   state.account = body.user || null;
   state.ads = body.ads || body.adReward || null;
   const preferred = preferredBuildForAccount(state.account);
-  if (!canUseBuild(state.selectedBuild, state.account) || buildRank(state.selectedBuild) < buildRank(preferred)) {
+  if (!state.selectedBuild || !canUseBuild(state.selectedBuild, state.account) || (!state.selectedBuildExplicit && state.selectedBuild !== preferred)) {
     state.selectedBuild = preferred;
   }
   state.manifest = null;
@@ -1535,7 +1562,6 @@ async function pollSignIn(start) {
     }
     if (body.status === "ready" && body.token) {
       state.token = body.token;
-      localStorage.setItem(TOKEN_KEY, state.token);
       await invoke("save_launcher_token", { token: state.token });
       applyAccount(body);
       await refreshSpotifyStatus();
@@ -1755,16 +1781,13 @@ async function startSponsor() {
     state.sponsor = {
       remaining: seconds,
       adUrl: ads.adUrl || start.adUrl || "",
+      challenge: start.challenge || "",
       message: start.message || ads.message || ""
     };
     log(`Sponsor break started: ${seconds}s`);
     render();
-    for (let remaining = seconds; remaining > 0; remaining -= 1) {
-      await sleep(1000);
-      state.sponsor.remaining = remaining - 1;
-      render();
-    }
-    const complete = await api("/api/launcher/ad-reward/complete", { method: "POST", body: "{}" });
+    await runSponsorPlayback(seconds);
+    const complete = await api("/api/launcher/ad-reward/complete", { method: "POST", body: JSON.stringify({ challenge: state.sponsor.challenge }) });
     applyAccount(complete);
     state.sponsor = null;
     log(complete.message || "Sponsored access refreshed.");
@@ -1773,6 +1796,21 @@ async function startSponsor() {
     log(`Sponsor break failed: ${error.message || error}`);
   } finally {
     setBusy(false);
+  }
+}
+
+async function runSponsorPlayback(seconds) {
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  const video = document.querySelector("[data-sponsor-media]");
+  if (!video) throw new Error("Sponsor media is unavailable; reward was not granted.");
+  let watched = 0;
+  while (watched < seconds) {
+    await sleep(1000);
+    if (!video.isConnected) throw new Error("Sponsor media was closed; reward was not granted.");
+    if (!video.paused && !video.ended && video.readyState >= 2 && !document.hidden) watched += 1;
+    state.sponsor.remaining = Math.max(0, seconds - watched);
+    const countdown = document.querySelector("[data-sponsor-countdown]");
+    if (countdown) countdown.textContent = `${state.sponsor.remaining}s`;
   }
 }
 
@@ -1958,7 +1996,6 @@ app.addEventListener("click", async (event) => {
     state.social = null;
     state.clientStatus = null;
     state.manifest = null;
-    localStorage.removeItem(TOKEN_KEY);
     await invoke("delete_launcher_token").catch(() => {});
     log("Signed out.");
     render();
@@ -2261,6 +2298,8 @@ app.addEventListener("change", async (event) => {
     await refreshManifest().catch(() => {});
   }
   if (field === "selectedBuild") {
+    state.selectedBuildExplicit = true;
+    localStorage.setItem(SELECTED_BUILD_KEY, state.selectedBuild);
     state.clientStatus = null;
     state.manifest = null;
     await refreshManifest().catch(() => {});

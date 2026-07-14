@@ -25,12 +25,17 @@ import javax.swing.JScrollPane;
 import javax.swing.JScrollBar;
 import javax.swing.ListSelectionModel;
 import javax.swing.JTextArea;
+import javax.swing.JTextPane;
 import javax.swing.JTextField;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.UIManager;
 import javax.swing.UnsupportedLookAndFeelException;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.Style;
+import javax.swing.text.StyleConstants;
+import javax.swing.text.StyledDocument;
 import javax.swing.plaf.basic.BasicButtonUI;
 import javax.swing.plaf.basic.BasicComboBoxUI;
 import javax.swing.plaf.basic.BasicProgressBarUI;
@@ -87,6 +92,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -117,7 +123,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.82";
+    private static final String LAUNCHER_VERSION = "0.1.91";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -197,7 +203,7 @@ public class Main {
     private final JComboBox<Integer> memoryGb = new JComboBox<>(new Integer[] {2, 3, 4, 5, 6, 7, 8, 10, 12, 16});
     private final JTextField javaArgs = new JTextField("");
     private final JProgressBar progress = new JProgressBar(0, 100);
-    private final JTextArea log = new JTextArea(7, 72);
+    private final JTextPane log = new JTextPane();
     private final JTextArea runtimeInfo = new JTextArea();
     private final JLabel accountName = new JLabel("Not signed in");
     private final JLabel accountStatus = new JLabel("Launcher account required");
@@ -250,6 +256,7 @@ public class Main {
     private final Deque<String> recentLaunchLines = new ArrayDeque<>();
     private LauncherUser launcherUser;
     private LauncherAds launcherAds;
+    private String sponsorChallenge = "";
     private SwingWorker<LauncherSession, Void> launcherSignInWorker;
     private SwingWorker<MicrosoftAccount, Void> microsoftSignInWorker;
     private volatile Runnable microsoftSignInCancel;
@@ -257,6 +264,8 @@ public class Main {
     private boolean startupPromptShown;
     private boolean signInPromptDismissed;
     private boolean startupUpdateCheckStarted;
+    private boolean explicitBuildSelection;
+    private boolean applyingAutomaticBuildSelection;
 
     public static void main(String[] args) throws UnsupportedLookAndFeelException, ClassNotFoundException, InstantiationException, IllegalAccessException {
         UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
@@ -380,8 +389,7 @@ public class Main {
         logCard.add(logHead, BorderLayout.NORTH);
 
         log.setEditable(false);
-        log.setLineWrap(true);
-        log.setWrapStyleWord(true);
+        log.setPreferredSize(new Dimension(720, 150));
         log.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         log.setForeground(new Color(214, 219, 229));
         log.setBackground(FIELD);
@@ -736,6 +744,7 @@ public class Main {
         styleCheckBox(autoCheckUpdates);
         memoryGb.setSelectedItem(4);
         selectStoredProfile();
+        selectStoredBuild();
 
         progress.setForeground(ACCENT);
         progress.setBackground(FIELD);
@@ -760,7 +769,13 @@ public class Main {
         installButton.addActionListener(e -> installSelectedBuild(false));
         autoCheckUpdates.addActionListener(e -> saveAutoCheckUpdates(autoCheckUpdates.isSelected()));
         profileBox.addActionListener(e -> updateProfileUi(true));
-        buildBox.addActionListener(e -> refreshVersionPanel());
+        buildBox.addActionListener(e -> {
+            if (!applyingAutomaticBuildSelection) {
+                explicitBuildSelection = true;
+                saveSelectedBuild((Build) buildBox.getSelectedItem());
+            }
+            refreshVersionPanel();
+        });
         editProfileButton.addActionListener(e -> editSelectedProfile());
         accountManagerButton.addActionListener(e -> showAccountManagerMenu());
         launchButton.addActionListener(e -> launch());
@@ -1137,6 +1152,26 @@ public class Main {
         }
     }
 
+    private void selectStoredBuild() {
+        String id = Json.string(readLauncherSettings().get("selectedBuild"));
+        Build build = id.isEmpty() ? null : findBuild(id);
+        if (build == null) return;
+        applyingAutomaticBuildSelection = true;
+        try {
+            buildBox.setSelectedItem(build);
+            explicitBuildSelection = true;
+        } finally {
+            applyingAutomaticBuildSelection = false;
+        }
+    }
+
+    private void saveSelectedBuild(Build build) {
+        if (build == null) return;
+        Map<String, Object> settings = readLauncherSettings();
+        settings.put("selectedBuild", build.id);
+        saveLauncherSettings(settings, "Selected build: " + build.label + ".");
+    }
+
     private boolean readAutoCheckUpdates() {
         return jsonBoolean(readLauncherSettings().get("autoCheckUpdates"));
     }
@@ -1193,7 +1228,8 @@ public class Main {
             String json = "{"
                 + "\"autoCheckUpdates\":" + jsonBoolean(settings.get("autoCheckUpdates")) + ","
                 + "\"slotSoundsEnabled\":" + (settings.containsKey("slotSoundsEnabled") ? jsonBoolean(settings.get("slotSoundsEnabled")) : true) + ","
-                + "\"slotWinSoundsEnabled\":" + (settings.containsKey("slotWinSoundsEnabled") ? jsonBoolean(settings.get("slotWinSoundsEnabled")) : true)
+                + "\"slotWinSoundsEnabled\":" + (settings.containsKey("slotWinSoundsEnabled") ? jsonBoolean(settings.get("slotWinSoundsEnabled")) : true) + ","
+                + "\"selectedBuild\":\"" + jsonEscape(Json.string(settings.get("selectedBuild"))) + "\""
                 + "}" + System.lineSeparator();
             Files.write(getLauncherSettingsFile().toPath(), json.getBytes(StandardCharsets.UTF_8));
             log(successMessage);
@@ -2351,16 +2387,24 @@ public class Main {
                     log("Restored launcher account: " + accountLabel(launcherUser) + ".");
                     maybeAutoCheckForUpdates();
                 } catch (Exception e) {
-                    launcherToken = "";
                     launcherUser = null;
                     launcherAds = null;
-                    deleteLauncherToken();
-                    signInPromptDismissed = false;
+                    int status = httpStatus(e);
+                    boolean rejected = status == 401 || status == 403;
+                    if (rejected) {
+                        launcherToken = "";
+                        deleteLauncherToken();
+                        signInPromptDismissed = false;
+                    }
                     updateAccountUi();
                     updateAdUi();
                     refreshVersionPanel();
-                    log("Stored launcher sign-in expired.");
-                    maybePromptForSignIn();
+                    if (rejected) {
+                        log("Stored launcher sign-in expired.");
+                        maybePromptForSignIn();
+                    } else {
+                        log("Could not verify the stored sign-in yet; the saved session was kept: " + rootMessage(e));
+                    }
                     maybeAutoCheckForUpdates();
                 }
             }
@@ -2894,23 +2938,10 @@ public class Main {
                 ApiResponse start = apiRequest("POST", "/api/launcher/ad-reward/start", "{}", launcherToken, 200);
                 LauncherAds ads = parseLauncherAds(start.body.get("ads"));
                 int seconds = ads.adSeconds > 0 ? ads.adSeconds : 30;
-                log("Sponsor break started: " + seconds + " seconds.");
-                for (int remaining = seconds; remaining > 0; remaining--) {
-                    final int value = Math.max(0, remaining);
-                    SwingUtilities.invokeLater(new Runnable() {
-                        @Override
-                        public void run() {
-                            adStatus.setText("Sponsor break running. " + value + "s left.");
-                            adMeta.setText("Keep the launcher open.");
-                            Main.this.setProgress(Math.max(1, 100 - (value * 100 / Math.max(1, seconds))), "Ad " + value + "s");
-                        }
-                    });
-                    Thread.sleep(1000L);
+                if (ads.adUrl == null || ads.adUrl.isBlank()) {
+                    throw new IOException("Sponsor media is unavailable, so no reward can be granted.");
                 }
-
-                ApiResponse complete = apiRequest("POST", "/api/launcher/ad-reward/complete", "{}", launcherToken, 200);
-                licenseKey = Json.string(complete.body.get("licenseKey"));
-                return parseLauncherAccount(complete.body);
+                throw new IOException("Sponsor rewards require the JavaFX or native launcher so playback can be verified.");
             }
 
             @Override
@@ -2944,13 +2975,15 @@ public class Main {
         out.put("adUrl", ads.adUrl);
         out.put("adSeconds", ads.adSeconds > 0 ? ads.adSeconds : AD_REWARD_SECONDS_FALLBACK);
         out.put("message", Json.string(start.body.get("message")));
+        sponsorChallenge = Json.string(start.body.get("challenge"));
         log("Sponsor break started: " + out.get("adSeconds") + " seconds.");
         return out;
     }
 
     private String completeSponsorBreakForOverlay() throws IOException {
         ensureSignedIn();
-        ApiResponse complete = apiRequest("POST", "/api/launcher/ad-reward/complete", "{}", launcherToken, 200);
+        ApiResponse complete = apiRequest("POST", "/api/launcher/ad-reward/complete", "{\"challenge\":\"" + jsonEscape(sponsorChallenge) + "\"}", launcherToken, 200);
+        sponsorChallenge = "";
         String licenseKey = Json.string(complete.body.get("licenseKey"));
         LauncherAccount account = parseLauncherAccount(complete.body);
         launcherUser = account.user;
@@ -3064,14 +3097,20 @@ public class Main {
         if (fileName.isEmpty() || downloadUrl.isEmpty()) {
             throw new IOException("Backend manifest did not include a jar download.");
         }
+        if (!isSafeFileName(fileName)) throw new IOException("Backend manifest filename is unsafe.");
+        String sha256 = Json.string(response.body.get("sha256"));
+        long size = jsonLong(response.body.get("size"));
+        if (size <= 0 || !sha256.matches("(?i)[0-9a-f]{64}")) {
+            throw new IOException("Backend manifest is missing required size or SHA-256 integrity metadata.");
+        }
 
         return new LauncherManifest(
             Json.string(response.body.get("build")),
             fileName,
             downloadUrl,
             Json.string(response.body.get("licenseKey")),
-            Json.string(response.body.get("sha256")),
-            jsonLong(response.body.get("size")),
+            sha256,
+            size,
             Json.string(response.body.get("buildVersion"))
         );
     }
@@ -3252,14 +3291,13 @@ public class Main {
         if (file.length() == 0) {
             throw new IOException("Managed client jar is empty.");
         }
-        if (manifest.size > 0 && file.length() != manifest.size) {
+        if (manifest.size <= 0 || file.length() != manifest.size) {
             throw new IOException("Expected " + manifest.size + " bytes but found " + file.length() + " bytes.");
         }
 
         String expectedHash = normalizeSha256(manifest.sha256);
         if (expectedHash.isEmpty()) {
-            log("Server manifest did not include a SHA-256 hash for " + manifest.fileName + ".");
-            return;
+            throw new IOException("Server manifest did not include a valid SHA-256 hash for " + manifest.fileName + ".");
         }
 
         String actualHash = sha256Hex(file);
@@ -3832,7 +3870,7 @@ public class Main {
         log("  Main class: " + mainClass);
         log("  Classpath entries: " + (classpath.isEmpty() ? 0 : classpath.split(Pattern.quote(File.pathSeparator), -1).length));
         log("  Classpath: " + classpath);
-        log("  Minecraft arguments: " + String.join(" ", gameArgs));
+        log("  Minecraft arguments: " + String.join(" ", redactLaunchSecrets(gameArgs)));
         log("  Full command: " + String.join(" ", redactLaunchSecrets(command)));
     }
 
@@ -4288,7 +4326,12 @@ public class Main {
             }
 
             if (ch == '\\' && !singleQuoted) {
-                escaping = true;
+                char next = i + 1 < value.length() ? value.charAt(i + 1) : '\0';
+                if (Character.isWhitespace(next) || next == '\\' || next == '"' || next == '\'') {
+                    escaping = true;
+                    continue;
+                }
+                current.append(ch);
                 continue;
             }
 
@@ -4393,11 +4436,12 @@ public class Main {
             Map<String, String> query = parseQuery(exchange.getRequestURI().getRawQuery());
             String responseTitle = "Microsoft sign-in complete";
             String responseText = "You can close this tab and return to the Gamble Client launcher.";
+            boolean complete = true;
 
             if (!state.equals(query.get("state"))) {
-                error.set("Microsoft sign-in state did not match. Try again.");
-                responseTitle = "Microsoft sign-in failed";
-                responseText = error.get();
+                responseTitle = "Microsoft sign-in ignored";
+                responseText = "This callback was not for the active sign-in. Return to the Microsoft tab.";
+                complete = false;
             } else if (query.containsKey("error")) {
                 error.set(query.getOrDefault("error_description", query.get("error")));
                 responseTitle = "Microsoft sign-in failed";
@@ -4412,7 +4456,7 @@ public class Main {
             }
 
             writeMicrosoftCallbackResponse(exchange, responseTitle, responseText);
-            latch.countDown();
+            if (complete) latch.countDown();
         });
         server.setExecutor(callbackExecutor);
 
@@ -4689,7 +4733,7 @@ public class Main {
             if (message.isEmpty()) message = xboxXstsMessage(Json.string(responseBody.get("XErr")));
             if (message.isEmpty() && !responseText.isEmpty()) message = responseText;
             if (message.isEmpty()) message = label + " returned HTTP " + status;
-            throw new IOException(message);
+            throw new HttpStatusException(status, message);
         }
 
         return new ApiResponse(status, responseBody);
@@ -4771,7 +4815,7 @@ public class Main {
                 );
             }
             if (message.isEmpty()) message = "Backend returned HTTP " + status;
-            throw new IOException(message);
+            throw new HttpStatusException(status, message);
         }
 
         return new ApiResponse(status, responseBody);
@@ -4782,6 +4826,15 @@ public class Main {
             if (status == accepted) return true;
         }
         return false;
+    }
+
+    private int httpStatus(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof HttpStatusException statusError) return statusError.status;
+            current = current.getCause();
+        }
+        return 0;
     }
 
     private LauncherUser parseLauncherUser(Object value) {
@@ -4860,18 +4913,24 @@ public class Main {
         if (best == null) return;
 
         Object selected = buildBox.getSelectedItem();
+        if (explicitBuildSelection && selected instanceof Build && canUseBuild(user, ((Build) selected).id)) return;
         if (selected instanceof Build && ((Build) selected).id.equals(best.id)) return;
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
-                buildBox.setSelectedItem(best);
+                applyingAutomaticBuildSelection = true;
+                try {
+                    buildBox.setSelectedItem(best);
+                } finally {
+                    applyingAutomaticBuildSelection = false;
+                }
                 log("Selected best available build: " + best.label + ".");
             }
         });
     }
 
     private Build bestBuildForUser(LauncherUser user) {
-        if (hasOwnerAccess(user)) return findBuild("release");
+        if (hasOwnerAccess(user)) return findBuild("media");
         String[] priority = {"media", "beta_plus", "release", "ad_tier"};
         for (String buildId : priority) {
             if (canUseBuild(user, buildId)) return findBuild(buildId);
@@ -5147,6 +5206,7 @@ public class Main {
         }
 
         Files.write(getLauncherSessionFile().toPath(), (token + System.lineSeparator()).getBytes(StandardCharsets.UTF_8));
+        hardenPrivateFile(getLauncherSessionFile());
     }
 
     private String readLauncherToken() {
@@ -5203,6 +5263,7 @@ public class Main {
             + "\"minecraftExpiresAt\":" + account.minecraftExpiresAt
             + "}";
         Files.write(getMicrosoftAccountFile().toPath(), (json + System.lineSeparator()).getBytes(StandardCharsets.UTF_8));
+        hardenPrivateFile(getMicrosoftAccountFile());
     }
 
     private MicrosoftAccount readMicrosoftAccount() {
@@ -5593,9 +5654,37 @@ public class Main {
         }
 
         String stamped = "[" + new SimpleDateFormat("HH:mm:ss", Locale.ROOT).format(new Date()) + "] " + message;
-        log.append(stamped + System.lineSeparator());
+        appendColoredLog(stamped);
         log.setCaretPosition(log.getDocument().getLength());
         recordLogLine(stamped);
+    }
+
+    private void appendColoredLog(String line) {
+        StyledDocument document = log.getStyledDocument();
+        String severity = logSeverity(line);
+        Style style = log.getStyle(severity);
+        if (style == null) {
+            style = log.addStyle(severity, null);
+            StyleConstants.setForeground(style, switch (severity) {
+                case "error" -> new Color(255, 81, 72);
+                case "warning" -> new Color(255, 159, 28);
+                default -> new Color(214, 219, 229);
+            });
+            StyleConstants.setBold(style, "error".equals(severity));
+        }
+
+        try {
+            document.insertString(document.getLength(), line + System.lineSeparator(), style);
+        } catch (BadLocationException exception) {
+            System.err.println(line);
+        }
+    }
+
+    private String logSeverity(String line) {
+        String value = line == null ? "" : line.toLowerCase(Locale.ROOT);
+        if (value.matches(".*\\b(error|failed|failure|fatal|exception|crash|broken|denied|invalid)\\b.*")) return "error";
+        if (value.matches(".*\\b(warn|warning|retry|stale|missing|unavailable|offline)\\b.*")) return "warning";
+        return "normal";
     }
 
     private void recordLogLine(String line) {
@@ -5613,6 +5702,7 @@ public class Main {
             File parent = file.getParentFile();
             if (parent != null && !parent.exists()) parent.mkdirs();
             Files.writeString(file.toPath(), line + System.lineSeparator(), StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            hardenPrivateFile(file);
         } catch (IOException e) {
             System.err.println("Launcher log write failed: " + e.getMessage());
         }
@@ -5627,6 +5717,7 @@ public class Main {
             File parent = file.getParentFile();
             if (parent != null && !parent.exists()) parent.mkdirs();
             Files.writeString(file.toPath(), "", StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING);
+            hardenPrivateFile(file);
         } catch (IOException e) {
             log("Could not reset latest-launch.log: " + e.getMessage());
         }
@@ -5778,6 +5869,15 @@ public class Main {
         return new File(getManagedMinecraftRoot(), "cg-mod");
     }
 
+    private void hardenPrivateFile(File file) {
+        if (file == null || !file.exists()) return;
+        file.setReadable(false, false);
+        file.setWritable(false, false);
+        file.setExecutable(false, false);
+        file.setReadable(true, true);
+        file.setWritable(true, true);
+    }
+
     private File getLauncherLogFile() {
         return new File(getLauncherDataFolder(), "launcher.log");
     }
@@ -5796,6 +5896,11 @@ public class Main {
 
     private File payloadJarFile(LauncherManifest manifest) {
         return new File(getPayloadsFolder(), manifest.fileName);
+    }
+
+    private boolean isSafeFileName(String value) {
+        if (value == null || value.isBlank() || value.contains("/") || value.contains("\\") || value.equals(".") || value.equals("..")) return false;
+        return new File(value).getName().equals(value) && !new File(value).isAbsolute();
     }
 
     private File writeLaunchTicketFile(LaunchTicket launchTicket) throws IOException {
@@ -5839,8 +5944,15 @@ public class Main {
 
     private List<String> redactLaunchSecrets(List<String> values) {
         List<String> redacted = new ArrayList<>();
+        boolean redactNext = false;
         for (String value : values) {
-            if (value != null && value.startsWith("-Dgamble.launchTicket=")) {
+            if (redactNext) {
+                redacted.add("<redacted>");
+                redactNext = false;
+            } else if (value != null && (value.equals("--accessToken") || value.equals("--clientId") || value.equals("--xuid") || value.equals("--uuid"))) {
+                redacted.add(value);
+                redactNext = true;
+            } else if (value != null && value.startsWith("-Dgamble.launchTicket")) {
                 redacted.add("-Dgamble.launchTicket=<redacted>");
             } else {
                 redacted.add(value);
@@ -5968,6 +6080,10 @@ public class Main {
 
     private boolean open(String url) {
         try {
+            if (!allowedBrowserUrl(url)) {
+                log("Blocked an untrusted browser URL.");
+                return false;
+            }
             if (Desktop.isDesktopSupported()) {
                 Desktop desktop = Desktop.getDesktop();
                 if (desktop.isSupported(Desktop.Action.BROWSE)) {
@@ -5979,6 +6095,29 @@ public class Main {
             return true;
         } catch (Exception e) {
             log("Open failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean allowedBrowserUrl(String value) {
+        try {
+            URI uri = URI.create(value == null ? "" : value.trim());
+            String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+            String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
+            if (uri.getUserInfo() != null || host.isEmpty()) return false;
+            if ("http".equals(scheme) && ("localhost".equals(host) || "127.0.0.1".equals(host) || "::1".equals(host))) return true;
+            if (!"https".equals(scheme)) return false;
+            return Set.of(
+                "gamble-client.store",
+                "dash.gamble-client.store",
+                "admin.gamble-client.store",
+                "profile.gamble-client.store",
+                "login.microsoftonline.com",
+                "microsoft.com",
+                "www.microsoft.com",
+                "discord.gg"
+            ).contains(host);
+        } catch (Exception ignored) {
             return false;
         }
     }
@@ -6470,6 +6609,15 @@ public class Main {
         ApiResponse(int status, Map<String, Object> body) {
             this.status = status;
             this.body = body;
+        }
+    }
+
+    private static final class HttpStatusException extends IOException {
+        private final int status;
+
+        private HttpStatusException(int status, String message) {
+            super(message);
+            this.status = status;
         }
     }
 

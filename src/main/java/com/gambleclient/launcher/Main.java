@@ -92,6 +92,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -122,7 +123,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.90";
+    private static final String LAUNCHER_VERSION = "0.1.91";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -2386,16 +2387,24 @@ public class Main {
                     log("Restored launcher account: " + accountLabel(launcherUser) + ".");
                     maybeAutoCheckForUpdates();
                 } catch (Exception e) {
-                    launcherToken = "";
                     launcherUser = null;
                     launcherAds = null;
-                    deleteLauncherToken();
-                    signInPromptDismissed = false;
+                    int status = httpStatus(e);
+                    boolean rejected = status == 401 || status == 403;
+                    if (rejected) {
+                        launcherToken = "";
+                        deleteLauncherToken();
+                        signInPromptDismissed = false;
+                    }
                     updateAccountUi();
                     updateAdUi();
                     refreshVersionPanel();
-                    log("Stored launcher sign-in expired.");
-                    maybePromptForSignIn();
+                    if (rejected) {
+                        log("Stored launcher sign-in expired.");
+                        maybePromptForSignIn();
+                    } else {
+                        log("Could not verify the stored sign-in yet; the saved session was kept: " + rootMessage(e));
+                    }
                     maybeAutoCheckForUpdates();
                 }
             }
@@ -4724,7 +4733,7 @@ public class Main {
             if (message.isEmpty()) message = xboxXstsMessage(Json.string(responseBody.get("XErr")));
             if (message.isEmpty() && !responseText.isEmpty()) message = responseText;
             if (message.isEmpty()) message = label + " returned HTTP " + status;
-            throw new IOException(message);
+            throw new HttpStatusException(status, message);
         }
 
         return new ApiResponse(status, responseBody);
@@ -4806,7 +4815,7 @@ public class Main {
                 );
             }
             if (message.isEmpty()) message = "Backend returned HTTP " + status;
-            throw new IOException(message);
+            throw new HttpStatusException(status, message);
         }
 
         return new ApiResponse(status, responseBody);
@@ -4817,6 +4826,15 @@ public class Main {
             if (status == accepted) return true;
         }
         return false;
+    }
+
+    private int httpStatus(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof HttpStatusException statusError) return statusError.status;
+            current = current.getCause();
+        }
+        return 0;
     }
 
     private LauncherUser parseLauncherUser(Object value) {
@@ -6062,6 +6080,10 @@ public class Main {
 
     private boolean open(String url) {
         try {
+            if (!allowedBrowserUrl(url)) {
+                log("Blocked an untrusted browser URL.");
+                return false;
+            }
             if (Desktop.isDesktopSupported()) {
                 Desktop desktop = Desktop.getDesktop();
                 if (desktop.isSupported(Desktop.Action.BROWSE)) {
@@ -6073,6 +6095,29 @@ public class Main {
             return true;
         } catch (Exception e) {
             log("Open failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean allowedBrowserUrl(String value) {
+        try {
+            URI uri = URI.create(value == null ? "" : value.trim());
+            String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+            String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
+            if (uri.getUserInfo() != null || host.isEmpty()) return false;
+            if ("http".equals(scheme) && ("localhost".equals(host) || "127.0.0.1".equals(host) || "::1".equals(host))) return true;
+            if (!"https".equals(scheme)) return false;
+            return Set.of(
+                "gamble-client.store",
+                "dash.gamble-client.store",
+                "admin.gamble-client.store",
+                "profile.gamble-client.store",
+                "login.microsoftonline.com",
+                "microsoft.com",
+                "www.microsoft.com",
+                "discord.gg"
+            ).contains(host);
+        } catch (Exception ignored) {
             return false;
         }
     }
@@ -6564,6 +6609,15 @@ public class Main {
         ApiResponse(int status, Map<String, Object> body) {
             this.status = status;
             this.body = body;
+        }
+    }
+
+    private static final class HttpStatusException extends IOException {
+        private final int status;
+
+        private HttpStatusException(int status, String message) {
+            super(message);
+            this.status = status;
         }
     }
 

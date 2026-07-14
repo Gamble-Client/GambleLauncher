@@ -13,7 +13,7 @@ const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
-const LAUNCHER_VERSION = "0.1.90";
+const LAUNCHER_VERSION = "0.1.91";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 const PREVIEW = !("__TAURI_INTERNALS__" in window);
@@ -177,9 +177,9 @@ async function mockInvoke(command, args = {}) {
         minVersion: LAUNCHER_VERSION,
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.90-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.90-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.90_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.91-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.91-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.91_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -206,8 +206,8 @@ async function mockInvoke(command, args = {}) {
   if (command === "download_launcher_update") {
     return {
       version: LAUNCHER_VERSION,
-      fileName: "Gamble-Client-Launcher_0.1.90_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.90_amd64.deb",
+      fileName: "Gamble-Client-Launcher_0.1.91_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.91_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -1414,11 +1414,16 @@ async function restoreSession() {
     await invoke("save_launcher_token", { token: state.token });
     log(`Restored account: ${accountTitle()}`);
   } catch (error) {
-    state.token = "";
-    state.account = null;
-    state.ads = null;
-    await invoke("delete_launcher_token").catch(() => {});
-    log(`Stored sign-in expired: ${error.message || error}`);
+    const message = String(error?.message || error || "");
+    if (/HTTP\s+(401|403)\b/.test(message)) {
+      state.token = "";
+      state.account = null;
+      state.ads = null;
+      await invoke("delete_launcher_token").catch(() => {});
+      log(`Stored sign-in expired: ${message}`);
+    } else {
+      log(`Could not verify the saved sign-in yet; it was kept for the next retry: ${message}`);
+    }
   }
 }
 
