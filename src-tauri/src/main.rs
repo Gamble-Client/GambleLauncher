@@ -22,7 +22,10 @@ use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.89";
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+const VERSION: &str = "0.1.90";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -43,6 +46,9 @@ const HTTP_DOWNLOAD_ATTEMPTS: usize = 3;
 const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_NATIVE_FILES: usize = 2048;
 const MAX_NATIVE_EXPANDED_BYTES: u64 = 512 * 1024 * 1024;
+const TEMURIN_21_WINDOWS_URL: &str = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 const MINECRAFT_TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
 const XBOX_AUTH_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
 const XSTS_AUTH_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
@@ -303,7 +309,7 @@ struct ManifestResponse {
     build_version: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct LaunchRequest {
     profile: String,
     build: String,
@@ -806,7 +812,7 @@ fn diagnostics(profile: String) -> Result<Diagnostics, String> {
         display_path(&microsoft_accounts_file()),
     );
     let selected_java = java_executable();
-    let java = Command::new(&selected_java).arg("-version").output();
+    let java = java_version_output(Path::new(&selected_java));
     push_check(
         &mut checks,
         "Java runtime",
@@ -1030,7 +1036,12 @@ fn install_client_manifest_blocking(profile: String, build: String, token: Strin
 
 #[tauri::command]
 async fn launch_game(app: AppHandle, input: LaunchRequest) -> Result<String, String> {
-    run_blocking(move || launch_game_blocking(app, input)).await
+    let profile = input.profile.clone();
+    let result = run_blocking(move || launch_game_blocking(app, input)).await;
+    if let Err(error) = &result {
+        let _ = write_launch_failure_log(&profile, error);
+    }
+    result
 }
 
 fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, String> {
@@ -1059,7 +1070,10 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
     ensure_profile_folders(&profile)?;
     apply_minecraft_option_defaults(&profile)?;
 
-    emit_launch_progress(&app, "Account", "Refreshing Microsoft session", 1, 12);
+    emit_launch_progress(&app, "Runtime", "Checking managed Java 21 runtime", 1, 13);
+    let java = ensure_java_runtime(Some(&app))?;
+
+    emit_launch_progress(&app, "Account", "Refreshing Microsoft session", 2, 13);
     let account = selected_microsoft_account()?.ok_or_else(|| {
         "Microsoft is linked on the site, but this launcher does not have a local Minecraft token yet. Connect Microsoft in the launcher first.".to_string()
     })?;
@@ -1068,7 +1082,7 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         identity.name = input.username.trim().to_string();
     }
     cleanup_stale_launch_payloads(&profile)?;
-    emit_launch_progress(&app, "Client", "Checking managed client payload", 2, 12);
+    emit_launch_progress(&app, "Client", "Checking managed client payload", 3, 13);
     let managed_client_payload = if profile_installs_client(&profile) {
         let install = install_client_manifest_blocking(profile.to_string(), build.to_string(), token.to_string())?;
         Some((PathBuf::from(install.path), install.file_name))
@@ -1078,7 +1092,7 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
 
     write_launcher_preferences(&profile, input.anti_screenshare)?;
 
-    emit_launch_progress(&app, "Profile", "Preparing Minecraft profile", 3, 12);
+    emit_launch_progress(&app, "Profile", "Preparing Minecraft profile", 4, 13);
     let profile_dir = minecraft_folder(&profile);
     let version_id = if profile == "vanilla" {
         ensure_vanilla_version_json_with_progress(&profile_dir, MINECRAFT_VERSION, Some(&app))?;
@@ -1089,26 +1103,26 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         ensure_fabric_api_with_progress(&profile, Some(&app))?;
         format!("fabric-loader-{FABRIC_LOADER_VERSION}-{MINECRAFT_VERSION}")
     };
-    emit_launch_progress(&app, "Profile", "Reading Minecraft launch profile", 6, 12);
+    emit_launch_progress(&app, "Profile", "Reading Minecraft launch profile", 7, 13);
     let version = load_version_profile(&profile_dir, &version_id)?;
     let mut classpath = ensure_libraries_with_progress(&profile_dir, &version, Some(&app))?;
     classpath.push(ensure_client_jar_with_progress(&profile_dir, &version, Some(&app))?);
     ensure_assets_with_progress(&profile_dir, &version, Some(&app))?;
     let natives = extract_natives_with_progress(&profile_dir, &version_id, &version, Some(&app))?;
-    emit_launch_progress(&app, "Client", "Preparing temporary client payload", 10, 12);
+    emit_launch_progress(&app, "Client", "Preparing temporary client payload", 11, 13);
     let managed_client = if let Some((payload, file_name)) = managed_client_payload.as_ref() {
         Some(prepare_launch_payload(&profile, payload, file_name)?)
     } else {
         None
     };
-    emit_launch_progress(&app, "Ticket", "Creating launch ticket", 11, 12);
+    emit_launch_progress(&app, "Ticket", "Creating launch ticket", 12, 13);
     let launch_ticket_file = if profile_installs_client(&profile) {
         Some(write_launch_ticket_file(&profile, token, build)?)
     } else {
         None
     };
 
-    emit_launch_progress(&app, "Starting", "Starting Minecraft", 12, 12);
+    emit_launch_progress(&app, "Starting", "Starting Minecraft", 13, 13);
     let command = match build_minecraft_command(
         &profile_dir,
         &profile,
@@ -1123,6 +1137,7 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         input.anti_screenshare,
         managed_client.as_deref(),
         launch_ticket_file.as_deref(),
+        &java,
     ) {
         Ok(command) => command,
         Err(error) => {
@@ -1141,11 +1156,13 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
     let stderr = fs::OpenOptions::new().create(true).append(true).open(&log_file).map_err(error_text)?;
     let mut process = Command::new(&command[0]);
     process.args(&command[1..]).current_dir(&profile_dir).stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
+    #[cfg(target_os = "windows")]
+    process.creation_flags(CREATE_NO_WINDOW);
     let child = process.spawn().map_err(|error| {
         if let Some(payload) = managed_client.as_deref() {
             cleanup_launch_payload(payload);
         }
-        format!("Could not start Minecraft: {error}. If this mentions Java, install Java 21+ and restart the launcher.")
+        format!("Could not start Minecraft with the managed Java runtime: {error}. See {}.", display_path(&log_file))
     })?;
     let pid = child.id();
     {
@@ -1998,9 +2015,10 @@ fn build_minecraft_command(
     anti_screenshare: bool,
     payload: Option<&Path>,
     launch_ticket_file: Option<&Path>,
+    java: &str,
 ) -> Result<Vec<String>, String> {
     let mut command = Vec::new();
-    command.push(java_executable());
+    command.push(java.to_string());
     command.push(format!("-Xmx{memory}G"));
     command.push(format!("-Djava.library.path={}", display_path(natives)));
     command.push("-Dminecraft.launcher.brand=GambleClientLauncher".to_string());
@@ -2298,9 +2316,117 @@ fn join_classpath(classpath: &[PathBuf]) -> String {
     classpath.iter().map(|path| display_path(path)).collect::<Vec<_>>().join(separator)
 }
 
+fn ensure_java_runtime(app: Option<&AppHandle>) -> Result<String, String> {
+    for candidate in java_candidates() {
+        if java_candidate_is_compatible(&candidate) {
+            return Ok(display_path(&windowless_java(&candidate)));
+        }
+    }
+
+    if env::consts::OS != "windows" {
+        return Err("Java 21+ was not found. The native launcher currently installs its managed runtime automatically on Windows.".to_string());
+    }
+
+    if let Some(app) = app {
+        emit_launch_progress(app, "Runtime", "Installing the managed Java 21 runtime (first launch only)", 1, 1);
+    }
+
+    let install_root = managed_root().join("runtime").join("temurin-21");
+    let archive = managed_root().join("runtime").join("temurin-21-jre.zip");
+    if install_root.exists() {
+        fs::remove_dir_all(&install_root).map_err(error_text)?;
+    }
+    fs::create_dir_all(&install_root).map_err(error_text)?;
+
+    let arch = match env::consts::ARCH {
+        "aarch64" => "aarch64",
+        _ => "x64",
+    };
+    let url = if arch == "x64" {
+        TEMURIN_21_WINDOWS_URL.to_string()
+    } else {
+        format!("https://api.adoptium.net/v3/binary/latest/21/ga/windows/{arch}/jre/hotspot/normal/eclipse")
+    };
+    download_file(&url, &archive).map_err(|error| format!("Managed Java 21 download failed: {error}"))?;
+    let extracted = extract_runtime_zip(&archive, &install_root);
+    let _ = fs::remove_file(&archive);
+    extracted?;
+
+    let candidate = find_java_under(&install_root)
+        .ok_or_else(|| "Managed Java archive installed, but bin/java.exe was not found.".to_string())?;
+    if !java_candidate_is_compatible(&candidate) {
+        return Err(format!("Managed Java runtime failed its Java 21 check: {}", display_path(&candidate)));
+    }
+    Ok(display_path(&windowless_java(&candidate)))
+}
+
+fn java_candidate_is_compatible(candidate: &Path) -> bool {
+    java_version_output(candidate)
+        .map(|output| output.status.success() && java_output_is_21_or_newer(&output))
+        .unwrap_or(false)
+}
+
+fn java_version_output(candidate: &Path) -> io::Result<std::process::Output> {
+    let mut command = Command::new(candidate);
+    command.arg("-version");
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+    command.output()
+}
+
+fn windowless_java(candidate: &Path) -> PathBuf {
+    if env::consts::OS != "windows" {
+        return candidate.to_path_buf();
+    }
+    let javaw = candidate.with_file_name("javaw.exe");
+    if javaw.is_file() { javaw } else { candidate.to_path_buf() }
+}
+
+fn find_java_under(root: &Path) -> Option<PathBuf> {
+    WalkDir::new(root)
+        .max_depth(8)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_type().is_file() && entry.file_name().to_string_lossy().eq_ignore_ascii_case("java.exe"))
+        .map(|entry| entry.into_path())
+}
+
+fn extract_runtime_zip(zip_path: &Path, target: &Path) -> Result<(), String> {
+    let file = File::open(zip_path).map_err(error_text)?;
+    let mut archive = ZipArchive::new(file).map_err(error_text)?;
+    if archive.len() > 4096 {
+        return Err("Managed Java archive contains too many files.".to_string());
+    }
+
+    let mut expanded = 0u64;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(error_text)?;
+        let relative = entry.enclosed_name()
+            .ok_or_else(|| "Managed Java archive contains an unsafe path.".to_string())?
+            .to_path_buf();
+        let output = target.join(relative);
+        if entry.is_dir() {
+            fs::create_dir_all(&output).map_err(error_text)?;
+            continue;
+        }
+
+        expanded = expanded.saturating_add(entry.size());
+        if expanded > MAX_NATIVE_EXPANDED_BYTES {
+            return Err("Managed Java archive exceeds the expanded-size safety limit.".to_string());
+        }
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent).map_err(error_text)?;
+        }
+        let mut destination = File::create(&output).map_err(error_text)?;
+        io::copy(&mut entry, &mut destination).map_err(error_text)?;
+    }
+    Ok(())
+}
+
 fn java_executable() -> String {
     for candidate in java_candidates() {
-        if let Ok(output) = Command::new(&candidate).arg("-version").output() {
+        if let Ok(output) = java_version_output(&candidate) {
             if output.status.success() && java_output_is_21_or_newer(&output) {
                 return display_path(&candidate);
             }
@@ -2560,6 +2686,18 @@ fn latest_launch_log_file() -> PathBuf {
 
 fn diagnostics_report_file() -> PathBuf {
     launcher_data_folder().join("diagnostics.txt")
+}
+
+fn write_launch_failure_log(profile: &str, error: &str) -> Result<(), String> {
+    fs::create_dir_all(launcher_data_folder()).map_err(error_text)?;
+    let _ = diagnostics(profile.to_string());
+    let report = format!(
+        "Gamble Client Launcher {VERSION}\nLaunch failed before Minecraft started.\nProfile: {}\nError: {}\nDiagnostics: {}\n",
+        profile_id(profile),
+        error,
+        display_path(&diagnostics_report_file())
+    );
+    fs::write(latest_launch_log_file(), report).map_err(error_text)
 }
 
 fn minecraft_folder(profile: &str) -> PathBuf {
