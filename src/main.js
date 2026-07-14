@@ -13,7 +13,7 @@ const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
-const LAUNCHER_VERSION = "0.1.88";
+const LAUNCHER_VERSION = "0.1.89";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 const PREVIEW = !("__TAURI_INTERNALS__" in window);
@@ -177,9 +177,9 @@ async function mockInvoke(command, args = {}) {
         minVersion: LAUNCHER_VERSION,
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.88-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.88-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.88_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.89-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.89-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.89_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -206,8 +206,8 @@ async function mockInvoke(command, args = {}) {
   if (command === "download_launcher_update") {
     return {
       version: LAUNCHER_VERSION,
-      fileName: "Gamble-Client-Launcher_0.1.88_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.88_amd64.deb",
+      fileName: "Gamble-Client-Launcher_0.1.89_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.89_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -1358,7 +1358,7 @@ function knownLaunchMessage(error) {
   if (lower.includes("resources.download.minecraft.net") || lower.includes("minecraft asset") || lower.includes("mojang")) {
     return "Minecraft asset download failed from Mojang's CDN. Check VPN/proxy/DNS on this computer, then try Launch again.";
   }
-  if (lower.includes("java")) return "Java failed during launch. Run diagnostics from Settings for the exact local check.";
+  if (lower.includes("java")) return `Java launch check failed.\n\n${text}\n\nSettings > Diagnostics has been opened with the detected runtime and launch-log location.`;
   return text;
 }
 
@@ -2099,6 +2099,8 @@ app.addEventListener("click", async (event) => {
     } catch (error) {
       state.launchProgress = null;
       log(`Launch failed: ${error.message || error}`);
+      await runDiagnostics().catch((diagnosticError) => log(`Diagnostics failed: ${diagnosticError.message || diagnosticError}`));
+      state.view = "settings";
       showPopup("Launch failed", knownLaunchMessage(error), "launch");
       await refreshMinecraftStatus({ render: false, logExit: false });
     } finally {

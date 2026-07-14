@@ -22,7 +22,7 @@ use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const VERSION: &str = "0.1.88";
+const VERSION: &str = "0.1.89";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -811,10 +811,26 @@ fn diagnostics(profile: String) -> Result<Diagnostics, String> {
         &mut checks,
         "Java runtime",
         java.as_ref().map(|out| out.status.success() && java_output_is_21_or_newer(out)).unwrap_or(false),
-        java.map(|out| String::from_utf8_lossy(&out.stderr).lines().next().unwrap_or("java").to_string())
-            .unwrap_or_else(|error| error.to_string()),
+        java.map(|out| format!("{} — {}", selected_java, String::from_utf8_lossy(&out.stderr).lines().next().unwrap_or("java")))
+            .unwrap_or_else(|error| format!("{} — {}", selected_java, error)),
     );
-    push_check(&mut checks, "Latest launch log", latest_launch_log_file().is_file(), display_path(&latest_launch_log_file()));
+    let launch_log = latest_launch_log_file();
+    let launch_log_detail = if launch_log.is_file() {
+        let tail = fs::read_to_string(&launch_log).unwrap_or_default();
+        let last = tail.lines().rev().find(|line| !line.trim().is_empty()).unwrap_or("");
+        format!("{}{}", display_path(&launch_log), if last.is_empty() { String::new() } else { format!(" — {last}") })
+    } else {
+        display_path(&launch_log)
+    };
+    push_check(&mut checks, "Latest launch log", launch_log.is_file(), launch_log_detail);
+    let report = checks.iter()
+        .map(|check| format!("[{}] {}: {}", if check.ok { "OK" } else { "WARN" }, check.label, check.detail))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if let Some(parent) = diagnostics_report_file().parent() {
+        fs::create_dir_all(parent).map_err(error_text)?;
+    }
+    fs::write(diagnostics_report_file(), format!("Gamble Client Launcher {VERSION}\n{report}\n")).map_err(error_text)?;
     Ok(Diagnostics { checks })
 }
 
@@ -2283,13 +2299,66 @@ fn join_classpath(classpath: &[PathBuf]) -> String {
 }
 
 fn java_executable() -> String {
-    if let Ok(home) = env::var("JAVA_HOME") {
-        let candidate = PathBuf::from(home).join("bin").join(if env::consts::OS == "windows" { "java.exe" } else { "java" });
-        if candidate.is_file() {
-            return display_path(&candidate);
+    for candidate in java_candidates() {
+        if let Ok(output) = Command::new(&candidate).arg("-version").output() {
+            if output.status.success() && java_output_is_21_or_newer(&output) {
+                return display_path(&candidate);
+            }
         }
     }
     "java".to_string()
+}
+
+fn java_candidates() -> Vec<PathBuf> {
+    let executable = if env::consts::OS == "windows" { "java.exe" } else { "java" };
+    let mut candidates = Vec::new();
+    let mut roots = Vec::new();
+
+    if let Ok(home) = env::var("JAVA_HOME") {
+        candidates.push(PathBuf::from(home).join("bin").join(executable));
+    }
+
+    if env::consts::OS == "windows" {
+        if let Ok(app_data) = env::var("APPDATA") {
+            roots.push(PathBuf::from(app_data).join(".minecraft/runtime"));
+        }
+        if let Ok(local) = env::var("LOCALAPPDATA") {
+            let local = PathBuf::from(local);
+            roots.push(local.join("Programs/Eclipse Adoptium"));
+            roots.push(local.join("Packages/Microsoft.4297127D64EC6_8wekyb3d8bbwe/LocalCache/Local/runtime"));
+            roots.push(local.join("Packages/Microsoft.4297127D64EC6_8wekyb3d8bbwe/LocalCache/Roaming/.minecraft/runtime"));
+        }
+        for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
+            if let Ok(program_files) = env::var(variable) {
+                let program_files = PathBuf::from(program_files);
+                roots.push(program_files.join("Java"));
+                roots.push(program_files.join("Eclipse Adoptium"));
+                roots.push(program_files.join("Microsoft"));
+                roots.push(program_files.join("Minecraft Launcher/runtime"));
+            }
+        }
+        roots.push(managed_root().join("runtime"));
+    }
+
+    for root in roots {
+        if !root.is_dir() {
+            continue;
+        }
+        for entry in WalkDir::new(root).max_depth(8).follow_links(false).into_iter().filter_map(Result::ok) {
+            if entry.file_type().is_file() && entry.file_name().to_string_lossy().eq_ignore_ascii_case(executable) {
+                candidates.push(entry.into_path());
+            }
+        }
+    }
+
+    candidates.push(PathBuf::from(executable));
+    let mut unique = Vec::new();
+    for candidate in candidates {
+        if !unique.iter().any(|existing: &PathBuf| existing == &candidate) {
+            unique.push(candidate);
+        }
+    }
+    unique
 }
 
 fn os_name() -> &'static str {
@@ -2487,6 +2556,10 @@ fn selected_microsoft_account_file() -> PathBuf {
 
 fn latest_launch_log_file() -> PathBuf {
     launcher_data_folder().join("latest-launch.log")
+}
+
+fn diagnostics_report_file() -> PathBuf {
+    launcher_data_folder().join("diagnostics.txt")
 }
 
 fn minecraft_folder(profile: &str) -> PathBuf {
