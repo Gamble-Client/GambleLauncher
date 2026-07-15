@@ -859,24 +859,12 @@ function privacyView() {
 }
 
 function antiScreensharePanel() {
-  const status = state.antiStatus || {};
-  const enabled = Boolean(status.enabled ?? state.antiScreenshare);
-  const source = status.bridgeOnline ? "Live client" : status.source || "Launcher";
-  const message = status.message || "Launch Gamble Client once before editing live modules.";
   return `
-    <section class="privacy-panel ${enabled ? "on" : ""}">
+    <section class="privacy-panel on">
       <div class="privacy-copy">
-        <span class="eyebrow">Mode</span>
-        <strong>AntiScreenshare ${enabled ? "on" : "off"}</strong>
-        <small>${escapeHtml(source)} · ${escapeHtml(message)}</small>
-      </div>
-      <div class="privacy-actions">
-        <button class="toggle-button ${enabled ? "on" : ""}" type="button" data-action="toggle-anti">
-          <b></b>
-          ${enabled ? "Turn off" : "Turn on"}
-        </button>
-        <button class="ghost" type="button" data-action="anti-clean">Clean View</button>
-        <button class="ghost" type="button" data-action="anti-obs">OBS View</button>
+        <span class="eyebrow">Client menu</span>
+        <strong>Antiscreenshare is managed in Minecraft</strong>
+        <small>Open Client → Antiscreenshare to start the private LAN page, set its PIN, and choose the visible HUD feed.</small>
       </div>
     </section>
   `;
