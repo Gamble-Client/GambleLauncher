@@ -25,7 +25,7 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-const VERSION: &str = "0.1.93";
+const VERSION: &str = "0.1.94";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -2342,10 +2342,8 @@ fn join_classpath(classpath: &[PathBuf]) -> String {
 }
 
 fn ensure_java_runtime(app: Option<&AppHandle>) -> Result<String, String> {
-    for candidate in java_candidates() {
-        if java_candidate_is_compatible(&candidate) {
-            return Ok(display_path(&windowless_java(&candidate)));
-        }
+    if let Some(candidate) = preferred_java_candidate(java_candidates()) {
+        return Ok(display_path(&windowless_java(&candidate)));
     }
 
     if env::consts::OS != "windows" {
@@ -2450,14 +2448,22 @@ fn extract_runtime_zip(zip_path: &Path, target: &Path) -> Result<(), String> {
 }
 
 fn java_executable() -> String {
-    for candidate in java_candidates() {
-        if let Ok(output) = java_version_output(&candidate) {
-            if output.status.success() && java_output_is_21_or_newer(&output) {
-                return display_path(&candidate);
-            }
-        }
-    }
-    "java".to_string()
+    preferred_java_candidate(java_candidates())
+        .map(|candidate| display_path(&candidate))
+        .unwrap_or_else(|| "java".to_string())
+}
+
+fn preferred_java_candidate(candidates: Vec<PathBuf>) -> Option<PathBuf> {
+    let mut compatible = candidates.into_iter().filter_map(|candidate| {
+        let output = java_version_output(&candidate).ok()?;
+        if !output.status.success() { return None; }
+        let feature = java_output_feature(&output);
+        (feature >= 21).then_some((candidate, feature))
+    }).collect::<Vec<_>>();
+    // Minecraft 1.21.11 targets Java 21. Prefer that exact LTS runtime to avoid
+    // unsupported LWJGL/JNI combinations, then use the nearest newer runtime.
+    compatible.sort_by_key(|(_, feature)| (*feature != 21, *feature));
+    compatible.into_iter().next().map(|(candidate, _)| candidate)
 }
 
 fn java_candidates() -> Vec<PathBuf> {
@@ -2488,6 +2494,14 @@ fn java_candidates() -> Vec<PathBuf> {
                 roots.push(program_files.join("Minecraft Launcher/runtime"));
             }
         }
+        roots.push(managed_root().join("runtime"));
+    } else if env::consts::OS == "macos" {
+        roots.push(PathBuf::from("/Library/Java/JavaVirtualMachines"));
+        roots.push(managed_root().join("runtime"));
+    } else {
+        roots.push(PathBuf::from("/usr/lib/jvm"));
+        roots.push(PathBuf::from("/usr/java"));
+        roots.push(PathBuf::from("/opt/java"));
         roots.push(managed_root().join("runtime"));
     }
 
@@ -3540,10 +3554,18 @@ fn push_check(checks: &mut Vec<DiagnosticCheck>, label: &str, ok: bool, detail: 
 
 fn java_output_is_21_or_newer(output: &std::process::Output) -> bool {
     let text = format!("{} {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    java_feature_from_text(&text) >= 21
+}
+
+fn java_output_feature(output: &std::process::Output) -> u32 {
+    let text = format!("{} {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    java_feature_from_text(&text)
+}
+
+fn java_feature_from_text(text: &str) -> u32 {
     let version = text.split('"').nth(1).unwrap_or(&text);
     let first = version.split('.').next().unwrap_or("").trim().parse::<u32>().unwrap_or(0);
-    let feature = if first == 1 { version.split('.').nth(1).and_then(|part| part.parse().ok()).unwrap_or(0) } else { first };
-    feature >= 21
+    if first == 1 { version.split('.').nth(1).and_then(|part| part.parse().ok()).unwrap_or(0) } else { first }
 }
 
 fn read_trimmed(path: &Path) -> Result<String, String> {
@@ -3623,7 +3645,7 @@ fn open_external(target: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_browser_url;
+    use super::{is_browser_url, java_feature_from_text};
 
     #[test]
     fn browser_urls_are_distinguished_from_filesystem_paths() {
@@ -3634,5 +3656,12 @@ mod tests {
         assert!(!is_browser_url(r"C:\\Users\\Player\\AppData\\Roaming\\.gambleclient"));
         assert!(!is_browser_url("/home/player/.gambleclient"));
         assert!(!is_browser_url("javascript:alert(1)"));
+    }
+
+    #[test]
+    fn java_feature_parser_handles_lts_and_modern_versions() {
+        assert_eq!(java_feature_from_text("openjdk version \"21.0.8\" 2025-07-15"), 21);
+        assert_eq!(java_feature_from_text("openjdk version \"25.0.3\" 2026-04-21"), 25);
+        assert_eq!(java_feature_from_text("java version \"1.8.0_412\""), 8);
     }
 }

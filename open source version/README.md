@@ -46,7 +46,7 @@ npm run tauri:build
 The launcher jar is written to:
 
 ```text
-build/libs/gamble-client-launcher-0.1.93.jar
+build/libs/gamble-client-launcher-0.1.94.jar
 ```
 
 ## Notes for reviewers
