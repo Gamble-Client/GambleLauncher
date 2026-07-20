@@ -63,6 +63,9 @@ jobs:
       - name: Build Linux bundles
         run: npm run tauri -- build --bundles rpm,deb
 
+      - name: Install upload tooling
+        run: npm install --no-save --package-lock=false --ignore-scripts wrangler@4
+
       - name: Upload Linux packages directly to R2
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -92,13 +95,13 @@ jobs:
             artifacts: { linuxRpm: artifact(rpm), linuxDeb: artifact(deb) }
           }, null, 2) + '\n');
           NODE
-          npx --yes wrangler@4 r2 object put "gamble-client-jars/$(basename "$rpm_file")" --file "$rpm_file" --remote &
+          ./node_modules/.bin/wrangler r2 object put "gamble-client-jars/$(basename "$rpm_file")" --file "$rpm_file" --remote &
           rpm_upload=$!
-          npx --yes wrangler@4 r2 object put "gamble-client-jars/$(basename "$deb_file")" --file "$deb_file" --remote &
+          ./node_modules/.bin/wrangler r2 object put "gamble-client-jars/$(basename "$deb_file")" --file "$deb_file" --remote &
           deb_upload=$!
           wait "$rpm_upload"
           wait "$deb_upload"
-          npx --yes wrangler@4 r2 object put "gamble-client-jars/release-manifests/$manifest_name" --file "$manifest_name" --remote
+          ./node_modules/.bin/wrangler r2 object put "gamble-client-jars/release-manifests/$manifest_name" --file "$manifest_name" --remote
 
       - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
