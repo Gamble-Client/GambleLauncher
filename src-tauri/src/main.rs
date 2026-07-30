@@ -25,7 +25,7 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-const VERSION: &str = "0.1.95";
+const VERSION: &str = "0.1.96";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -1755,7 +1755,7 @@ fn write_launch_ticket_file(profile: &str, token: &str, build: &str) -> Result<P
         json_string(&body, "build"),
         json_u64(&body, "expiresAt")
     );
-    fs::write(&path, payload).map_err(error_text)?;
+    write_private_file(&path, payload.as_bytes())?;
     Ok(path)
 }
 
@@ -3779,7 +3779,7 @@ fn open_external(target: &str) -> Result<(), String> {
 mod tests {
     use super::{
         is_browser_url, java_feature_from_text, launch_payload_name, safe_file_name,
-        verify_fabric_mod_id, MANAGED_CLIENT_MOD_ID,
+        verify_fabric_mod_id, write_private_file, MANAGED_CLIENT_MOD_ID,
     };
     use std::{env, fs, fs::File, io::Write, path::PathBuf};
     use zip::{write::SimpleFileOptions, ZipWriter};
@@ -3810,6 +3810,17 @@ mod tests {
         assert!(second.starts_with("payload-") && second.ends_with(".jar"));
         assert_ne!(first, second);
         assert!(!first.contains("cg-client"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn security_tokens_are_written_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = env::temp_dir().join(format!("gamble-private-{}.txt", launch_payload_name()));
+        write_private_file(&path, b"one-use-token").unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        let _ = fs::remove_file(path);
     }
 
     #[test]
