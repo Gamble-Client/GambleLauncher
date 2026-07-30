@@ -25,7 +25,7 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-const VERSION: &str = "0.1.94";
+const VERSION: &str = "0.1.95";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -44,6 +44,9 @@ const HTTP_CONNECT_TIMEOUT_SECONDS: u64 = 15;
 const HTTP_REQUEST_TIMEOUT_SECONDS: u64 = 300;
 const HTTP_DOWNLOAD_ATTEMPTS: usize = 3;
 const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_MANAGED_CLIENT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_FABRIC_METADATA_BYTES: u64 = 1024 * 1024;
+const MANAGED_CLIENT_MOD_ID: &str = "cg-mod";
 const MAX_NATIVE_FILES: usize = 2048;
 const MAX_NATIVE_EXPANDED_BYTES: u64 = 512 * 1024 * 1024;
 const TEMURIN_21_WINDOWS_URL: &str = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
@@ -75,6 +78,11 @@ struct LauncherInfo {
     data_folder: String,
     session_file: String,
     os: String,
+}
+
+#[derive(Deserialize)]
+struct FabricModIdentity {
+    id: String,
 }
 
 #[derive(Serialize)]
@@ -1020,25 +1028,45 @@ fn install_client_manifest_blocking(profile: String, build: String, token: Strin
     if manifest.size == 0 || !is_sha256(&manifest.sha256) {
         return Err("Backend manifest is missing required size or SHA-256 integrity metadata.".to_string());
     }
+    if manifest.size > MAX_MANAGED_CLIENT_BYTES {
+        return Err("Managed client artifact exceeds the 64 MiB safety limit.".to_string());
+    }
 
     let client_jar = payload_file(&profile, &manifest.file_name);
     if let Some(parent) = client_jar.parent() { fs::create_dir_all(parent).map_err(error_text)?; }
     let staging = client_jar.with_extension("jar.part");
     let existing = find_verified_client_install(&profile, &manifest);
     let downloaded = existing.is_none();
-    if let Some(path) = existing {
-        fs::copy(path, &staging).map_err(error_text)?;
-    } else {
-        download_file(&manifest.download_url, &staging)?;
+    let staging_result = (|| {
+        if let Some(path) = existing {
+            fs::copy(path, &staging).map_err(error_text)?;
+        } else {
+            download_file(&manifest.download_url, &staging)?;
+        }
+        verify_file(&staging, manifest.size, &manifest.sha256)?;
+        verify_fabric_mod_id(&staging, MANAGED_CLIENT_MOD_ID)
+    })();
+    if let Err(error) = staging_result {
+        let _ = fs::remove_file(&staging);
+        return Err(error);
     }
-    verify_file(&staging, manifest.size, &manifest.sha256)?;
 
-    ensure_loader_jar(&profile)?;
-    ensure_fabric_api(&profile)?;
-    cleanup_managed_mod_jars(&profile)?;
-    cleanup_payload_client_jars(&profile)?;
-    fs::rename(&staging, &client_jar).map_err(error_text)?;
-    write_install_marker(&profile, &build, &manifest, &client_jar)?;
+    let install_result = (|| {
+        ensure_loader_jar(&profile)?;
+        ensure_fabric_api(&profile)?;
+        cleanup_managed_mod_jars(&profile)?;
+        cleanup_payload_client_jars(&profile)?;
+        fs::rename(&staging, &client_jar).map_err(error_text)?;
+        if let Err(error) = restrict_private_file(&client_jar) {
+            let _ = fs::remove_file(&client_jar);
+            return Err(error);
+        }
+        write_install_marker(&profile, &build, &manifest, &client_jar)
+    })();
+    if let Err(error) = install_result {
+        let _ = fs::remove_file(&staging);
+        return Err(error);
+    }
 
     Ok(InstallResult {
         file_name: manifest.file_name.clone(),
@@ -1074,6 +1102,7 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
             if child.try_wait().map_err(error_text)?.is_none() {
                 emit_launch_progress(&app, "Stopping", "Stopping Minecraft", 1, 1);
                 child.kill().map_err(error_text)?;
+                child.wait().map_err(error_text)?;
                 *running = None;
                 cleanup_active_launch_payload()?;
                 return Ok("Minecraft stop signal sent.".to_string());
@@ -1135,8 +1164,8 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
     ensure_assets_with_progress(&profile_dir, &version, Some(&app))?;
     let natives = extract_natives_with_progress(&profile_dir, &version_id, &version, Some(&app))?;
     emit_launch_progress(&app, "Client", "Preparing temporary client payload", 11, 13);
-    let managed_client = if let Some((payload, file_name)) = managed_client_payload.as_ref() {
-        Some(prepare_launch_payload(&profile, payload, file_name)?)
+    let managed_client = if let Some((payload, _file_name)) = managed_client_payload.as_ref() {
+        Some(prepare_launch_payload(&profile, payload)?)
     } else {
         None
     };
@@ -1173,28 +1202,57 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         }
     };
     let log_file = latest_launch_log_file();
-    if let Some(parent) = log_file.parent() {
-        fs::create_dir_all(parent).map_err(error_text)?;
-    }
-    fs::write(&log_file, format!("Gamble Client Launcher {VERSION}\n{}\n\n", redacted_command(&command))).map_err(error_text)?;
-    let stdout = fs::OpenOptions::new().create(true).append(true).open(&log_file).map_err(error_text)?;
-    let stderr = fs::OpenOptions::new().create(true).append(true).open(&log_file).map_err(error_text)?;
-    let mut process = Command::new(&command[0]);
-    process.args(&command[1..]).current_dir(&profile_dir).stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
-    #[cfg(target_os = "windows")]
-    process.creation_flags(CREATE_NO_WINDOW);
-    let child = process.spawn().map_err(|error| {
+    let launch_result = (|| {
+        if let Some(parent) = log_file.parent() {
+            fs::create_dir_all(parent).map_err(error_text)?;
+        }
+        fs::write(&log_file, format!("Gamble Client Launcher {VERSION}\n{}\n\n", redacted_command(&command))).map_err(error_text)?;
+        let stdout = fs::OpenOptions::new().create(true).append(true).open(&log_file).map_err(error_text)?;
+        let stderr = fs::OpenOptions::new().create(true).append(true).open(&log_file).map_err(error_text)?;
+        let mut process = Command::new(&command[0]);
+        process.args(&command[1..]).current_dir(&profile_dir).stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
+        #[cfg(target_os = "windows")]
+        process.creation_flags(CREATE_NO_WINDOW);
+        process.spawn().map_err(|error| {
+            format!("Could not start Minecraft with the managed Java runtime: {error}. See {}.", display_path(&log_file))
+        })
+    })();
+    let mut child = launch_result.map_err(|error| {
         if let Some(payload) = managed_client.as_deref() {
             cleanup_launch_payload(payload);
         }
-        format!("Could not start Minecraft with the managed Java runtime: {error}. See {}.", display_path(&log_file))
+        error
     })?;
     let pid = child.id();
     {
-        let mut active_payload = ACTIVE_LAUNCH_PAYLOAD.lock().map_err(error_text)?;
-        *active_payload = managed_client;
+        let mut active_payload = match ACTIVE_LAUNCH_PAYLOAD.lock() {
+            Ok(active_payload) => active_payload,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                if let Some(payload) = managed_client.as_deref() {
+                    cleanup_launch_payload(payload);
+                }
+                return Err(error_text(error));
+            }
+        };
+        *active_payload = managed_client.clone();
     }
-    *MINECRAFT_PROCESS.lock().map_err(error_text)? = Some(child);
+    let mut running = match MINECRAFT_PROCESS.lock() {
+        Ok(running) => running,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            if let Ok(mut active_payload) = ACTIVE_LAUNCH_PAYLOAD.lock() {
+                active_payload.take();
+            }
+            if let Some(payload) = managed_client.as_deref() {
+                cleanup_launch_payload(payload);
+            }
+            return Err(error_text(error));
+        }
+    };
+    *running = Some(child);
     Ok(format!("Minecraft process started (pid {pid}). Latest launch log: {}", display_path(&log_file)))
 }
 
@@ -2120,6 +2178,8 @@ fn download_file(url: &str, path: &Path) -> Result<(), String> {
 }
 
 fn download_file_once(url: &str, path: &Path) -> Result<(), String> {
+    let temp = path.with_extension(format!("{}.part", path.extension().and_then(|value| value.to_str()).unwrap_or("download")));
+    let _ = fs::remove_file(&temp);
     let mut response = http_client()?
         .get(url)
         .send()
@@ -2129,14 +2189,20 @@ fn download_file_once(url: &str, path: &Path) -> Result<(), String> {
     if response.content_length().is_some_and(|size| size > MAX_DOWNLOAD_BYTES) {
         return Err("Download exceeds the 512 MiB safety limit.".to_string());
     }
-    let temp = path.with_extension(format!("{}.part", path.extension().and_then(|value| value.to_str()).unwrap_or("download")));
-    let mut output = File::create(&temp).map_err(error_text)?;
-    let copied = io::copy(&mut response.take(MAX_DOWNLOAD_BYTES + 1), &mut output).map_err(error_text)?;
-    if copied > MAX_DOWNLOAD_BYTES {
+    let result = (|| {
+        let mut output = File::create(&temp).map_err(error_text)?;
+        let copied = io::copy(&mut response.take(MAX_DOWNLOAD_BYTES + 1), &mut output).map_err(error_text)?;
+        if copied > MAX_DOWNLOAD_BYTES {
+            return Err("Download exceeds the 512 MiB safety limit.".to_string());
+        }
+        output.flush().map_err(error_text)?;
+        drop(output);
+        fs::rename(&temp, path).map_err(error_text)
+    })();
+    if result.is_err() {
         let _ = fs::remove_file(&temp);
-        return Err("Download exceeds the 512 MiB safety limit.".to_string());
     }
-    fs::rename(temp, path).map_err(error_text)
+    result
 }
 
 fn download_failure_message(url: &str, error: &str) -> String {
@@ -2931,9 +2997,8 @@ fn cleanup_managed_mod_jars(profile: &str) -> Result<(), String> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_lowercase();
-        let managed = (name.starts_with("cg-client") || name.starts_with("cg-mod"))
-            && (name.ends_with(".jar") || name.ends_with(".jar.disabled"));
-        if managed {
+        let jar_like = name.ends_with(".jar") || name.ends_with(".jar.disabled");
+        if jar_like && verify_fabric_mod_id(&path, MANAGED_CLIENT_MOD_ID).is_ok() {
             fs::create_dir_all(&backup).map_err(error_text)?;
             fs::rename(&path, backup.join(entry.file_name())).map_err(error_text)?;
         }
@@ -2954,7 +3019,7 @@ fn cleanup_payload_client_jars(profile: &str) -> Result<(), String> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_lowercase();
-        if name.starts_with("cg-client") && name.ends_with(".jar") {
+        if name.ends_with(".jar") && verify_fabric_mod_id(&path, MANAGED_CLIENT_MOD_ID).is_ok() {
             let _ = fs::remove_file(path);
         }
     }
@@ -2983,20 +3048,26 @@ fn cleanup_stale_launch_payloads(profile: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn prepare_launch_payload(profile: &str, source: &Path, file_name: &str) -> Result<PathBuf, String> {
+fn prepare_launch_payload(profile: &str, source: &Path) -> Result<PathBuf, String> {
     if !source.is_file() {
         return Err(format!("Managed client payload is missing: {}", display_path(source)));
     }
     let folder = profile_data_folder(profile).join("launch");
     fs::create_dir_all(&folder).map_err(error_text)?;
-    let safe_name = Path::new(file_name)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("cg-client.jar");
-    let target = folder.join(format!("payload-{}-{}-{safe_name}", timestamp(), process_id()));
-    fs::copy(source, &target).map_err(error_text)?;
+    let target = folder.join(launch_payload_name());
+    let result = fs::copy(source, &target)
+        .map(|_| ())
+        .map_err(error_text)
+        .and_then(|_| restrict_private_file(&target));
+    if let Err(error) = result {
+        let _ = fs::remove_file(&target);
+        return Err(error);
+    }
     Ok(target)
+}
+
+fn launch_payload_name() -> String {
+    format!("payload-{}.jar", random_base64_url(24))
 }
 
 fn cleanup_launch_payload(path: &Path) {
@@ -3037,7 +3108,11 @@ fn ensure_loader_jar(profile: &str) -> Result<(), String> {
 fn find_verified_client_install(profile: &str, manifest: &ManifestResponse) -> Option<PathBuf> {
     client_install_candidates(profile, manifest)
         .into_iter()
-        .find(|path| path.is_file() && verify_file(path, manifest.size, &manifest.sha256).is_ok())
+        .find(|path| {
+            path.is_file()
+                && verify_file(path, manifest.size, &manifest.sha256).is_ok()
+                && verify_fabric_mod_id(path, MANAGED_CLIENT_MOD_ID).is_ok()
+        })
 }
 
 fn client_install_candidates(profile: &str, manifest: &ManifestResponse) -> Vec<PathBuf> {
@@ -3413,7 +3488,18 @@ fn fetch_client_manifest(build: &str, token: &str) -> Result<ManifestResponse, S
         &json!({ "build": build }),
         token,
     )?;
-    serde_json::from_value::<ManifestResponse>(body).map_err(error_text)
+    let manifest = serde_json::from_value::<ManifestResponse>(body).map_err(error_text)?;
+    safe_file_name(&manifest.file_name)?;
+    if manifest.download_url.trim().is_empty() {
+        return Err("Backend manifest did not include a client download URL.".to_string());
+    }
+    if manifest.size == 0 || !is_sha256(&manifest.sha256) {
+        return Err("Backend manifest is missing required size or SHA-256 integrity metadata.".to_string());
+    }
+    if manifest.size > MAX_MANAGED_CLIENT_BYTES {
+        return Err("Managed client artifact exceeds the 64 MiB safety limit.".to_string());
+    }
+    Ok(manifest)
 }
 
 fn fetch_launcher_version_info() -> Result<LauncherVersionResponse, String> {
@@ -3471,11 +3557,53 @@ fn verify_file(path: &Path, expected_size: u64, expected_sha: &str) -> Result<()
         return Err(format!("Expected {expected_size} bytes but found {} bytes.", metadata.len()));
     }
     let mut file = File::open(path).map_err(error_text)?;
-    let mut data = Vec::new();
-    file.read_to_end(&mut data).map_err(error_text)?;
-    let actual = sha256_hex(&data);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(error_text)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let actual = format!("{:x}", hasher.finalize());
     if !actual.eq_ignore_ascii_case(expected_sha.trim()) {
         return Err(format!("Expected SHA-256 {} but found {}.", expected_sha, actual));
+    }
+    Ok(())
+}
+
+fn verify_fabric_mod_id(path: &Path, expected_id: &str) -> Result<(), String> {
+    let file = File::open(path).map_err(error_text)?;
+    let mut archive = ZipArchive::new(file).map_err(|_| "Managed client is not a valid jar archive.".to_string())?;
+    let mut metadata_entries = 0;
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index).map_err(error_text)?;
+        if entry.name() == "fabric.mod.json" {
+            metadata_entries += 1;
+        }
+    }
+    if metadata_entries != 1 {
+        return Err("Managed client must contain exactly one top-level fabric.mod.json.".to_string());
+    }
+    let mut metadata = archive
+        .by_name("fabric.mod.json")
+        .map_err(|_| "Managed client is missing top-level fabric.mod.json.".to_string())?;
+    if metadata.size() > MAX_FABRIC_METADATA_BYTES {
+        return Err("Managed client fabric.mod.json exceeds the 1 MiB safety limit.".to_string());
+    }
+    let mut contents = Vec::new();
+    (&mut metadata)
+        .take(MAX_FABRIC_METADATA_BYTES + 1)
+        .read_to_end(&mut contents)
+        .map_err(error_text)?;
+    if contents.len() as u64 > MAX_FABRIC_METADATA_BYTES {
+        return Err("Managed client fabric.mod.json exceeds the 1 MiB safety limit.".to_string());
+    }
+    let identity: FabricModIdentity = serde_json::from_slice(&contents)
+        .map_err(|error| format!("Managed client fabric.mod.json is invalid: {error}"))?;
+    if identity.id != expected_id {
+        return Err(format!("Managed client mod id must be {expected_id}."));
     }
     Ok(())
 }
@@ -3575,6 +3703,10 @@ fn read_trimmed(path: &Path) -> Result<String, String> {
 fn write_private_file(path: &Path, data: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(error_text)?; }
     fs::write(path, data).map_err(error_text)?;
+    restrict_private_file(path)
+}
+
+fn restrict_private_file(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -3645,7 +3777,12 @@ fn open_external(target: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_browser_url, java_feature_from_text};
+    use super::{
+        is_browser_url, java_feature_from_text, launch_payload_name, safe_file_name,
+        verify_fabric_mod_id, MANAGED_CLIENT_MOD_ID,
+    };
+    use std::{env, fs, fs::File, io::Write, path::PathBuf};
+    use zip::{write::SimpleFileOptions, ZipWriter};
 
     #[test]
     fn browser_urls_are_distinguished_from_filesystem_paths() {
@@ -3663,5 +3800,46 @@ mod tests {
         assert_eq!(java_feature_from_text("openjdk version \"21.0.8\" 2025-07-15"), 21);
         assert_eq!(java_feature_from_text("openjdk version \"25.0.3\" 2026-04-21"), 25);
         assert_eq!(java_feature_from_text("java version \"1.8.0_412\""), 8);
+    }
+
+    #[test]
+    fn protected_launch_payload_names_are_opaque_and_unique() {
+        let first = launch_payload_name();
+        let second = launch_payload_name();
+        assert!(first.starts_with("payload-") && first.ends_with(".jar"));
+        assert!(second.starts_with("payload-") && second.ends_with(".jar"));
+        assert_ne!(first, second);
+        assert!(!first.contains("cg-client"));
+    }
+
+    #[test]
+    fn protected_manifest_file_names_reject_traversal() {
+        assert_eq!(safe_file_name("client.jar").unwrap(), "client.jar");
+        for value in ["", ".", "..", "../client.jar", "nested/client.jar", "/tmp/client.jar", r"..\client.jar"] {
+            assert!(safe_file_name(value).is_err(), "{value} should be rejected");
+        }
+    }
+
+    #[test]
+    fn fabric_identity_requires_one_exact_top_level_id() {
+        let valid = write_test_jar(r#"{"id":"cg-mod","custom":{"id":"other"}}"#);
+        let nested = write_test_jar(r#"{"id":"other","custom":{"id":"cg-mod"}}"#);
+        let duplicate = write_test_jar(r#"{"id":"other","id":"cg-mod"}"#);
+        assert!(verify_fabric_mod_id(&valid, MANAGED_CLIENT_MOD_ID).is_ok());
+        assert!(verify_fabric_mod_id(&nested, MANAGED_CLIENT_MOD_ID).is_err());
+        assert!(verify_fabric_mod_id(&duplicate, MANAGED_CLIENT_MOD_ID).is_err());
+        for path in [valid, nested, duplicate] {
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    fn write_test_jar(metadata: &str) -> PathBuf {
+        let path = env::temp_dir().join(format!("gamble-launcher-test-{}.jar", launch_payload_name()));
+        let file = File::create(&path).unwrap();
+        let mut archive = ZipWriter::new(file);
+        archive.start_file("fabric.mod.json", SimpleFileOptions::default()).unwrap();
+        archive.write_all(metadata.as_bytes()).unwrap();
+        archive.finish().unwrap();
+        path
     }
 }

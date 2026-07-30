@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.gambleclient"
-version = "0.1.94"
+version = "0.1.95"
 
 val javafxVersion = "22.0.2"
 val javafxModuleNames = listOf("base", "graphics", "controls", "media", "web")

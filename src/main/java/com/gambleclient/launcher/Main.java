@@ -77,6 +77,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermission;
 import java.awt.datatransfer.StringSelection;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -103,6 +104,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
@@ -123,7 +125,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.94";
+    private static final String LAUNCHER_VERSION = "0.1.95";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -142,6 +144,10 @@ public class Main {
     private static final String CAPES_PATH = "/api/capes/capes.txt";
     private static final String MINECRAFT_VERSION = "1.21.11";
     private static final String FABRIC_LOADER_VERSION = "0.18.4";
+    private static final String MANAGED_CLIENT_MOD_ID = "cg-mod";
+    private static final long MAX_DOWNLOAD_BYTES = 512L * 1024L * 1024L;
+    private static final long MAX_MANAGED_CLIENT_BYTES = 64L * 1024L * 1024L;
+    private static final long MAX_FABRIC_METADATA_BYTES = 1024L * 1024L;
     private static final String LICENSE_PLACEHOLDER = "paste-your-license-key-here";
     private static final String FABRIC_PROFILE_URL = "https://meta.fabricmc.net/v2/versions/loader/"
         + MINECRAFT_VERSION + "/" + FABRIC_LOADER_VERSION + "/profile/json";
@@ -3101,6 +3107,9 @@ public class Main {
         if (size <= 0 || !sha256.matches("(?i)[0-9a-f]{64}")) {
             throw new IOException("Backend manifest is missing required size or SHA-256 integrity metadata.");
         }
+        if (size > MAX_MANAGED_CLIENT_BYTES) {
+            throw new IOException("Managed client artifact exceeds the 64 MiB safety limit.");
+        }
 
         return new LauncherManifest(
             Json.string(response.body.get("build")),
@@ -3198,6 +3207,7 @@ public class Main {
             if (!verifyManagedJar(installed, manifest)) {
                 log("Cached client payload failed verification; replacing " + installed.getName() + ".");
             } else {
+                hardenPrivateFile(installed);
                 cleanupManagedClientJarsFromMods();
                 ensureLoaderJar();
                 writeInstallMarker(build.id, manifest, installed);
@@ -3242,6 +3252,7 @@ public class Main {
             if (!verifyManagedJar(installed, manifest)) {
                 log("Cached client payload failed verification; reinstalling " + installed.getName() + ".");
             } else {
+                hardenPrivateFile(installed);
                 cleanupManagedClientJarsFromMods();
                 ensureLoaderJar();
                 writeInstallMarker(build.id, manifest, installed);
@@ -3302,6 +3313,58 @@ public class Main {
         if (!expectedHash.equalsIgnoreCase(actualHash)) {
             throw new IOException("Expected SHA-256 " + expectedHash + " but found " + actualHash + ".");
         }
+        verifyFabricModId(file, MANAGED_CLIENT_MOD_ID);
+    }
+
+    private void verifyFabricModId(File file, String expectedId) throws IOException {
+        try (ZipFile jar = new ZipFile(file)) {
+            long metadataEntries = jar.stream()
+                .filter(entry -> "fabric.mod.json".equals(entry.getName()))
+                .count();
+            if (metadataEntries != 1) {
+                throw new IOException("Managed client must contain exactly one top-level fabric.mod.json.");
+            }
+            ZipEntry metadata = jar.getEntry("fabric.mod.json");
+            if (metadata == null || metadata.isDirectory()) {
+                throw new IOException("Managed client is missing top-level fabric.mod.json.");
+            }
+            if (metadata.getSize() > MAX_FABRIC_METADATA_BYTES) {
+                throw new IOException("Managed client fabric.mod.json exceeds the 1 MiB safety limit.");
+            }
+            byte[] bytes;
+            try (InputStream input = jar.getInputStream(metadata);
+                 ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+                byte[] buffer = new byte[8192];
+                long total = 0;
+                int read;
+                while ((read = input.read(buffer)) != -1) {
+                    total += read;
+                    if (total > MAX_FABRIC_METADATA_BYTES) {
+                        throw new IOException("Managed client fabric.mod.json exceeds the 1 MiB safety limit.");
+                    }
+                    output.write(buffer, 0, read);
+                }
+                bytes = output.toByteArray();
+            }
+            Map<String, Object> object;
+            try {
+                object = Json.asObject(Json.parse(new String(bytes, StandardCharsets.UTF_8)));
+            } catch (RuntimeException error) {
+                throw new IOException("Managed client fabric.mod.json is invalid.", error);
+            }
+            if (!expectedId.equals(Json.string(object.get("id")))) {
+                throw new IOException("Managed client mod id must be " + expectedId + ".");
+            }
+        }
+    }
+
+    private boolean hasManagedClientIdentity(File file) {
+        try {
+            verifyFabricModId(file, MANAGED_CLIENT_MOD_ID);
+            return true;
+        } catch (IOException ignored) {
+            return false;
+        }
     }
 
     private String normalizeSha256(String value) {
@@ -3339,7 +3402,7 @@ public class Main {
             if (!file.isFile()) continue;
             String lower = file.getName().toLowerCase(Locale.ROOT);
             if (!lower.endsWith(".jar") && !lower.endsWith(".jar.disabled")) continue;
-            if (!isGambleClientJar(lower)) continue;
+            if (!hasManagedClientIdentity(file)) continue;
             if (!needle.isEmpty() && lower.contains(needle)) return file;
             if (fallback == null) fallback = file;
         }
@@ -3683,7 +3746,6 @@ public class Main {
 
     private Process launchMinecraftProcess(LaunchProfile launchProfile, LaunchIdentity identity, int memory, List<String> extraJavaArgs, LaunchTicket launchTicket, File payloadJar) throws IOException {
         File gameDir = getMinecraftFolder(launchProfile);
-        File launchTicketFile = launchTicket != null ? writeLaunchTicketFile(launchTicket) : null;
         File versionsDir = new File(gameDir, "versions");
         if (!versionsDir.exists() && !versionsDir.mkdirs()) {
             throw new IOException("Failed to create versions folder: " + versionsDir);
@@ -3712,22 +3774,27 @@ public class Main {
         File nativesDir = extractNatives(gameDir, versionId, profile);
 
         setProgress(82, "Launching");
-        List<String> command = buildLaunchCommand(gameDir, profile, classpath, nativesDir, identity, memory, versionId, extraJavaArgs, launchProfile, launchTicketFile, launchTicket != null ? launchTicket.build : "", payloadJar);
-        LaunchValidation validation = validateLaunchSetup(gameDir, profile, classpath, nativesDir, versionId, launchProfile, identity);
-        logValidationReport(validation);
-        logLaunchCommandDetails(command, profile.mainClass, gameDir);
-        log("Starting Java: " + command.get(0));
-        log("Main class: " + profile.mainClass);
-
-        ProcessBuilder builder = new ProcessBuilder(command);
-        builder.directory(gameDir);
-        builder.redirectErrorStream(false);
+        File launchTicketFile = null;
+        File livePayload = null;
         try {
+            launchTicketFile = launchTicket != null ? writeLaunchTicketFile(launchTicket) : null;
+            livePayload = payloadJar != null ? prepareLaunchPayload(payloadJar) : null;
+            List<String> command = buildLaunchCommand(gameDir, profile, classpath, nativesDir, identity, memory, versionId, extraJavaArgs, launchProfile, launchTicketFile, launchTicket != null ? launchTicket.build : "", livePayload);
+            LaunchValidation validation = validateLaunchSetup(gameDir, profile, classpath, nativesDir, versionId, launchProfile, identity);
+            logValidationReport(validation);
+            logLaunchCommandDetails(command, profile.mainClass, gameDir);
+            log("Starting Java: " + command.get(0));
+            log("Main class: " + profile.mainClass);
+
+            ProcessBuilder builder = new ProcessBuilder(command);
+            builder.directory(gameDir);
+            builder.redirectErrorStream(false);
             Process process = builder.start();
-            scheduleLaunchTicketCleanup(process, launchTicketFile);
+            scheduleLaunchArtifactCleanup(process, launchTicketFile, livePayload);
             return process;
         } catch (IOException e) {
             deleteQuietly(launchTicketFile);
+            deleteQuietly(livePayload);
             throw e;
         }
     }
@@ -5043,43 +5110,56 @@ public class Main {
             }
         }
 
-        HttpURLConnection connection = (HttpURLConnection) URI.create(urlText).toURL().openConnection();
-        connection.setInstanceFollowRedirects(true);
-        connection.setConnectTimeout(15000);
-        connection.setReadTimeout(30000);
-        connection.setRequestProperty("User-Agent", "GambleClientLauncher/0.1");
-
-        int status = connection.getResponseCode();
-        if (status < 200 || status >= 300) {
-            String body = readSmall(connection.getErrorStream());
-            throw new IOException(label + " returned HTTP " + status + (body.isEmpty() ? "" : ": " + body));
-        }
-
-        int length = connection.getContentLength();
-        if (updateProgress) setProgressStatus("Downloading");
-
         File temp = new File(output.getAbsolutePath() + ".part");
-        try (InputStream in = new BufferedInputStream(connection.getInputStream());
-             BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(temp))) {
-            byte[] buffer = new byte[16384];
-            long total = 0;
-            int read;
-            while ((read = in.read(buffer)) != -1) {
-                out.write(buffer, 0, read);
-                total += read;
-                if (updateProgress && length > 0) {
-                    int value = (int) Math.min(99, (total * 100L) / length);
-                    setProgress(value, value + "%");
+        Files.deleteIfExists(temp.toPath());
+        HttpURLConnection connection = (HttpURLConnection) URI.create(urlText).toURL().openConnection();
+        boolean completed = false;
+        try {
+            connection.setInstanceFollowRedirects(true);
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(30000);
+            connection.setRequestProperty("User-Agent", "GambleClientLauncher/0.1");
+
+            int status = connection.getResponseCode();
+            if (status < 200 || status >= 300) {
+                String body = readSmall(connection.getErrorStream());
+                throw new IOException(label + " returned HTTP " + status + (body.isEmpty() ? "" : ": " + body));
+            }
+
+            long length = connection.getContentLengthLong();
+            if (length > MAX_DOWNLOAD_BYTES) {
+                throw new IOException(label + " exceeds the 512 MiB safety limit.");
+            }
+            if (updateProgress) setProgressStatus("Downloading");
+
+            try (InputStream in = new BufferedInputStream(connection.getInputStream());
+                 BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(temp))) {
+                byte[] buffer = new byte[16384];
+                long total = 0;
+                int read;
+                while ((read = in.read(buffer)) != -1) {
+                    total += read;
+                    if (total > MAX_DOWNLOAD_BYTES) {
+                        throw new IOException(label + " exceeds the 512 MiB safety limit.");
+                    }
+                    out.write(buffer, 0, read);
+                    if (updateProgress && length > 0) {
+                        int value = (int) Math.min(99, (total * 100L) / length);
+                        setProgress(value, value + "%");
+                    }
                 }
             }
-        }
 
-        if (temp.length() == 0) {
-            temp.delete();
-            throw new IOException("Downloaded file is empty: " + label);
-        }
+            if (temp.length() == 0) {
+                throw new IOException("Downloaded file is empty: " + label);
+            }
 
-        Files.move(temp.toPath(), output.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            Files.move(temp.toPath(), output.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            completed = true;
+        } finally {
+            connection.disconnect();
+            if (!completed) Files.deleteIfExists(temp.toPath());
+        }
     }
 
     private String sha256Hex(File file) throws IOException {
@@ -5113,6 +5193,12 @@ public class Main {
 
         File installed = payloadJarFile(manifest);
         Files.move(downloaded.toPath(), installed.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        try {
+            hardenPrivateFile(installed);
+        } catch (IOException error) {
+            Files.deleteIfExists(installed.toPath());
+            throw error;
+        }
         return installed;
     }
 
@@ -5130,7 +5216,7 @@ public class Main {
                 String name = file.getName().toLowerCase(Locale.ROOT);
                 if (!file.isFile()) continue;
                 if (!name.endsWith(".jar") && !name.endsWith(".jar.disabled")) continue;
-                if (!name.startsWith("cg-client") && !name.startsWith("cg-mod")) continue;
+                if (!hasManagedClientIdentity(file)) continue;
 
                 File backup = new File(backupDir, stamp + "-" + file.getName());
                 Files.move(file.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING);
@@ -5298,7 +5384,7 @@ public class Main {
         if (files == null) return false;
 
         for (File file : files) {
-            if (file.isFile() && file.getName().toLowerCase(Locale.ROOT).endsWith(".jar") && isGambleClientJar(file.getName())) {
+            if (file.isFile() && file.getName().toLowerCase(Locale.ROOT).endsWith(".jar") && hasManagedClientIdentity(file)) {
                 return true;
             }
         }
@@ -5867,13 +5953,25 @@ public class Main {
         return new File(getManagedMinecraftRoot(), "cg-mod");
     }
 
-    private void hardenPrivateFile(File file) {
+    private void hardenPrivateFile(File file) throws IOException {
         if (file == null || !file.exists()) return;
-        file.setReadable(false, false);
-        file.setWritable(false, false);
-        file.setExecutable(false, false);
-        file.setReadable(true, true);
-        file.setWritable(true, true);
+        try {
+            Files.setPosixFilePermissions(file.toPath(), Set.of(
+                PosixFilePermission.OWNER_READ,
+                PosixFilePermission.OWNER_WRITE
+            ));
+            return;
+        } catch (UnsupportedOperationException ignored) {
+            // Windows and non-POSIX filesystems use the owner-only File API fallback.
+        }
+        boolean hardened = file.setReadable(false, false);
+        hardened &= file.setWritable(false, false);
+        hardened &= file.setExecutable(false, false);
+        hardened &= file.setReadable(true, true);
+        hardened &= file.setWritable(true, true);
+        if (!hardened) {
+            throw new IOException("Could not restrict private file permissions: " + file);
+        }
     }
 
     private File getLauncherLogFile() {
@@ -5896,6 +5994,37 @@ public class Main {
         return new File(getPayloadsFolder(), manifest.fileName);
     }
 
+    private File prepareLaunchPayload(File source) throws IOException {
+        if (source == null || !source.isFile()) {
+            throw new IOException("Managed client payload is missing.");
+        }
+        File folder = new File(getProfileDataFolder(), "launch");
+        if (!folder.exists() && !folder.mkdirs()) {
+            throw new IOException("Failed to create launch payload folder: " + folder);
+        }
+        cleanupStaleLaunchPayloads(folder);
+        File target = new File(folder, "payload-" + randomBase64Url(24) + ".jar");
+        try {
+            Files.copy(source.toPath(), target.toPath());
+            hardenPrivateFile(target);
+            return target;
+        } catch (IOException error) {
+            Files.deleteIfExists(target.toPath());
+            throw error;
+        }
+    }
+
+    private void cleanupStaleLaunchPayloads(File folder) throws IOException {
+        File[] files = folder.listFiles();
+        if (files == null) return;
+        for (File file : files) {
+            String name = file.getName().toLowerCase(Locale.ROOT);
+            if (file.isFile() && name.matches("^payload-[a-z0-9_-]{32}\\.jar$")) {
+                Files.deleteIfExists(file.toPath());
+            }
+        }
+    }
+
     private boolean isSafeFileName(String value) {
         if (value == null || value.isBlank() || value.contains("/") || value.contains("\\") || value.equals(".") || value.equals("..")) return false;
         return new File(value).getName().equals(value) && !new File(value).isAbsolute();
@@ -5912,13 +6041,14 @@ public class Main {
             + "build=" + launchTicket.build + "\n"
             + "expiresAt=" + launchTicket.expiresAt + "\n";
         Files.writeString(file.toPath(), payload, StandardCharsets.UTF_8);
+        hardenPrivateFile(file);
         file.deleteOnExit();
         log("Launch ticket issued for " + launchTicket.build + "; expires at " + launchTicket.expiresAt + ".");
         return file;
     }
 
-    private void scheduleLaunchTicketCleanup(Process process, File launchTicketFile) {
-        if (process == null || launchTicketFile == null) return;
+    private void scheduleLaunchArtifactCleanup(Process process, File launchTicketFile, File livePayload) {
+        if (process == null || (launchTicketFile == null && livePayload == null)) return;
 
         Thread thread = new Thread(new Runnable() {
             @Override
@@ -5929,9 +6059,10 @@ public class Main {
                     Thread.currentThread().interrupt();
                 } finally {
                     deleteQuietly(launchTicketFile);
+                    deleteQuietly(livePayload);
                 }
             }
-        }, "gamble-launch-ticket-cleanup");
+        }, "gamble-launch-artifact-cleanup");
         thread.setDaemon(true);
         thread.start();
     }
@@ -6829,7 +6960,13 @@ public class Main {
         }
 
         static Object parse(String text) {
-            return new Json(text).parseValue();
+            Json parser = new Json(text);
+            Object value = parser.parseValue();
+            parser.skipWhitespace();
+            if (parser.index != parser.text.length()) {
+                throw new IllegalArgumentException("Invalid JSON trailing content near character " + parser.index + ".");
+            }
+            return value;
         }
 
         @SuppressWarnings("unchecked")
@@ -6890,6 +7027,9 @@ public class Main {
             while (index < text.length()) {
                 skipWhitespace();
                 String key = parseString();
+                if (object.containsKey(key)) {
+                    throw new IllegalArgumentException("Invalid JSON duplicate key: " + key + ".");
+                }
                 skipWhitespace();
                 expect(':');
                 Object value = parseValue();
@@ -6897,11 +7037,11 @@ public class Main {
                 skipWhitespace();
                 if (peek('}')) {
                     index++;
-                    break;
+                    return object;
                 }
                 expect(',');
             }
-            return object;
+            throw new IllegalArgumentException("Invalid JSON unterminated object.");
         }
 
         private List<Object> parseArray() {
@@ -6918,19 +7058,23 @@ public class Main {
                 skipWhitespace();
                 if (peek(']')) {
                     index++;
-                    break;
+                    return array;
                 }
                 expect(',');
             }
-            return array;
+            throw new IllegalArgumentException("Invalid JSON unterminated array.");
         }
 
         private String parseString() {
             expect('"');
             StringBuilder builder = new StringBuilder();
+            boolean closed = false;
             while (index < text.length()) {
                 char c = text.charAt(index++);
-                if (c == '"') break;
+                if (c == '"') {
+                    closed = true;
+                    break;
+                }
                 if (c == '\\' && index < text.length()) {
                     char escaped = text.charAt(index++);
                     switch (escaped) {
@@ -6955,30 +7099,62 @@ public class Main {
                             builder.append('\t');
                             break;
                         case 'u':
-                            if (index + 4 <= text.length()) {
-                                String hex = text.substring(index, index + 4);
-                                builder.append((char) Integer.parseInt(hex, 16));
-                                index += 4;
+                            if (index + 4 > text.length()) {
+                                throw new IllegalArgumentException("Invalid JSON unicode escape near character " + index + ".");
                             }
+                            String hex = text.substring(index, index + 4);
+                            builder.append((char) Integer.parseInt(hex, 16));
+                            index += 4;
                             break;
                         default:
-                            builder.append(escaped);
+                            throw new IllegalArgumentException("Invalid JSON escape near character " + (index - 1) + ".");
                     }
                 } else {
+                    if (c < 0x20) {
+                        throw new IllegalArgumentException("Invalid JSON control character near character " + (index - 1) + ".");
+                    }
                     builder.append(c);
                 }
+            }
+            if (!closed) {
+                throw new IllegalArgumentException("Invalid JSON unterminated string.");
             }
             return builder.toString();
         }
 
         private Number parseNumber() {
             int start = index;
-            while (index < text.length()) {
-                char c = text.charAt(index);
-                if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E') {
-                    index++;
-                } else {
-                    break;
+            if (peek('-')) index++;
+            if (index >= text.length()) {
+                throw new IllegalArgumentException("Invalid JSON number near character " + start + ".");
+            }
+            if (peek('0')) {
+                index++;
+                if (index < text.length() && Character.isDigit(text.charAt(index))) {
+                    throw new IllegalArgumentException("Invalid JSON leading zero near character " + start + ".");
+                }
+            } else {
+                int integerStart = index;
+                while (index < text.length() && Character.isDigit(text.charAt(index))) index++;
+                if (integerStart == index) {
+                    throw new IllegalArgumentException("Invalid JSON number near character " + start + ".");
+                }
+            }
+            if (peek('.')) {
+                index++;
+                int fractionStart = index;
+                while (index < text.length() && Character.isDigit(text.charAt(index))) index++;
+                if (fractionStart == index) {
+                    throw new IllegalArgumentException("Invalid JSON fraction near character " + start + ".");
+                }
+            }
+            if (peek('e') || peek('E')) {
+                index++;
+                if (peek('+') || peek('-')) index++;
+                int exponentStart = index;
+                while (index < text.length() && Character.isDigit(text.charAt(index))) index++;
+                if (exponentStart == index) {
+                    throw new IllegalArgumentException("Invalid JSON exponent near character " + start + ".");
                 }
             }
 

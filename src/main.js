@@ -13,7 +13,7 @@ const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
-const LAUNCHER_VERSION = "0.1.94";
+const LAUNCHER_VERSION = "0.1.95";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 const PREVIEW = !("__TAURI_INTERNALS__" in window);
@@ -184,9 +184,9 @@ async function mockInvoke(command, args = {}) {
         minVersion: LAUNCHER_VERSION,
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.94-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.94-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.94_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.95-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.95-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.95_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -213,8 +213,8 @@ async function mockInvoke(command, args = {}) {
   if (command === "download_launcher_update") {
     return {
       version: LAUNCHER_VERSION,
-      fileName: "Gamble-Client-Launcher_0.1.94_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.94_amd64.deb",
+      fileName: "Gamble-Client-Launcher_0.1.95_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.95_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
