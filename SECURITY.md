@@ -12,16 +12,17 @@ Do not publish a launcher vulnerability or a token from a local diagnostics file
 - Downloads have compressed and expanded size limits, and archive paths are checked before extraction.
 - Launcher and Microsoft session files use owner-only permissions on Unix.
 - The Tauri webview uses a restrictive Content Security Policy; remote scripts, objects, frames, and forms are disabled.
-- Remote Minecraft commands have matching client-side and server-side allowlists and require confirmation unless the user explicitly trusts the paired device.
+- Gamble Client launch tickets and downloaded artifacts are validated before use; the launcher has no remote-command feature.
 
-## Open-source readiness items
+## Remaining hardening work
 
-The source tree contains no deployment secrets or private signing keys. Before a public release, the maintainers still need to:
+The public source tree contains no deployment secrets or private signing keys.
+The following defense-in-depth work remains:
 
 1. Configure signed Windows and Linux release artifacts and publish signature verification instructions.
 2. Pin the managed Java runtime to a reviewed release digest instead of relying only on the vendor HTTPS endpoint.
 3. Protect locally stored Windows session and Microsoft refresh tokens with the operating-system credential store; file permissions alone are not equivalent to encryption at rest.
-4. Add dependency review, `cargo audit`, lockfile review, and secret scanning to pull requests.
+4. Keep dependency review, lockfile review, and secret scanning enabled for pull requests.
 5. Commission an independent review of authentication, updater, archive extraction, local IPC, and release-publishing paths.
 
 The launcher must not be described as fully audited until those remaining items are complete.

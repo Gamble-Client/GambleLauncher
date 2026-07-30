@@ -1,6 +1,8 @@
 # Gamble Client Launcher
 
-Standalone launcher shell for Gamble Client.
+The open-source desktop launcher for Gamble Client. The launcher source is
+licensed under the [MIT License](LICENSE); protected Gamble Client mod code and
+server-side services are separate projects and are not included here.
 
 Current flow:
 
@@ -35,6 +37,24 @@ Build:
 ```bash
 ./gradlew clean build
 ```
+
+The web/Tauri shell can be built with:
+
+```bash
+npm ci
+npm run build
+```
+
+## Security and privacy
+
+- No deployment credentials, artifact-signing private keys, Discord tokens, or
+  payment secrets belong in this repository.
+- Microsoft authentication uses a public desktop-app client ID and PKCE. The
+  launcher never accepts or embeds a Microsoft client secret.
+- Local launcher and Microsoft sessions are runtime data and are ignored by
+  Git.
+- See [SECURITY.md](SECURITY.md) before reporting a vulnerability or publishing
+  diagnostic output.
 
 Native launcher image for the current OS:
 
