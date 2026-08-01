@@ -125,7 +125,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.98";
+    private static final String LAUNCHER_VERSION = "0.1.99";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -191,6 +191,7 @@ public class Main {
         new Build("Release", "release"),
         new Build("Beta++", "beta_plus"),
         new Build("Media", "media"),
+        new Build("Dev", "dev"),
         new Build("Ad Tier", "ad_tier")
     };
     private static final LaunchProfile[] LAUNCH_PROFILES = new LaunchProfile[] {
@@ -2494,6 +2495,10 @@ public class Main {
         String message = outdated.getMessage() + "\n\nDownload " + target + ":\n" + download;
         setUpdateStatus("Launcher update required: " + target + ".");
         log("Launcher update required: " + download);
+        if (isLauncherSignInActive()) {
+            log("Launcher update prompt deferred until browser sign-in finishes.");
+            return true;
+        }
         JOptionPane.showMessageDialog(frame, message, "Launcher update required", JOptionPane.WARNING_MESSAGE);
         return true;
     }
@@ -4930,6 +4935,7 @@ public class Main {
             jsonBoolean(user.get("mediaAccess")),
             jsonBoolean(user.get("testerAccess")),
             jsonBoolean(user.get("betaAccess")),
+            jsonBoolean(user.get("devAccess")),
             jsonBoolean(user.get("adTierAccess"))
         );
     }
@@ -4964,6 +4970,7 @@ public class Main {
     }
 
     private String accountStatusText(LauncherUser user) {
+        if (user != null && user.devAccess) return "Dev";
         String status = user == null ? "" : user.accessStatus;
         String plan = user == null ? "" : user.selectedPlan;
         if ("tester".equals(plan) || user != null && user.testerAccess) return "Tester";
@@ -5011,8 +5018,9 @@ public class Main {
     }
 
     private Build bestBuildForUser(LauncherUser user) {
+        if (user != null && user.devAccess) return findBuild("dev");
         if (hasOwnerAccess(user)) return findBuild("media");
-        String[] priority = {"media", "beta_plus", "release", "ad_tier"};
+        String[] priority = {"dev", "media", "beta_plus", "release", "ad_tier"};
         for (String buildId : priority) {
             if (canUseBuild(user, buildId)) return findBuild(buildId);
         }
@@ -5028,6 +5036,7 @@ public class Main {
 
     private boolean canUseBuild(LauncherUser user, String buildId) {
         if (user == null) return false;
+        if ("dev".equals(buildId)) return user.devAccess || hasOwnerAccess(user);
         if ("media".equals(buildId)) return hasMediaAccess(user);
         if ("beta_plus".equals(buildId)) return hasBetaAccess(user);
         if ("release".equals(buildId)) return isOwnedAccess(user.accessStatus);
@@ -6551,9 +6560,10 @@ public class Main {
         final boolean mediaAccess;
         final boolean testerAccess;
         final boolean betaAccess;
+        final boolean devAccess;
         final boolean adTierAccess;
 
-        LauncherUser(String email, String displayName, String discordUsername, String selectedPlan, String accessStatus, boolean ownerAccess, boolean mediaAccess, boolean testerAccess, boolean betaAccess, boolean adTierAccess) {
+        LauncherUser(String email, String displayName, String discordUsername, String selectedPlan, String accessStatus, boolean ownerAccess, boolean mediaAccess, boolean testerAccess, boolean betaAccess, boolean devAccess, boolean adTierAccess) {
             this.email = email;
             this.displayName = displayName;
             this.discordUsername = discordUsername;
@@ -6563,6 +6573,7 @@ public class Main {
             this.mediaAccess = mediaAccess;
             this.testerAccess = testerAccess;
             this.betaAccess = betaAccess;
+            this.devAccess = devAccess;
             this.adTierAccess = adTierAccess;
         }
     }

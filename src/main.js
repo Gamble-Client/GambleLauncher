@@ -13,7 +13,7 @@ const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
-const LAUNCHER_VERSION = "0.1.98";
+const LAUNCHER_VERSION = "0.1.99";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 const PREVIEW = !("__TAURI_INTERNALS__" in window);
@@ -30,6 +30,7 @@ const builds = [
   { id: "release", label: "Release" },
   { id: "beta_plus", label: "Beta++" },
   { id: "media", label: "Media" },
+  { id: "dev", label: "Dev" },
   { id: "ad_tier", label: "Ad Tier" }
 ];
 
@@ -62,6 +63,8 @@ const state = {
   status: "Starting",
   busy: false,
   signIn: null,
+  signInActive: false,
+  signInGeneration: 0,
   signInError: "",
   microsoftSignIn: null,
   microsoftError: "",
@@ -184,9 +187,9 @@ async function mockInvoke(command, args = {}) {
         minVersion: LAUNCHER_VERSION,
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.98-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.98-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.98_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.99-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.99-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.99_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -213,8 +216,8 @@ async function mockInvoke(command, args = {}) {
   if (command === "download_launcher_update") {
     return {
       version: LAUNCHER_VERSION,
-      fileName: "Gamble-Client-Launcher_0.1.98_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.98_amd64.deb",
+      fileName: "Gamble-Client-Launcher_0.1.99_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.99_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -893,6 +896,10 @@ function updatePopup() {
       </section>
     `;
   }
+  // Browser sign-in owns the launcher's attention until its poll is completed or
+  // cancelled. Automatic update modals would otherwise cover that flow with a
+  // disabled action while state.busy is true.
+  if (signInInProgress()) return "";
   if (launcherNeedsUpdate() && state.dismissedLauncherVersion !== latestLauncherVersion()) {
     return `
       <section class="modal-scrim">
@@ -925,6 +932,10 @@ function updatePopup() {
     `;
   }
   return "";
+}
+
+function signInInProgress() {
+  return state.signInActive || Boolean(state.signIn) || Boolean(state.microsoftSignIn);
 }
 
 function launchProgressModal() {
@@ -1262,6 +1273,7 @@ function buildForAccount() {
 
 function preferredBuildForAccount(account = state.account) {
   if (!account) return "release";
+  if (account.devAccess) return "dev";
   if (account.ownerAccess || hasPlanOrStatus(account, ["owner"])) return "media";
   if (account.mediaAccess || account.testerAccess || hasPlanOrStatus(account, ["media", "tester"])) return "media";
   if (account.betaAccess || hasPlanOrStatus(account, ["beta_plus", "lifetime_beta"])) return "beta_plus";
@@ -1272,6 +1284,7 @@ function preferredBuildForAccount(account = state.account) {
 function canUseBuild(buildId, account = state.account) {
   if (!account) return buildId === "release";
   if (account.ownerAccess || hasPlanOrStatus(account, ["owner"])) return true;
+  if (buildId === "dev") return Boolean(account.devAccess);
   if (buildId === "ad_tier") return preferredBuildForAccount(account) === "ad_tier";
   if (buildId === "release") return preferredBuildForAccount(account) !== "ad_tier";
   if (buildId === "beta_plus") return ["beta_plus", "media"].includes(preferredBuildForAccount(account));
@@ -1280,7 +1293,7 @@ function canUseBuild(buildId, account = state.account) {
 }
 
 function buildRank(buildId) {
-  return { ad_tier: 0, release: 1, beta_plus: 2, media: 3 }[buildId] ?? -1;
+  return { ad_tier: 0, release: 1, beta_plus: 2, media: 3, dev: 4 }[buildId] ?? -1;
 }
 
 function storedBuildId() {
@@ -1539,6 +1552,8 @@ async function refreshMinecraftStatus(options = {}) {
 }
 
 async function startSignIn() {
+  const generation = ++state.signInGeneration;
+  state.signInActive = true;
   setBusy(true, "Opening browser sign-in");
   try {
     const start = await api("/api/launcher/start", { method: "POST", body: "{}" });
@@ -1551,21 +1566,26 @@ async function startSignIn() {
     }
     log("Waiting for browser sign-in.");
     render();
-    await pollSignIn(start);
+    await pollSignIn(start, generation);
   } catch (error) {
+    if (generation !== state.signInGeneration || !state.signInActive) return;
     log(`Sign-in failed: ${error.message || error}`);
     if (state.signIn?.loginUrl) {
       state.signInError = error.message || "Sign-in failed. Open or copy the link below.";
       render();
     }
   } finally {
-    setBusy(false);
+    if (generation === state.signInGeneration) {
+      state.signInActive = false;
+      setBusy(false);
+    }
   }
 }
 
-async function pollSignIn(start) {
-  while (Date.now() / 1000 < Number(start.expiresAt || 0)) {
+async function pollSignIn(start, generation) {
+  while (generation === state.signInGeneration && state.signInActive && Date.now() / 1000 < Number(start.expiresAt || 0)) {
     await sleep(2000);
+    if (generation !== state.signInGeneration || !state.signInActive) return;
     let body;
     try {
       body = await invoke("launcher_api", {
@@ -1596,11 +1616,13 @@ async function pollSignIn(start) {
       await refreshSocial();
       log(`Signed in as ${accountTitle()}`);
       state.signIn = null;
+      state.signInActive = false;
       state.signInError = "";
       await refreshManifest();
       return;
     }
   }
+  if (generation !== state.signInGeneration || !state.signInActive) return;
   throw new Error("Launcher sign-in expired.");
 }
 
@@ -2011,6 +2033,8 @@ app.addEventListener("click", async (event) => {
       render();
     }
   } else if (action === "cancel-signin") {
+    state.signInGeneration += 1;
+    state.signInActive = false;
     state.signIn = null;
     state.signInError = "";
     state.busy = false;

@@ -52,3 +52,30 @@ test("Windows retries the embedded app navigation only while WebView2 is blank",
     assert.match(rust, /url\.as_str\(\) != "about:blank"/);
     assert.match(rust, /window\.navigate\(app_url\.clone\(\)\)/);
 });
+
+test("automatic update prompts never cover an active sign-in flow", async () => {
+    const frontend = await source("src/main.js");
+    const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
+
+    assert.match(frontend, /if \(signInInProgress\(\)\) return "";/);
+    assert.match(frontend, /state\.signInActive \|\| Boolean\(state\.signIn\) \|\| Boolean\(state\.microsoftSignIn\)/);
+    assert.match(java, /if \(isLauncherSignInActive\(\)\) \{[\s\S]*Launcher update prompt deferred/);
+});
+
+test("cancelling browser sign-in invalidates its background poll", async () => {
+    const frontend = await source("src/main.js");
+
+    assert.match(frontend, /const generation = \+\+state\.signInGeneration;/);
+    assert.match(frontend, /generation !== state\.signInGeneration \|\| !state\.signInActive/);
+    assert.match(frontend, /action === "cancel-signin"[\s\S]*state\.signInGeneration \+= 1;[\s\S]*state\.signInActive = false;/);
+});
+
+test("native and universal launchers expose the role-gated Dev build", async () => {
+    const frontend = await source("src/main.js");
+    const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
+
+    assert.match(frontend, /\{ id: "dev", label: "Dev" \}/);
+    assert.match(frontend, /if \(buildId === "dev"\) return Boolean\(account\.devAccess\);/);
+    assert.match(java, /new Build\("Dev", "dev"\)/);
+    assert.match(java, /if \("dev"\.equals\(buildId\)\) return user\.devAccess \|\| hasOwnerAccess\(user\);/);
+});
