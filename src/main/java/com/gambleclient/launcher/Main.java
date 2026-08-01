@@ -125,7 +125,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.96";
+    private static final String LAUNCHER_VERSION = "0.1.97";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -2935,8 +2935,6 @@ public class Main {
         setProgress(0, "Sponsor");
 
         new SwingWorker<LauncherAccount, Void>() {
-            private String licenseKey = "";
-
             @Override
             protected LauncherAccount doInBackground() throws Exception {
                 ApiResponse start = apiRequest("POST", "/api/launcher/ad-reward/start", "{}", launcherToken, 200);
@@ -2955,7 +2953,6 @@ public class Main {
                     launcherUser = account.user;
                     launcherAds = account.ads;
                     selectBestBuildForUser(account.user);
-                    if (!licenseKey.isEmpty()) writeLicenseKey(licenseKey);
                     updateAccountUi();
                     updateAdUi();
                     Main.this.setProgress(100, "Sponsored");
@@ -2988,12 +2985,10 @@ public class Main {
         ensureSignedIn();
         ApiResponse complete = apiRequest("POST", "/api/launcher/ad-reward/complete", "{\"challenge\":\"" + jsonEscape(sponsorChallenge) + "\"}", launcherToken, 200);
         sponsorChallenge = "";
-        String licenseKey = Json.string(complete.body.get("licenseKey"));
         LauncherAccount account = parseLauncherAccount(complete.body);
         launcherUser = account.user;
         launcherAds = account.ads;
         selectBestBuildForUser(account.user);
-        if (!licenseKey.isEmpty()) writeLicenseKey(licenseKey);
         updateAccountUi();
         updateAdUi();
         log("Sponsored access refreshed.");
@@ -3098,6 +3093,10 @@ public class Main {
 
         String fileName = Json.string(response.body.get("fileName"));
         String downloadUrl = Json.string(response.body.get("downloadUrl"));
+        String responseBuild = canonicalBuildId(Json.string(response.body.get("build")));
+        if (!canonicalBuildId(build.id).equals(responseBuild)) {
+            throw new IOException("Backend manifest was issued for a different client tier.");
+        }
         if (fileName.isEmpty() || downloadUrl.isEmpty()) {
             throw new IOException("Backend manifest did not include a jar download.");
         }
@@ -3112,10 +3111,9 @@ public class Main {
         }
 
         return new LauncherManifest(
-            Json.string(response.body.get("build")),
+            responseBuild,
             fileName,
             downloadUrl,
-            Json.string(response.body.get("licenseKey")),
             sha256,
             size,
             Json.string(response.body.get("buildVersion"))
@@ -3134,8 +3132,12 @@ public class Main {
 
         String ticket = Json.string(response.body.get("ticket"));
         if (ticket.isEmpty()) throw new IOException("Backend did not issue a launch ticket.");
+        String responseBuild = canonicalBuildId(Json.string(response.body.get("build")));
+        if (!canonicalBuildId(build.id).equals(responseBuild)) {
+            throw new IOException("Backend launch ticket was issued for a different client tier.");
+        }
         return new LaunchTicket(
-            Json.string(response.body.get("build")),
+            responseBuild,
             ticket,
             jsonLong(response.body.get("expiresAt"))
         );
@@ -3200,7 +3202,7 @@ public class Main {
     private UpdateResult checkAndInstallBuild(Build build) throws IOException {
         ensureSignedIn();
         LauncherManifest manifest = fetchLauncherManifest(build);
-        ensureLocalLicenseKey(build, manifest);
+        clearLegacyLocalLicenseFiles();
 
         File installed = payloadJarFile(manifest);
         if (installed.isFile()) {
@@ -3245,7 +3247,7 @@ public class Main {
         ensureSignedIn();
         LauncherManifest manifest = fetchLauncherManifest(build);
 
-        ensureLocalLicenseKey(build, manifest);
+        clearLegacyLocalLicenseFiles();
 
         File installed = payloadJarFile(manifest);
         if (!forceDownload && installed.isFile()) {
@@ -3313,10 +3315,14 @@ public class Main {
         if (!expectedHash.equalsIgnoreCase(actualHash)) {
             throw new IOException("Expected SHA-256 " + expectedHash + " but found " + actualHash + ".");
         }
-        verifyFabricModId(file, MANAGED_CLIENT_MOD_ID);
+        verifyFabricModIdentity(file, MANAGED_CLIENT_MOD_ID, manifest.build);
     }
 
     private void verifyFabricModId(File file, String expectedId) throws IOException {
+        verifyFabricModIdentity(file, expectedId, "");
+    }
+
+    private void verifyFabricModIdentity(File file, String expectedId, String expectedBuild) throws IOException {
         try (ZipFile jar = new ZipFile(file)) {
             long metadataEntries = jar.stream()
                 .filter(entry -> "fabric.mod.json".equals(entry.getName()))
@@ -3355,6 +3361,13 @@ public class Main {
             if (!expectedId.equals(Json.string(object.get("id")))) {
                 throw new IOException("Managed client mod id must be " + expectedId + ".");
             }
+            if (expectedBuild != null && !expectedBuild.isBlank()) {
+                Map<String, Object> custom = Json.asObject(object.get("custom"));
+                String variant = canonicalBuildId(Json.string(custom.get("cg-mod:build_variant")));
+                if (!canonicalBuildId(expectedBuild).equals(variant)) {
+                    throw new IOException("Managed client build variant does not match the requested tier.");
+                }
+            }
         }
     }
 
@@ -3370,6 +3383,13 @@ public class Main {
     private String normalizeSha256(String value) {
         String text = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
         return text.matches("[0-9a-f]{64}") ? text : "";
+    }
+
+    private String canonicalBuildId(String value) {
+        String normalized = value == null ? "" : value.trim().toLowerCase(Locale.ROOT).replace('-', '_');
+        if ("beta".equals(normalized) || "beta_plus_plus".equals(normalized)) return "beta_plus";
+        if ("ad".equals(normalized)) return "ad_tier";
+        return normalized;
     }
 
     private String displayManifestVersion(LauncherManifest manifest) {
@@ -3424,6 +3444,14 @@ public class Main {
             setProgressStatus("Sign in required");
             log("Launch blocked: sign in to the launcher first.");
             JOptionPane.showMessageDialog(frame, "Sign in to the launcher before launching Minecraft.", "Sign in required", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        if (!sponsoredAccessActiveFor(build)) {
+            setProgressStatus("Sponsor required");
+            log("Launch blocked: Ad Tier sponsored access is not active.");
+            JOptionPane.showMessageDialog(frame,
+                "Watch the sponsor break in Gamble Client Launcher before launching Ad Tier.",
+                "Sponsor break required", JOptionPane.WARNING_MESSAGE);
             return;
         }
 
@@ -3694,20 +3722,8 @@ public class Main {
         return null;
     }
 
-    private void ensureLocalLicenseKey(Build build, LauncherManifest manifest) throws IOException {
+    private void clearLegacyLocalLicenseFiles() throws IOException {
         writeLicenseKey("");
-    }
-
-    private LauncherLicense requestLauncherLicense(Build build) throws IOException {
-        ApiResponse response = apiRequest(
-            "POST",
-            "/api/launcher/license",
-            "{\"build\":\"" + jsonEscape(build.id) + "\",\"reason\":\"missing_local_license\"}",
-            launcherToken,
-            200,
-            201
-        );
-        return new LauncherLicense(Json.string(response.body.get("licenseKey")));
     }
 
     private LaunchIdentity resolveLaunchIdentity(String fallbackName) throws IOException {
@@ -5015,7 +5031,9 @@ public class Main {
         if ("media".equals(buildId)) return hasMediaAccess(user);
         if ("beta_plus".equals(buildId)) return hasBetaAccess(user);
         if ("release".equals(buildId)) return isOwnedAccess(user.accessStatus);
-        if ("ad_tier".equals(buildId)) return !isBlockedAccess(user.accessStatus) && !user.email.isEmpty();
+        if ("ad_tier".equals(buildId)) return !isBlockedAccess(user.accessStatus)
+            && !isOwnedAccess(user.accessStatus)
+            && !user.email.isEmpty();
         return false;
     }
 
@@ -5700,10 +5718,12 @@ public class Main {
         boolean signedIn = launcherUser != null && launcherToken != null && !launcherToken.trim().isEmpty();
         boolean signingIn = isLauncherSignInActive();
         boolean running = minecraftProcess != null && minecraftProcess.isAlive();
-        installButton.setEnabled(!busy && !running && gambleProfile && signedIn);
+        Build selectedBuild = (Build) buildBox.getSelectedItem();
+        boolean sponsoredAccess = sponsoredAccessActiveFor(selectedBuild);
+        installButton.setEnabled(!busy && !running && gambleProfile && signedIn && sponsoredAccess);
         accountManagerButton.setEnabled(!busy && !running);
-        launchButton.setText(running ? "Kill" : "Launch");
-        launchButton.setEnabled(running || (!busy && signedIn));
+        launchButton.setText(running ? "Kill" : sponsoredAccess ? "Launch" : "Watch Sponsor First");
+        launchButton.setEnabled(running || (!busy && signedIn && sponsoredAccess));
         signInButton.setText(signingIn ? "Cancel" : "Sign In");
         promptSignInButton.setText(signingIn ? "Cancel" : "Sign In");
         signInButton.setEnabled(!busy || signingIn);
@@ -5724,6 +5744,10 @@ public class Main {
         username.setEnabled(!busy && !running);
         memoryGb.setEnabled(!busy && !running);
         javaArgs.setEnabled(!busy && !running);
+    }
+
+    private boolean sponsoredAccessActiveFor(Build build) {
+        return build == null || !"ad_tier".equals(build.id) || launcherAds != null && launcherAds.active;
     }
 
     private void log(final String message) {
@@ -6543,14 +6567,6 @@ public class Main {
         }
     }
 
-    private static final class LauncherLicense {
-        final String licenseKey;
-
-        LauncherLicense(String licenseKey) {
-            this.licenseKey = licenseKey;
-        }
-    }
-
     private static final class LauncherAds {
         final boolean required;
         final boolean paid;
@@ -6579,16 +6595,14 @@ public class Main {
         final String build;
         final String fileName;
         final String downloadUrl;
-        final String licenseKey;
         final String sha256;
         final long size;
         final String buildVersion;
 
-        LauncherManifest(String build, String fileName, String downloadUrl, String licenseKey, String sha256, long size, String buildVersion) {
+        LauncherManifest(String build, String fileName, String downloadUrl, String sha256, long size, String buildVersion) {
             this.build = build;
             this.fileName = fileName;
             this.downloadUrl = downloadUrl;
-            this.licenseKey = licenseKey;
             this.sha256 = sha256;
             this.size = size;
             this.buildVersion = buildVersion;

@@ -1,11 +1,12 @@
 {
   "name": "gamble-client-launcher-tauri",
-  "version": "0.1.96",
+  "version": "0.1.97",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
+    "test": "node --test tests/*.test.mjs",
     "tauri": "tauri",
     "tauri:build": "tauri build",
     "tauri:build:linux": "scripts/build-linux-tauri.sh"

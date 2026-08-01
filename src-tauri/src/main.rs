@@ -25,16 +25,20 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-const VERSION: &str = "0.1.96";
+const VERSION: &str = "0.1.97";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
 const FABRIC_LOADER_VERSION: &str = "0.18.4";
-const FABRIC_PROFILE_URL: &str = "https://meta.fabricmc.net/v2/versions/loader/1.21.11/0.18.4/profile/json";
-const VERSION_MANIFEST_URL: &str = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
+const FABRIC_PROFILE_URL: &str =
+    "https://meta.fabricmc.net/v2/versions/loader/1.21.11/0.18.4/profile/json";
+const VERSION_MANIFEST_URL: &str =
+    "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
 const ASSET_BASE_URL: &str = "https://resources.download.minecraft.net/";
-const MICROSOFT_DEVICE_CODE_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
-const MICROSOFT_AUTHORIZE_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
+const MICROSOFT_DEVICE_CODE_URL: &str =
+    "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
+const MICROSOFT_AUTHORIZE_URL: &str =
+    "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
 const MICROSOFT_TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
 const MICROSOFT_SCOPE: &str = "XboxLive.signin offline_access";
 const MICROSOFT_CLIENT_ID: &str = "8eea0ae2-d0a9-4af1-88b9-f66bd96c94bd";
@@ -49,7 +53,8 @@ const MAX_FABRIC_METADATA_BYTES: u64 = 1024 * 1024;
 const MANAGED_CLIENT_MOD_ID: &str = "cg-mod";
 const MAX_NATIVE_FILES: usize = 2048;
 const MAX_NATIVE_EXPANDED_BYTES: u64 = 512 * 1024 * 1024;
-const TEMURIN_21_WINDOWS_URL: &str = "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
+const TEMURIN_21_WINDOWS_URL: &str =
+    "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const MINECRAFT_TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
@@ -60,12 +65,32 @@ const MINECRAFT_PROFILE_URL: &str = "https://api.minecraftservices.com/minecraft
 const ANTISCREENSHARE_CORE_ON: &[&str] = &["antiscreenshare"];
 const ANTISCREENSHARE_SCOREBOARD_ON: &[&str] = &["hide-scoreboard"];
 const ANTISCREENSHARE_SCOREBOARD_OFF: &[&str] = &["fake-scoreboard"];
-const ANTISCREENSHARE_HUD_OFF: &[&str] = &["hud", "jamble-hud", "better-tab", "discord-presence", "big-spender-net-hud"];
+const ANTISCREENSHARE_HUD_OFF: &[&str] = &[
+    "hud",
+    "jamble-hud",
+    "better-tab",
+    "discord-presence",
+    "big-spender-net-hud",
+];
 const ANTISCREENSHARE_VISUAL_OFF: &[&str] = &[
-    "player-esp", "storage-esp", "block-esp", "item-esp", "trident-esp", "invis-esp",
-    "chams", "nametags", "logout-spots", "trail", "tracers", "light-finder",
-    "hole-tunnel-stair-esp", "tunnel-esp", "base-digger", "base-finder",
-    "block-debug-finder", "block-update-finder",
+    "player-esp",
+    "storage-esp",
+    "block-esp",
+    "item-esp",
+    "trident-esp",
+    "invis-esp",
+    "chams",
+    "nametags",
+    "logout-spots",
+    "trail",
+    "tracers",
+    "light-finder",
+    "hole-tunnel-stair-esp",
+    "tunnel-esp",
+    "base-digger",
+    "base-finder",
+    "block-debug-finder",
+    "block-update-finder",
 ];
 static MINECRAFT_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 static ACTIVE_LAUNCH_PAYLOAD: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -83,6 +108,8 @@ struct LauncherInfo {
 #[derive(Deserialize)]
 struct FabricModIdentity {
     id: String,
+    #[serde(default)]
+    custom: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -246,7 +273,11 @@ struct MicrosoftAccountView {
 
 impl From<&MicrosoftAccount> for MicrosoftAccountView {
     fn from(account: &MicrosoftAccount) -> Self {
-        Self { name: account.name.clone(), uuid: account.uuid.clone(), xuid: account.xuid.clone() }
+        Self {
+            name: account.name.clone(),
+            uuid: account.uuid.clone(),
+            xuid: account.xuid.clone(),
+        }
     }
 }
 
@@ -377,7 +408,10 @@ fn launcher_info() -> Result<LauncherInfo, String> {
 fn launcher_api(input: ApiCommandBody) -> Result<serde_json::Value, String> {
     let method = input.method.trim().to_uppercase();
     let path = input.path.trim();
-    if !path.starts_with("/api/launcher/") && path != "/api/spotify/status" && !path.starts_with("/api/friends") {
+    if !path.starts_with("/api/launcher/")
+        && path != "/api/spotify/status"
+        && !path.starts_with("/api/friends")
+    {
         return Err("Launcher API path is not allowed.".to_string());
     }
 
@@ -404,7 +438,8 @@ fn launcher_api(input: ApiCommandBody) -> Result<serde_json::Value, String> {
     let body = if text.trim().is_empty() {
         serde_json::Value::Object(Default::default())
     } else {
-        serde_json::from_str::<serde_json::Value>(&text).unwrap_or_else(|_| json!({ "message": text }))
+        serde_json::from_str::<serde_json::Value>(&text)
+            .unwrap_or_else(|_| json!({ "message": text }))
     };
     if !status.is_success() {
         let message = body
@@ -443,14 +478,21 @@ fn delete_launcher_token() -> Result<(), String> {
 
 #[tauri::command]
 fn read_microsoft_account() -> Result<Option<MicrosoftAccountView>, String> {
-    Ok(selected_microsoft_account()?.as_ref().map(MicrosoftAccountView::from))
+    Ok(selected_microsoft_account()?
+        .as_ref()
+        .map(MicrosoftAccountView::from))
 }
 
 #[tauri::command]
 fn list_microsoft_accounts() -> Result<MicrosoftAccountState, String> {
     let accounts = read_microsoft_account_list()?;
     Ok(MicrosoftAccountState {
-        selected_uuid: selected_microsoft_uuid().unwrap_or_else(|| accounts.first().map(|account| account.uuid.clone()).unwrap_or_default()),
+        selected_uuid: selected_microsoft_uuid().unwrap_or_else(|| {
+            accounts
+                .first()
+                .map(|account| account.uuid.clone())
+                .unwrap_or_default()
+        }),
         accounts: accounts.iter().map(MicrosoftAccountView::from).collect(),
     })
 }
@@ -490,7 +532,10 @@ fn delete_microsoft_account_by_uuid(uuid: String) -> Result<MicrosoftAccountStat
 
     let selected = selected_microsoft_uuid().unwrap_or_default();
     let next_selected = if selected.eq_ignore_ascii_case(&uuid) {
-        accounts.first().map(|account| account.uuid.clone()).unwrap_or_default()
+        accounts
+            .first()
+            .map(|account| account.uuid.clone())
+            .unwrap_or_default()
     } else {
         selected
     };
@@ -499,7 +544,10 @@ fn delete_microsoft_account_by_uuid(uuid: String) -> Result<MicrosoftAccountStat
         let _ = fs::remove_file(microsoft_account_file());
     } else {
         save_selected_microsoft_uuid(&next_selected)?;
-        if let Some(account) = accounts.iter().find(|account| account.uuid.eq_ignore_ascii_case(&next_selected)) {
+        if let Some(account) = accounts
+            .iter()
+            .find(|account| account.uuid.eq_ignore_ascii_case(&next_selected))
+        {
             save_legacy_microsoft_account(account)?;
         }
     }
@@ -517,9 +565,7 @@ fn microsoft_browser_sign_in(force_account_picker: bool) -> Result<serde_json::V
     let code_challenge = sha256_base64_url(&code_verifier);
     let listener = TcpListener::bind(("127.0.0.1", MICROSOFT_REDIRECT_PORT))
         .map_err(|error| format!("Could not start Microsoft callback listener on port {MICROSOFT_REDIRECT_PORT}: {error}"))?;
-    listener
-        .set_nonblocking(true)
-        .map_err(error_text)?;
+    listener.set_nonblocking(true).map_err(error_text)?;
 
     let auth_url = microsoft_authorize_url(&code_challenge, &state, force_account_picker);
     open_external(&auth_url)?;
@@ -528,19 +574,35 @@ fn microsoft_browser_sign_in(force_account_picker: bool) -> Result<serde_json::V
         let mut stream = wait_for_microsoft_callback(&listener)?;
         let callback = read_microsoft_callback(&mut stream)?;
         if callback.get("state").map(String::as_str) != Some(state.as_str()) {
-            let _ = write_microsoft_callback_response(&mut stream, "Microsoft sign-in ignored", "This callback was not for the active sign-in. Return to the Microsoft tab.");
+            let _ = write_microsoft_callback_response(
+                &mut stream,
+                "Microsoft sign-in ignored",
+                "This callback was not for the active sign-in. Return to the Microsoft tab.",
+            );
             continue;
         }
         if let Some(error) = callback.get("error") {
-            let message = callback.get("error_description").map(String::as_str).unwrap_or(error);
-            let _ = write_microsoft_callback_response(&mut stream, "Microsoft sign-in failed", message);
+            let message = callback
+                .get("error_description")
+                .map(String::as_str)
+                .unwrap_or(error);
+            let _ =
+                write_microsoft_callback_response(&mut stream, "Microsoft sign-in failed", message);
             break Err(message.to_string());
         }
         if let Some(code) = callback.get("code").filter(|code| !code.is_empty()) {
-            let _ = write_microsoft_callback_response(&mut stream, "Microsoft sign-in complete", "You can close this tab and return to the Gamble Client launcher.");
+            let _ = write_microsoft_callback_response(
+                &mut stream,
+                "Microsoft sign-in complete",
+                "You can close this tab and return to the Gamble Client launcher.",
+            );
             break Ok(code.clone());
         }
-        let _ = write_microsoft_callback_response(&mut stream, "Microsoft sign-in ignored", "This callback did not contain a sign-in code. Return to the Microsoft tab.");
+        let _ = write_microsoft_callback_response(
+            &mut stream,
+            "Microsoft sign-in ignored",
+            "This callback did not contain a sign-in code. Return to the Microsoft tab.",
+        );
     };
     drop(listener);
 
@@ -596,7 +658,11 @@ fn microsoft_device_start(_force_account_picker: bool) -> Result<MicrosoftDevice
         && !verification_uri.trim().is_empty()
         && !user_code.trim().is_empty()
     {
-        let separator = if verification_uri.contains('?') { "&" } else { "?" };
+        let separator = if verification_uri.contains('?') {
+            "&"
+        } else {
+            "?"
+        };
         verification_uri_complete = format!("{verification_uri}{separator}otc={user_code}");
     }
 
@@ -615,10 +681,15 @@ fn microsoft_device_start(_force_account_picker: bool) -> Result<MicrosoftDevice
 fn microsoft_device_poll(device_code: String) -> Result<serde_json::Value, String> {
     let device_code = device_code.trim().to_string();
     if device_code.is_empty() {
-        return Err("Microsoft device code was missing before polling. Start sign-in again.".to_string());
+        return Err(
+            "Microsoft device code was missing before polling. Start sign-in again.".to_string(),
+        );
     }
     let params = [
-        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code".to_string()),
+        (
+            "grant_type",
+            "urn:ietf:params:oauth:grant-type:device_code".to_string(),
+        ),
         ("client_id", MICROSOFT_CLIENT_ID.to_string()),
         ("device_code", device_code),
     ];
@@ -694,7 +765,8 @@ fn delete_profile(profile: String) -> Result<(), String> {
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Err("The managed profile path is not a normal directory.".to_string());
         }
-        fs::remove_dir_all(&path).map_err(|error| format!("Could not delete {}: {error}", display_path(&path)))?;
+        fs::remove_dir_all(&path)
+            .map_err(|error| format!("Could not delete {}: {error}", display_path(&path)))?;
     }
     Ok(())
 }
@@ -747,7 +819,11 @@ fn list_local_files(profile: String, kind: String) -> Result<Vec<LocalFile>, Str
 fn toggle_local_file(profile: String, kind: String, path: String) -> Result<(), String> {
     let profile = profile_id(&profile);
     let path = PathBuf::from(path);
-    let allowed_root = if kind == "resourcepacks" { resource_packs_folder(&profile) } else { mods_folder(&profile) };
+    let allowed_root = if kind == "resourcepacks" {
+        resource_packs_folder(&profile)
+    } else {
+        mods_folder(&profile)
+    };
     let canonical_root = fs::canonicalize(&allowed_root).map_err(error_text)?;
     let canonical_path = fs::canonicalize(&path).map_err(error_text)?;
     if !canonical_path.starts_with(&canonical_root) {
@@ -758,7 +834,11 @@ fn toggle_local_file(profile: String, kind: String, path: String) -> Result<(), 
         return Err("File does not exist anymore.".to_string());
     }
     if kind != "resourcepacks" {
-        let lower = path.file_name().and_then(|v| v.to_str()).unwrap_or("").to_lowercase();
+        let lower = path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .unwrap_or("")
+            .to_lowercase();
         if is_required_mod_name(&lower) {
             return Err("This required Fabric mod is managed by the launcher.".to_string());
         }
@@ -767,7 +847,11 @@ fn toggle_local_file(profile: String, kind: String, path: String) -> Result<(), 
     let target = toggle_target(&path)?;
     fs::rename(&path, &target).map_err(error_text)?;
     if kind == "resourcepacks" {
-        set_resource_pack_enabled(&profile, &target, !target.to_string_lossy().ends_with(".disabled"))?;
+        set_resource_pack_enabled(
+            &profile,
+            &target,
+            !target.to_string_lossy().ends_with(".disabled"),
+        )?;
     }
     Ok(())
 }
@@ -829,12 +913,39 @@ fn open_profile_folder(profile: String, kind: String) -> Result<String, String> 
 fn diagnostics(profile: String) -> Result<Diagnostics, String> {
     let profile = profile_id(&profile);
     let mut checks = Vec::new();
-    push_check(&mut checks, "Managed root", managed_root().is_dir(), display_path(&managed_root()));
-    push_check(&mut checks, "Profile folder", minecraft_folder(&profile).is_dir(), display_path(&minecraft_folder(&profile)));
-    push_check(&mut checks, "Mods folder", mods_folder(&profile).is_dir(), display_path(&mods_folder(&profile)));
-    push_check(&mut checks, "Resource packs", resource_packs_folder(&profile).is_dir(), display_path(&resource_packs_folder(&profile)));
-    push_check(&mut checks, "Launcher session", launcher_session_file().is_file(), display_path(&launcher_session_file()));
-    let microsoft_saved = read_microsoft_account().map(|account| account.is_some()).unwrap_or(false);
+    push_check(
+        &mut checks,
+        "Managed root",
+        managed_root().is_dir(),
+        display_path(&managed_root()),
+    );
+    push_check(
+        &mut checks,
+        "Profile folder",
+        minecraft_folder(&profile).is_dir(),
+        display_path(&minecraft_folder(&profile)),
+    );
+    push_check(
+        &mut checks,
+        "Mods folder",
+        mods_folder(&profile).is_dir(),
+        display_path(&mods_folder(&profile)),
+    );
+    push_check(
+        &mut checks,
+        "Resource packs",
+        resource_packs_folder(&profile).is_dir(),
+        display_path(&resource_packs_folder(&profile)),
+    );
+    push_check(
+        &mut checks,
+        "Launcher session",
+        launcher_session_file().is_file(),
+        display_path(&launcher_session_file()),
+    );
+    let microsoft_saved = read_microsoft_account()
+        .map(|account| account.is_some())
+        .unwrap_or(false);
     push_check(
         &mut checks,
         "Microsoft account",
@@ -846,27 +957,67 @@ fn diagnostics(profile: String) -> Result<Diagnostics, String> {
     push_check(
         &mut checks,
         "Java runtime",
-        java.as_ref().map(|out| out.status.success() && java_output_is_21_or_newer(out)).unwrap_or(false),
-        java.map(|out| format!("{} — {}", selected_java, String::from_utf8_lossy(&out.stderr).lines().next().unwrap_or("java")))
-            .unwrap_or_else(|error| format!("{} — {}", selected_java, error)),
+        java.as_ref()
+            .map(|out| out.status.success() && java_output_is_21_or_newer(out))
+            .unwrap_or(false),
+        java.map(|out| {
+            format!(
+                "{} — {}",
+                selected_java,
+                String::from_utf8_lossy(&out.stderr)
+                    .lines()
+                    .next()
+                    .unwrap_or("java")
+            )
+        })
+        .unwrap_or_else(|error| format!("{} — {}", selected_java, error)),
     );
     let launch_log = latest_launch_log_file();
     let launch_log_detail = if launch_log.is_file() {
         let tail = fs::read_to_string(&launch_log).unwrap_or_default();
-        let last = tail.lines().rev().find(|line| !line.trim().is_empty()).unwrap_or("");
-        format!("{}{}", display_path(&launch_log), if last.is_empty() { String::new() } else { format!(" — {last}") })
+        let last = tail
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("");
+        format!(
+            "{}{}",
+            display_path(&launch_log),
+            if last.is_empty() {
+                String::new()
+            } else {
+                format!(" — {last}")
+            }
+        )
     } else {
         display_path(&launch_log)
     };
-    push_check(&mut checks, "Latest launch log", launch_log.is_file(), launch_log_detail);
-    let report = checks.iter()
-        .map(|check| format!("[{}] {}: {}", if check.ok { "OK" } else { "WARN" }, check.label, check.detail))
+    push_check(
+        &mut checks,
+        "Latest launch log",
+        launch_log.is_file(),
+        launch_log_detail,
+    );
+    let report = checks
+        .iter()
+        .map(|check| {
+            format!(
+                "[{}] {}: {}",
+                if check.ok { "OK" } else { "WARN" },
+                check.label,
+                check.detail
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     if let Some(parent) = diagnostics_report_file().parent() {
         fs::create_dir_all(parent).map_err(error_text)?;
     }
-    fs::write(diagnostics_report_file(), format!("Gamble Client Launcher {VERSION}\n{report}\n")).map_err(error_text)?;
+    fs::write(
+        diagnostics_report_file(),
+        format!("Gamble Client Launcher {VERSION}\n{report}\n"),
+    )
+    .map_err(error_text)?;
     Ok(Diagnostics { checks })
 }
 
@@ -883,11 +1034,17 @@ fn set_anti_screenshare(profile: String, enabled: bool) -> Result<AntiScreenshar
     write_launcher_preferences(&profile, enabled)?;
 
     let message = match toggle_anti_screenshare_bridge_module("antiscreenshare", enabled) {
-        Ok(_) => format!("AntiScreenshare {} in the live client.", if enabled { "enabled" } else { "disabled" }),
+        Ok(_) => format!(
+            "AntiScreenshare {} in the live client.",
+            if enabled { "enabled" } else { "disabled" }
+        ),
         Err(_) => update_anti_screenshare_config(
             &profile,
             &[("antiscreenshare", enabled)],
-            &format!("AntiScreenshare {}", if enabled { "enabled" } else { "disabled" }),
+            &format!(
+                "AntiScreenshare {}",
+                if enabled { "enabled" } else { "disabled" }
+            ),
         )?,
     };
 
@@ -929,11 +1086,19 @@ fn open_anti_screenshare_obs() -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn client_install_status(profile: String, build: String, token: String) -> Result<ClientInstallStatus, String> {
+async fn client_install_status(
+    profile: String,
+    build: String,
+    token: String,
+) -> Result<ClientInstallStatus, String> {
     run_blocking(move || client_install_status_blocking(profile, build, token)).await
 }
 
-fn client_install_status_blocking(profile: String, build: String, token: String) -> Result<ClientInstallStatus, String> {
+fn client_install_status_blocking(
+    profile: String,
+    build: String,
+    token: String,
+) -> Result<ClientInstallStatus, String> {
     let profile = profile_id(&profile);
     if !profile_installs_client(&profile) {
         return Ok(ClientInstallStatus {
@@ -963,12 +1128,18 @@ fn client_install_status_blocking(profile: String, build: String, token: String)
         build: manifest.build.clone(),
         build_version: public_client_version(&manifest.build_version),
         path: display_path(installed_path),
-        size: installed_path.metadata().map(|metadata| metadata.len()).unwrap_or(0),
+        size: installed_path
+            .metadata()
+            .map(|metadata| metadata.len())
+            .unwrap_or(0),
         sha256: manifest.sha256.clone(),
         installed: current,
         update_available: !current,
         message: if current {
-            format!("Installed client is current: {}", display_version(&manifest))
+            format!(
+                "Installed client is current: {}",
+                display_version(&manifest)
+            )
         } else {
             format!("Client update available: {}", display_version(&manifest))
         },
@@ -992,11 +1163,19 @@ fn download_launcher_update_blocking() -> Result<LauncherUpdateResult, String> {
     download_file(&download.download_url, &target)?;
     verify_file(&target, download.size, &download.sha256)?;
     let target_text = display_path(&target);
-    if let Some(parent) = target.parent() { let _ = open_external(&display_path(parent)); }
-    let open_message = "Downloaded the launcher update. Review and open the installer from your Downloads folder.".to_string();
+    if let Some(parent) = target.parent() {
+        let _ = open_external(&display_path(parent));
+    }
+    let open_message =
+        "Downloaded the launcher update. Review and open the installer from your Downloads folder."
+            .to_string();
 
     Ok(LauncherUpdateResult {
-        version: if info.version.trim().is_empty() { info.min_version } else { info.version },
+        version: if info.version.trim().is_empty() {
+            info.min_version
+        } else {
+            info.version
+        },
         file_name: download.file_name,
         download_url: download.download_url,
         path: target_text,
@@ -1005,17 +1184,27 @@ fn download_launcher_update_blocking() -> Result<LauncherUpdateResult, String> {
 }
 
 #[tauri::command]
-async fn install_client_manifest(profile: String, build: String, token: String) -> Result<InstallResult, String> {
+async fn install_client_manifest(
+    profile: String,
+    build: String,
+    token: String,
+) -> Result<InstallResult, String> {
     run_blocking(move || install_client_manifest_blocking(profile, build, token)).await
 }
 
-fn install_client_manifest_blocking(profile: String, build: String, token: String) -> Result<InstallResult, String> {
+fn install_client_manifest_blocking(
+    profile: String,
+    build: String,
+    token: String,
+) -> Result<InstallResult, String> {
     let profile = profile_id(&profile);
     if token.trim().is_empty() {
         return Err("Sign in before installing the client.".to_string());
     }
     if !profile_installs_client(&profile) {
-        return Err("Vanilla and plain Fabric profiles do not install the managed client jar.".to_string());
+        return Err(
+            "Vanilla and plain Fabric profiles do not install the managed client jar.".to_string(),
+        );
     }
     ensure_profile_folders(&profile)?;
 
@@ -1026,14 +1215,18 @@ fn install_client_manifest_blocking(profile: String, build: String, token: Strin
     }
     safe_file_name(&manifest.file_name)?;
     if manifest.size == 0 || !is_sha256(&manifest.sha256) {
-        return Err("Backend manifest is missing required size or SHA-256 integrity metadata.".to_string());
+        return Err(
+            "Backend manifest is missing required size or SHA-256 integrity metadata.".to_string(),
+        );
     }
     if manifest.size > MAX_MANAGED_CLIENT_BYTES {
         return Err("Managed client artifact exceeds the 64 MiB safety limit.".to_string());
     }
 
     let client_jar = payload_file(&profile, &manifest.file_name);
-    if let Some(parent) = client_jar.parent() { fs::create_dir_all(parent).map_err(error_text)?; }
+    if let Some(parent) = client_jar.parent() {
+        fs::create_dir_all(parent).map_err(error_text)?;
+    }
     let staging = client_jar.with_extension("jar.part");
     let existing = find_verified_client_install(&profile, &manifest);
     let downloaded = existing.is_none();
@@ -1044,7 +1237,7 @@ fn install_client_manifest_blocking(profile: String, build: String, token: Strin
             download_file(&manifest.download_url, &staging)?;
         }
         verify_file(&staging, manifest.size, &manifest.sha256)?;
-        verify_fabric_mod_id(&staging, MANAGED_CLIENT_MOD_ID)
+        verify_fabric_mod_identity(&staging, MANAGED_CLIENT_MOD_ID, Some(&manifest.build))
     })();
     if let Err(error) = staging_result {
         let _ = fs::remove_file(&staging);
@@ -1079,7 +1272,10 @@ fn install_client_manifest_blocking(profile: String, build: String, token: Strin
         message: if downloaded {
             format!("Updated managed client to: {}", display_version(&manifest))
         } else {
-            format!("Refreshed managed client in this profile: {}", display_version(&manifest))
+            format!(
+                "Refreshed managed client in this profile: {}",
+                display_version(&manifest)
+            )
         },
     })
 }
@@ -1095,7 +1291,9 @@ async fn launch_game(app: AppHandle, input: LaunchRequest) -> Result<String, Str
 }
 
 fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, String> {
-    let _launch_guard = LAUNCH_LOCK.try_lock().map_err(|_| "A launch operation is already in progress.".to_string())?;
+    let _launch_guard = LAUNCH_LOCK
+        .try_lock()
+        .map_err(|_| "A launch operation is already in progress.".to_string())?;
     {
         let mut running = MINECRAFT_PROCESS.lock().map_err(error_text)?;
         if let Some(child) = running.as_mut() {
@@ -1135,7 +1333,11 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
     cleanup_stale_launch_payloads(&profile)?;
     emit_launch_progress(&app, "Client", "Checking managed client payload", 3, 13);
     let managed_client_payload = if profile_installs_client(&profile) {
-        let install = install_client_manifest_blocking(profile.to_string(), build.to_string(), token.to_string())?;
+        let install = install_client_manifest_blocking(
+            profile.to_string(),
+            build.to_string(),
+            token.to_string(),
+        )?;
         Some((PathBuf::from(install.path), install.file_name))
     } else {
         None
@@ -1160,7 +1362,11 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
     emit_launch_progress(&app, "Profile", "Reading Minecraft launch profile", 7, 13);
     let version = load_version_profile(&profile_dir, &version_id)?;
     let mut classpath = ensure_libraries_with_progress(&profile_dir, &version, Some(&app))?;
-    classpath.push(ensure_client_jar_with_progress(&profile_dir, &version, Some(&app))?);
+    classpath.push(ensure_client_jar_with_progress(
+        &profile_dir,
+        &version,
+        Some(&app),
+    )?);
     ensure_assets_with_progress(&profile_dir, &version, Some(&app))?;
     let natives = extract_natives_with_progress(&profile_dir, &version_id, &version, Some(&app))?;
     emit_launch_progress(&app, "Client", "Preparing temporary client payload", 11, 13);
@@ -1206,15 +1412,37 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         if let Some(parent) = log_file.parent() {
             fs::create_dir_all(parent).map_err(error_text)?;
         }
-        fs::write(&log_file, format!("Gamble Client Launcher {VERSION}\n{}\n\n", redacted_command(&command))).map_err(error_text)?;
-        let stdout = fs::OpenOptions::new().create(true).append(true).open(&log_file).map_err(error_text)?;
-        let stderr = fs::OpenOptions::new().create(true).append(true).open(&log_file).map_err(error_text)?;
+        fs::write(
+            &log_file,
+            format!(
+                "Gamble Client Launcher {VERSION}\n{}\n\n",
+                redacted_command(&command)
+            ),
+        )
+        .map_err(error_text)?;
+        let stdout = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file)
+            .map_err(error_text)?;
+        let stderr = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file)
+            .map_err(error_text)?;
         let mut process = Command::new(&command[0]);
-        process.args(&command[1..]).current_dir(&profile_dir).stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
+        process
+            .args(&command[1..])
+            .current_dir(&profile_dir)
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
         #[cfg(target_os = "windows")]
         process.creation_flags(CREATE_NO_WINDOW);
         process.spawn().map_err(|error| {
-            format!("Could not start Minecraft with the managed Java runtime: {error}. See {}.", display_path(&log_file))
+            format!(
+                "Could not start Minecraft with the managed Java runtime: {error}. See {}.",
+                display_path(&log_file)
+            )
         })
     })();
     let mut child = launch_result.map_err(|error| {
@@ -1253,7 +1481,10 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         }
     };
     *running = Some(child);
-    Ok(format!("Minecraft process started (pid {pid}). Latest launch log: {}", display_path(&log_file)))
+    Ok(format!(
+        "Minecraft process started (pid {pid}). Latest launch log: {}",
+        display_path(&log_file)
+    ))
 }
 
 #[tauri::command]
@@ -1323,7 +1554,10 @@ fn refresh_minecraft_identity(account: MicrosoftAccount) -> Result<MinecraftProf
     })
 }
 
-fn cached_minecraft_identity(account: &MicrosoftAccount, refresh_buffer_ms: u64) -> Option<MinecraftProfile> {
+fn cached_minecraft_identity(
+    account: &MicrosoftAccount,
+    refresh_buffer_ms: u64,
+) -> Option<MinecraftProfile> {
     if account.minecraft_access_token.trim().is_empty()
         || account.uuid.trim().is_empty()
         || account.name.trim().is_empty()
@@ -1366,7 +1600,10 @@ fn refresh_microsoft_token(refresh_token: &str) -> Result<MicrosoftToken, String
     parse_microsoft_token(&body)
 }
 
-fn exchange_microsoft_authorization_code(code: &str, code_verifier: &str) -> Result<MicrosoftToken, String> {
+fn exchange_microsoft_authorization_code(
+    code: &str,
+    code_verifier: &str,
+) -> Result<MicrosoftToken, String> {
     let params = [
         ("grant_type", "authorization_code".to_string()),
         ("client_id", MICROSOFT_CLIENT_ID.to_string()),
@@ -1404,7 +1641,11 @@ fn wait_for_microsoft_callback(listener: &TcpListener) -> Result<TcpStream, Stri
     }
 }
 
-fn microsoft_authorize_url(code_challenge: &str, state: &str, force_account_picker: bool) -> String {
+fn microsoft_authorize_url(
+    code_challenge: &str,
+    state: &str,
+    force_account_picker: bool,
+) -> String {
     let mut params = vec![
         ("client_id", MICROSOFT_CLIENT_ID.to_string()),
         ("response_type", "code".to_string()),
@@ -1421,7 +1662,13 @@ fn microsoft_authorize_url(code_challenge: &str, state: &str, force_account_pick
 
     let query = params
         .into_iter()
-        .map(|(key, value)| format!("{}={}", url_encode_component(key), url_encode_component(&value)))
+        .map(|(key, value)| {
+            format!(
+                "{}={}",
+                url_encode_component(key),
+                url_encode_component(&value)
+            )
+        })
         .collect::<Vec<_>>()
         .join("&");
     format!("{MICROSOFT_AUTHORIZE_URL}?{query}")
@@ -1437,7 +1684,11 @@ fn read_microsoft_callback(stream: &mut TcpStream) -> Result<HashMap<String, Str
     Ok(parse_url_query(query))
 }
 
-fn write_microsoft_callback_response(stream: &mut TcpStream, title: &str, message: &str) -> io::Result<()> {
+fn write_microsoft_callback_response(
+    stream: &mut TcpStream,
+    title: &str,
+    message: &str,
+) -> io::Result<()> {
     let body = format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title><style>body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#11131a;color:#f4f6fb;font-family:system-ui,sans-serif}}main{{max-width:440px;padding:28px;border:1px solid #2b2f3a;background:#181b24}}h1{{margin:0 0 10px;font-size:24px}}p{{margin:0;color:#b8bfcc;line-height:1.5}}</style></head><body><main><h1>{}</h1><p>{}</p></main></body></html>",
         html_escape(title),
@@ -1524,17 +1775,25 @@ fn write_launcher_preferences(profile: &str, anti_screenshare: bool) -> Result<(
         "antiScreenshare": anti_screenshare,
         "updatedAt": timestamp()
     });
-    fs::write(folder.join("launcher-settings.json"), serde_json::to_string_pretty(&body).map_err(error_text)? + "\n").map_err(error_text)
+    fs::write(
+        folder.join("launcher-settings.json"),
+        serde_json::to_string_pretty(&body).map_err(error_text)? + "\n",
+    )
+    .map_err(error_text)
 }
 
 fn read_launcher_anti_preference(profile: &str) -> Option<bool> {
     let path = profile_data_folder(profile).join("launcher-settings.json");
     let text = fs::read_to_string(path).ok()?;
     let body = serde_json::from_str::<serde_json::Value>(&text).ok()?;
-    body.get("antiScreenshare").and_then(|value| value.as_bool())
+    body.get("antiScreenshare")
+        .and_then(|value| value.as_bool())
 }
 
-fn anti_screenshare_status_for(profile: &str, override_message: Option<String>) -> Result<AntiScreenshareStatus, String> {
+fn anti_screenshare_status_for(
+    profile: &str,
+    override_message: Option<String>,
+) -> Result<AntiScreenshareStatus, String> {
     let modules_path = anti_screenshare_modules_file(profile);
     if let Ok(modules) = read_anti_screenshare_bridge_modules() {
         let enabled = bridge_module_active(&modules, "antiscreenshare").unwrap_or(true);
@@ -1544,7 +1803,10 @@ fn anti_screenshare_status_for(profile: &str, override_message: Option<String>) 
             bridge_online: true,
             source: "Live client".to_string(),
             message: override_message.unwrap_or_else(|| {
-                format!("Live client bridge connected. Core module is {}.", if enabled { "on" } else { "off" })
+                format!(
+                    "Live client bridge connected. Core module is {}.",
+                    if enabled { "on" } else { "off" }
+                )
             }),
             modules_path: display_path(&modules_path),
         });
@@ -1553,7 +1815,8 @@ fn anti_screenshare_status_for(profile: &str, override_message: Option<String>) 
     if modules_path.is_file() {
         let text = fs::read_to_string(&modules_path).map_err(error_text)?;
         let active = module_active_state(&text, "antiscreenshare");
-        let enabled = active.unwrap_or_else(|| read_launcher_anti_preference(profile).unwrap_or(false));
+        let enabled =
+            active.unwrap_or_else(|| read_launcher_anti_preference(profile).unwrap_or(false));
         return Ok(AntiScreenshareStatus {
             enabled,
             available: active.is_some(),
@@ -1578,16 +1841,22 @@ fn anti_screenshare_status_for(profile: &str, override_message: Option<String>) 
         source: "Launcher preference".to_string(),
         message: override_message.unwrap_or_else(|| {
             if enabled {
-                "Saved for the next launch. Launch Gamble Client once before editing live modules.".to_string()
+                "Saved for the next launch. Launch Gamble Client once before editing live modules."
+                    .to_string()
             } else {
-                "Launch Gamble Client once before AntiScreenshare can edit module config.".to_string()
+                "Launch Gamble Client once before AntiScreenshare can edit module config."
+                    .to_string()
             }
         }),
         modules_path: display_path(&modules_path),
     })
 }
 
-fn add_anti_screenshare_changes(changes: &mut Vec<(&'static str, bool)>, modules: &'static [&'static str], active: bool) {
+fn add_anti_screenshare_changes(
+    changes: &mut Vec<(&'static str, bool)>,
+    modules: &'static [&'static str],
+    active: bool,
+) {
     for module in modules {
         changes.push((*module, active));
     }
@@ -1604,7 +1873,11 @@ fn apply_anti_screenshare_bridge_changes(changes: &[(&str, bool)]) -> usize {
         .count()
 }
 
-fn update_anti_screenshare_config(profile: &str, changes: &[(&str, bool)], message: &str) -> Result<String, String> {
+fn update_anti_screenshare_config(
+    profile: &str,
+    changes: &[(&str, bool)],
+    message: &str,
+) -> Result<String, String> {
     let modules = anti_screenshare_modules_file(profile);
     if !modules.is_file() {
         return Ok("Saved for the next launch. Launch Gamble Client once before module config can be edited.".to_string());
@@ -1635,7 +1908,13 @@ fn update_anti_screenshare_config(profile: &str, changes: &[(&str, bool)], messa
 
     let backup = backup_anti_screenshare_modules(&modules)?;
     fs::write(&modules, text).map_err(error_text)?;
-    let mut result = format!("{message} for {touched} modules. Backup: {}.", backup.file_name().and_then(|value| value.to_str()).unwrap_or("modules backup"));
+    let mut result = format!(
+        "{message} for {touched} modules. Backup: {}.",
+        backup
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("modules backup")
+    );
     if !missing.is_empty() {
         result.push_str(&format!(" Missing in this build: {}.", missing.join(", ")));
     }
@@ -1646,7 +1925,10 @@ fn backup_anti_screenshare_modules(modules: &Path) -> Result<PathBuf, String> {
     let backup = modules
         .parent()
         .unwrap_or_else(|| Path::new("."))
-        .join(format!("modules.txt.backup-antiscreenshare-{}.txt", timestamp()));
+        .join(format!(
+            "modules.txt.backup-antiscreenshare-{}.txt",
+            timestamp()
+        ));
     fs::copy(modules, &backup).map_err(error_text)?;
     Ok(backup)
 }
@@ -1667,7 +1949,10 @@ fn set_module_active_text(text: &str, module: &str, active: bool) -> Option<Stri
         return None;
     }
     let mut updated = text.to_string();
-    updated.replace_range(active_index..active_index + 1, if active { "1" } else { "0" });
+    updated.replace_range(
+        active_index..active_index + 1,
+        if active { "1" } else { "0" },
+    );
     Some(updated)
 }
 
@@ -1690,7 +1975,11 @@ fn bridge_module_active(modules: &[serde_json::Value], name: &str) -> Option<boo
     modules.iter().find_map(|module| {
         let module_name = module.get("name").and_then(|value| value.as_str())?;
         if module_name.eq_ignore_ascii_case(name) {
-            Some(json_bool_value(module.get("active").unwrap_or(&serde_json::Value::Bool(false))))
+            Some(json_bool_value(
+                module
+                    .get("active")
+                    .unwrap_or(&serde_json::Value::Bool(false)),
+            ))
         } else {
             None
         }
@@ -1719,7 +2008,11 @@ fn read_anti_screenshare_bridge(path: &str, method: &str) -> Result<serde_json::
         .timeout(Duration::from_millis(1800))
         .build()
         .map_err(error_text)?;
-    let request = if method == "POST" { client.post(url) } else { client.get(url) };
+    let request = if method == "POST" {
+        client.post(url)
+    } else {
+        client.get(url)
+    };
     let response = request.send().map_err(error_text)?;
     let status = response.status();
     let text = response.text().map_err(error_text)?;
@@ -1746,6 +2039,10 @@ fn write_launch_ticket_file(profile: &str, token: &str, build: &str) -> Result<P
     if ticket.trim().is_empty() {
         return Err("Backend did not issue a launch ticket.".to_string());
     }
+    let response_build = canonical_build_id(&json_string(&body, "build"));
+    if response_build != canonical_build_id(build) {
+        return Err("Backend launch ticket was issued for a different client tier.".to_string());
+    }
     let folder = profile_data_folder(profile).join("launch");
     fs::create_dir_all(&folder).map_err(error_text)?;
     let path = folder.join(format!("ticket-{}-{}.txt", timestamp(), process_id()));
@@ -1759,9 +2056,15 @@ fn write_launch_ticket_file(profile: &str, token: &str, build: &str) -> Result<P
     Ok(path)
 }
 
-fn ensure_fabric_version_json_with_progress(game_dir: &Path, app: Option<&AppHandle>) -> Result<PathBuf, String> {
+fn ensure_fabric_version_json_with_progress(
+    game_dir: &Path,
+    app: Option<&AppHandle>,
+) -> Result<PathBuf, String> {
     let version_id = format!("fabric-loader-{FABRIC_LOADER_VERSION}-{MINECRAFT_VERSION}");
-    let path = game_dir.join("versions").join(&version_id).join(format!("{version_id}.json"));
+    let path = game_dir
+        .join("versions")
+        .join(&version_id)
+        .join(format!("{version_id}.json"));
     if !path.is_file() {
         if let Some(app) = app {
             emit_launch_progress(app, "Fabric", "Downloading Fabric launch profile", 4, 12);
@@ -1773,35 +2076,78 @@ fn ensure_fabric_version_json_with_progress(game_dir: &Path, app: Option<&AppHan
     Ok(path)
 }
 
-fn ensure_vanilla_version_json_with_progress(game_dir: &Path, version_id: &str, app: Option<&AppHandle>) -> Result<PathBuf, String> {
-    let path = game_dir.join("versions").join(version_id).join(format!("{version_id}.json"));
+fn ensure_vanilla_version_json_with_progress(
+    game_dir: &Path,
+    version_id: &str,
+    app: Option<&AppHandle>,
+) -> Result<PathBuf, String> {
+    let path = game_dir
+        .join("versions")
+        .join(version_id)
+        .join(format!("{version_id}.json"));
     if path.is_file() {
         if let Some(app) = app {
-            emit_launch_progress(app, "Minecraft", "Minecraft version profile is ready", 5, 12);
+            emit_launch_progress(
+                app,
+                "Minecraft",
+                "Minecraft version profile is ready",
+                5,
+                12,
+            );
         }
         return Ok(path);
     }
     if let Some(app) = app {
-        emit_launch_progress(app, "Minecraft", "Downloading Minecraft version manifest", 5, 12);
+        emit_launch_progress(
+            app,
+            "Minecraft",
+            "Downloading Minecraft version manifest",
+            5,
+            12,
+        );
     }
-    let manifest = http_client()?.get(VERSION_MANIFEST_URL).send().map_err(error_text)?.error_for_status().map_err(error_text)?.json::<serde_json::Value>().map_err(error_text)?;
-    let versions = manifest.get("versions").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let manifest = http_client()?
+        .get(VERSION_MANIFEST_URL)
+        .send()
+        .map_err(error_text)?
+        .error_for_status()
+        .map_err(error_text)?
+        .json::<serde_json::Value>()
+        .map_err(error_text)?;
+    let versions = manifest
+        .get("versions")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     let url = versions
         .iter()
         .find(|entry| json_string(entry, "id") == version_id)
         .map(|entry| json_string(entry, "url"))
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| format!("Could not find Minecraft {version_id} in Mojang's version manifest."))?;
+        .ok_or_else(|| {
+            format!("Could not find Minecraft {version_id} in Mojang's version manifest.")
+        })?;
     if let Some(app) = app {
-        emit_launch_progress(app, "Minecraft", format!("Downloading Minecraft {version_id} profile"), 5, 12);
+        emit_launch_progress(
+            app,
+            "Minecraft",
+            format!("Downloading Minecraft {version_id} profile"),
+            5,
+            12,
+        );
     }
     download_file(&url, &path)?;
     Ok(path)
 }
 
 fn load_version_profile(game_dir: &Path, version_id: &str) -> Result<VersionProfile, String> {
-    let path = game_dir.join("versions").join(version_id).join(format!("{version_id}.json"));
-    let body = serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).map_err(error_text)?).map_err(error_text)?;
+    let path = game_dir
+        .join("versions")
+        .join(version_id)
+        .join(format!("{version_id}.json"));
+    let body =
+        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).map_err(error_text)?)
+            .map_err(error_text)?;
     let inherits = json_string(&body, "inheritsFrom");
     let mut profile = if inherits.trim().is_empty() {
         VersionProfile::default()
@@ -1854,7 +2200,9 @@ fn load_version_profile(game_dir: &Path, version_id: &str) -> Result<VersionProf
         }
     }
     if profile.main_class.trim().is_empty() {
-        return Err(format!("Minecraft version profile {version_id} did not include a main class."));
+        return Err(format!(
+            "Minecraft version profile {version_id} did not include a main class."
+        ));
     }
     Ok(profile)
 }
@@ -1864,26 +2212,43 @@ fn parse_library(value: &serde_json::Value) -> Option<Library> {
     if name.is_empty() {
         return None;
     }
-    let artifact = value.pointer("/downloads/artifact").unwrap_or(&serde_json::Value::Null);
+    let artifact = value
+        .pointer("/downloads/artifact")
+        .unwrap_or(&serde_json::Value::Null);
     let mut artifact_path = json_string(artifact, "path");
     let mut artifact_url = json_string(artifact, "url");
     if artifact_path.is_empty() {
         artifact_path = maven_artifact_path(&name);
         artifact_url = maven_artifact_url(&json_string(value, "url"), &artifact_path);
     }
-    let classifiers = value.pointer("/downloads/classifiers").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let classifiers = value
+        .pointer("/downloads/classifiers")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
     let mut classifier_paths = serde_json::Map::new();
     let mut classifier_urls = serde_json::Map::new();
     for (key, item) in classifiers {
-        classifier_paths.insert(key.clone(), serde_json::Value::String(json_string(&item, "path")));
+        classifier_paths.insert(
+            key.clone(),
+            serde_json::Value::String(json_string(&item, "path")),
+        );
         classifier_urls.insert(key, serde_json::Value::String(json_string(&item, "url")));
     }
     Some(Library {
         name,
-        rules: value.get("rules").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
+        rules: value
+            .get("rules")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default(),
         artifact_path,
         artifact_url,
-        natives: value.get("natives").and_then(|v| v.as_object()).cloned().unwrap_or_default(),
+        natives: value
+            .get("natives")
+            .and_then(|v| v.as_object())
+            .cloned()
+            .unwrap_or_default(),
         classifier_paths,
         classifier_urls,
     })
@@ -1896,7 +2261,14 @@ fn parse_arguments(values: &[serde_json::Value]) -> Vec<String> {
             out.push(text.to_string());
             continue;
         }
-        if !rules_allow(value.get("rules").and_then(|v| v.as_array()).cloned().unwrap_or_default().as_slice()) {
+        if !rules_allow(
+            value
+                .get("rules")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default()
+                .as_slice(),
+        ) {
             continue;
         }
         let item = value.get("value").unwrap_or(&serde_json::Value::Null);
@@ -1913,10 +2285,19 @@ fn parse_arguments(values: &[serde_json::Value]) -> Vec<String> {
     out
 }
 
-fn ensure_libraries_with_progress(game_dir: &Path, profile: &VersionProfile, app: Option<&AppHandle>) -> Result<Vec<PathBuf>, String> {
+fn ensure_libraries_with_progress(
+    game_dir: &Path,
+    profile: &VersionProfile,
+    app: Option<&AppHandle>,
+) -> Result<Vec<PathBuf>, String> {
     let mut classpath = Vec::new();
     let libraries_dir = game_dir.join("libraries");
-    let total = profile.libraries.iter().filter(|library| rules_allow(&library.rules)).count().max(1) as u32;
+    let total = profile
+        .libraries
+        .iter()
+        .filter(|library| rules_allow(&library.rules))
+        .count()
+        .max(1) as u32;
     let mut current = 0u32;
     for library in &profile.libraries {
         if !rules_allow(&library.rules) {
@@ -1924,7 +2305,13 @@ fn ensure_libraries_with_progress(game_dir: &Path, profile: &VersionProfile, app
         }
         current = current.saturating_add(1);
         if let Some(app) = app {
-            emit_launch_progress(app, "Libraries", format!("Checking library {current}/{total}"), current, total);
+            emit_launch_progress(
+                app,
+                "Libraries",
+                format!("Checking library {current}/{total}"),
+                current,
+                total,
+            );
         }
         if !library.artifact_path.is_empty() {
             let path = libraries_dir.join(&library.artifact_path);
@@ -1933,7 +2320,13 @@ fn ensure_libraries_with_progress(game_dir: &Path, profile: &VersionProfile, app
                     return Err(format!("No download URL for library {}", library.name));
                 }
                 if let Some(app) = app {
-                    emit_launch_progress(app, "Libraries", format!("Downloading {}", library.name), current, total);
+                    emit_launch_progress(
+                        app,
+                        "Libraries",
+                        format!("Downloading {}", library.name),
+                        current,
+                        total,
+                    );
                 }
                 download_file(&library.artifact_url, &path)?;
             }
@@ -1943,10 +2336,19 @@ fn ensure_libraries_with_progress(game_dir: &Path, profile: &VersionProfile, app
             let file = libraries_dir.join(path);
             if !file.is_file() {
                 if url.is_empty() {
-                    return Err(format!("No native download URL for library {}", library.name));
+                    return Err(format!(
+                        "No native download URL for library {}",
+                        library.name
+                    ));
                 }
                 if let Some(app) = app {
-                    emit_launch_progress(app, "Libraries", format!("Downloading native {}", library.name), current, total);
+                    emit_launch_progress(
+                        app,
+                        "Libraries",
+                        format!("Downloading native {}", library.name),
+                        current,
+                        total,
+                    );
                 }
                 download_file(&url, &file)?;
             }
@@ -1955,14 +2357,30 @@ fn ensure_libraries_with_progress(game_dir: &Path, profile: &VersionProfile, app
     Ok(classpath)
 }
 
-fn ensure_client_jar_with_progress(game_dir: &Path, profile: &VersionProfile, app: Option<&AppHandle>) -> Result<PathBuf, String> {
+fn ensure_client_jar_with_progress(
+    game_dir: &Path,
+    profile: &VersionProfile,
+    app: Option<&AppHandle>,
+) -> Result<PathBuf, String> {
     if profile.client_version_id.is_empty() || profile.client_jar_url.is_empty() {
         return Err("Minecraft profile does not include a client jar URL.".to_string());
     }
-    let path = game_dir.join("versions").join(&profile.client_version_id).join(format!("{}.jar", profile.client_version_id));
+    let path = game_dir
+        .join("versions")
+        .join(&profile.client_version_id)
+        .join(format!("{}.jar", profile.client_version_id));
     if !path.is_file() {
         if let Some(app) = app {
-            emit_launch_progress(app, "Minecraft", format!("Downloading Minecraft {} client jar", profile.client_version_id), 8, 12);
+            emit_launch_progress(
+                app,
+                "Minecraft",
+                format!(
+                    "Downloading Minecraft {} client jar",
+                    profile.client_version_id
+                ),
+                8,
+                12,
+            );
         }
         download_file(&profile.client_jar_url, &path)?;
     } else if let Some(app) = app {
@@ -1971,20 +2389,32 @@ fn ensure_client_jar_with_progress(game_dir: &Path, profile: &VersionProfile, ap
     Ok(path)
 }
 
-fn ensure_assets_with_progress(game_dir: &Path, profile: &VersionProfile, app: Option<&AppHandle>) -> Result<(), String> {
+fn ensure_assets_with_progress(
+    game_dir: &Path,
+    profile: &VersionProfile,
+    app: Option<&AppHandle>,
+) -> Result<(), String> {
     if profile.asset_index_id.is_empty() || profile.asset_index_url.is_empty() {
         return Err("Minecraft profile does not include an asset index.".to_string());
     }
     let assets = game_dir.join("assets");
-    let index = assets.join("indexes").join(format!("{}.json", profile.asset_index_id));
+    let index = assets
+        .join("indexes")
+        .join(format!("{}.json", profile.asset_index_id));
     if !index.is_file() {
         if let Some(app) = app {
             emit_launch_progress(app, "Assets", "Downloading Minecraft asset index", 0, 1);
         }
         download_file(&profile.asset_index_url, &index)?;
     }
-    let body = serde_json::from_str::<serde_json::Value>(&fs::read_to_string(index).map_err(error_text)?).map_err(error_text)?;
-    let objects = body.get("objects").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let body =
+        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(index).map_err(error_text)?)
+            .map_err(error_text)?;
+    let objects = body
+        .get("objects")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
     let total = objects.len().max(1) as u32;
     let mut current = 0u32;
     let mut missing = Vec::new();
@@ -1999,7 +2429,13 @@ fn ensure_assets_with_progress(game_dir: &Path, profile: &VersionProfile, app: O
             missing.push(AssetDownload { hash, path });
         } else if let Some(app) = app {
             if current == 1 || current == total || current % 50 == 0 {
-                emit_launch_progress(app, "Assets", format!("Checking Minecraft assets {current}/{total}"), current, total);
+                emit_launch_progress(
+                    app,
+                    "Assets",
+                    format!("Checking Minecraft assets {current}/{total}"),
+                    current,
+                    total,
+                );
             }
         }
     }
@@ -2012,7 +2448,10 @@ fn ensure_assets_with_progress(game_dir: &Path, profile: &VersionProfile, app: O
     download_missing_assets(missing, app.cloned())
 }
 
-fn download_missing_assets(missing: Vec<AssetDownload>, app: Option<AppHandle>) -> Result<(), String> {
+fn download_missing_assets(
+    missing: Vec<AssetDownload>,
+    app: Option<AppHandle>,
+) -> Result<(), String> {
     let total = missing.len() as u32;
     let workers = std::thread::available_parallelism()
         .map(|count| count.get().saturating_mul(2).clamp(2, 12))
@@ -2021,7 +2460,13 @@ fn download_missing_assets(missing: Vec<AssetDownload>, app: Option<AppHandle>) 
     let done = Arc::new(AtomicU32::new(0));
 
     if let Some(app) = app.as_ref() {
-        emit_launch_progress(app, "Assets", format!("Downloading Minecraft assets 0/{total}"), 0, total);
+        emit_launch_progress(
+            app,
+            "Assets",
+            format!("Downloading Minecraft assets 0/{total}"),
+            0,
+            total,
+        );
     }
 
     std::thread::scope(|scope| {
@@ -2046,7 +2491,13 @@ fn download_missing_assets(missing: Vec<AssetDownload>, app: Option<AppHandle>) 
                     let current = done.fetch_add(1, Ordering::SeqCst).saturating_add(1);
                     if let Some(app) = app.as_ref() {
                         if current == 1 || current == total || current % 20 == 0 {
-                            emit_launch_progress(app, "Assets", format!("Downloading Minecraft assets {current}/{total}"), current, total);
+                            emit_launch_progress(
+                                app,
+                                "Assets",
+                                format!("Downloading Minecraft assets {current}/{total}"),
+                                current,
+                                total,
+                            );
                         }
                     }
                 }
@@ -2054,17 +2505,29 @@ fn download_missing_assets(missing: Vec<AssetDownload>, app: Option<AppHandle>) 
         }
 
         for handle in handles {
-            handle.join().map_err(|_| "Asset worker crashed.".to_string())??;
+            handle
+                .join()
+                .map_err(|_| "Asset worker crashed.".to_string())??;
         }
         Ok(())
     })
 }
 
-fn extract_natives_with_progress(game_dir: &Path, version_id: &str, profile: &VersionProfile, app: Option<&AppHandle>) -> Result<PathBuf, String> {
+fn extract_natives_with_progress(
+    game_dir: &Path,
+    version_id: &str,
+    profile: &VersionProfile,
+    app: Option<&AppHandle>,
+) -> Result<PathBuf, String> {
     let target = game_dir.join("versions").join(version_id).join("natives");
     fs::create_dir_all(&target).map_err(error_text)?;
     let libraries_dir = game_dir.join("libraries");
-    let total = profile.libraries.iter().filter(|library| rules_allow(&library.rules)).count().max(1) as u32;
+    let total = profile
+        .libraries
+        .iter()
+        .filter(|library| rules_allow(&library.rules))
+        .count()
+        .max(1) as u32;
     let mut current = 0u32;
     for library in &profile.libraries {
         if !rules_allow(&library.rules) {
@@ -2075,7 +2538,13 @@ fn extract_natives_with_progress(game_dir: &Path, version_id: &str, profile: &Ve
             let file = libraries_dir.join(path);
             if file.is_file() {
                 if let Some(app) = app {
-                    emit_launch_progress(app, "Natives", format!("Extracting native libraries {current}/{total}"), current, total);
+                    emit_launch_progress(
+                        app,
+                        "Natives",
+                        format!("Extracting native libraries {current}/{total}"),
+                        current,
+                        total,
+                    );
                 }
                 unzip_natives(&file, &target)?;
             }
@@ -2108,7 +2577,10 @@ fn build_minecraft_command(
     command.push(format!("-Dminecraft.launcher.version={VERSION}"));
     command.push(format!("-Dgamble.antiScreenshare={anti_screenshare}"));
     if let Some(ticket) = launch_ticket_file {
-        command.push(format!("-Dgamble.launchTicketFile={}", display_path(ticket)));
+        command.push(format!(
+            "-Dgamble.launchTicketFile={}",
+            display_path(ticket)
+        ));
     }
     if profile_installs_client(profile_id) && !build.is_empty() {
         command.push(format!("-Dgamble.launchBuild={build}"));
@@ -2116,13 +2588,22 @@ fn build_minecraft_command(
     if let Some(payload) = payload.filter(|path| path.parent() != Some(&game_dir.join("mods"))) {
         command.push(format!("-Dfabric.addMods={}", display_path(payload)));
     }
-    if matches!(profile_kind(profile_id), ProfileKind::Fabric | ProfileKind::Client) && !profile.client_version_id.is_empty() {
-        let jar = game_dir.join("versions").join(&profile.client_version_id).join(format!("{}.jar", profile.client_version_id));
+    if matches!(
+        profile_kind(profile_id),
+        ProfileKind::Fabric | ProfileKind::Client
+    ) && !profile.client_version_id.is_empty()
+    {
+        let jar = game_dir
+            .join("versions")
+            .join(&profile.client_version_id)
+            .join(format!("{}.jar", profile.client_version_id));
         command.push(format!("-Dfabric.gameJarPath={}", display_path(&jar)));
     }
     for arg in &profile.jvm_arguments {
         if !is_launcher_managed_jvm_arg(arg) {
-            command.push(replace_jvm_placeholders(arg, game_dir, classpath, natives, version_id));
+            command.push(replace_jvm_placeholders(
+                arg, game_dir, classpath, natives, version_id,
+            ));
         }
     }
     command.extend(split_args(extra_java_args)?);
@@ -2133,7 +2614,10 @@ fn build_minecraft_command(
     for arg in &profile.game_arguments {
         command.push(
             arg.replace("${auth_player_name}", &identity.name)
-                .replace("${version_name}", &format!("Gamble Client {MINECRAFT_VERSION}"))
+                .replace(
+                    "${version_name}",
+                    &format!("Gamble Client {MINECRAFT_VERSION}"),
+                )
                 .replace("${game_directory}", &display_path(game_dir))
                 .replace("${assets_root}", &display_path(&game_dir.join("assets")))
                 .replace("${assets_index_name}", &profile.asset_index_id)
@@ -2178,7 +2662,12 @@ fn download_file(url: &str, path: &Path) -> Result<(), String> {
 }
 
 fn download_file_once(url: &str, path: &Path) -> Result<(), String> {
-    let temp = path.with_extension(format!("{}.part", path.extension().and_then(|value| value.to_str()).unwrap_or("download")));
+    let temp = path.with_extension(format!(
+        "{}.part",
+        path.extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("download")
+    ));
     let _ = fs::remove_file(&temp);
     let mut response = http_client()?
         .get(url)
@@ -2186,12 +2675,16 @@ fn download_file_once(url: &str, path: &Path) -> Result<(), String> {
         .map_err(error_text)?
         .error_for_status()
         .map_err(error_text)?;
-    if response.content_length().is_some_and(|size| size > MAX_DOWNLOAD_BYTES) {
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_DOWNLOAD_BYTES)
+    {
         return Err("Download exceeds the 512 MiB safety limit.".to_string());
     }
     let result = (|| {
         let mut output = File::create(&temp).map_err(error_text)?;
-        let copied = io::copy(&mut response.take(MAX_DOWNLOAD_BYTES + 1), &mut output).map_err(error_text)?;
+        let copied = io::copy(&mut response.take(MAX_DOWNLOAD_BYTES + 1), &mut output)
+            .map_err(error_text)?;
         if copied > MAX_DOWNLOAD_BYTES {
             return Err("Download exceeds the 512 MiB safety limit.".to_string());
         }
@@ -2222,12 +2715,16 @@ fn download_failure_message(url: &str, error: &str) -> String {
 fn unzip_natives(zip_path: &Path, target: &Path) -> Result<(), String> {
     let file = File::open(zip_path).map_err(error_text)?;
     let mut archive = ZipArchive::new(file).map_err(error_text)?;
-    if archive.len() > MAX_NATIVE_FILES { return Err("Native archive contains too many files.".to_string()); }
+    if archive.len() > MAX_NATIVE_FILES {
+        return Err("Native archive contains too many files.".to_string());
+    }
     let mut expanded = 0u64;
     for i in 0..archive.len() {
         let mut item = archive.by_index(i).map_err(error_text)?;
         expanded = expanded.saturating_add(item.size());
-        if expanded > MAX_NATIVE_EXPANDED_BYTES { return Err("Native archive expands beyond the 512 MiB safety limit.".to_string()); }
+        if expanded > MAX_NATIVE_EXPANDED_BYTES {
+            return Err("Native archive expands beyond the 512 MiB safety limit.".to_string());
+        }
         let name = item.name().to_string();
         if item.is_dir() || name.starts_with("META-INF/") || name.contains("..") {
             continue;
@@ -2255,8 +2752,18 @@ fn native_artifact(library: &Library) -> Option<(String, String)> {
     if classifier.is_empty() {
         return None;
     }
-    let path = library.classifier_paths.get(&classifier).and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let url = library.classifier_urls.get(&classifier).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let path = library
+        .classifier_paths
+        .get(&classifier)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let url = library
+        .classifier_urls
+        .get(&classifier)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     if path.is_empty() {
         None
     } else {
@@ -2301,7 +2808,10 @@ fn rule_applies(rule: &serde_json::Value) -> bool {
 }
 
 fn maven_artifact_path(name: &str) -> String {
-    let (coordinate, extension) = name.split_once('@').map(|(a, b)| (a, b)).unwrap_or((name, "jar"));
+    let (coordinate, extension) = name
+        .split_once('@')
+        .map(|(a, b)| (a, b))
+        .unwrap_or((name, "jar"));
     let parts = coordinate.split(':').collect::<Vec<_>>();
     if parts.len() < 3 {
         return String::new();
@@ -2339,7 +2849,13 @@ fn is_launcher_managed_jvm_arg(arg: &str) -> bool {
         || arg.ends_with(".KnotClient")
 }
 
-fn replace_jvm_placeholders(arg: &str, game_dir: &Path, classpath: &[PathBuf], natives: &Path, version_id: &str) -> String {
+fn replace_jvm_placeholders(
+    arg: &str,
+    game_dir: &Path,
+    classpath: &[PathBuf],
+    natives: &Path,
+    version_id: &str,
+) -> String {
     arg.replace("${natives_directory}", &display_path(natives))
         .replace("${launcher_name}", "GambleClientLauncher")
         .replace("${launcher_version}", VERSION)
@@ -2362,7 +2878,9 @@ fn split_args(value: &str) -> Result<Vec<String>, String> {
             continue;
         }
         if ch == '\\' && !single {
-            if chars.peek().is_some_and(|next| next.is_whitespace() || *next == '\\' || *next == '"' || *next == '\'') {
+            if chars.peek().is_some_and(|next| {
+                next.is_whitespace() || *next == '\\' || *next == '"' || *next == '\''
+            }) {
                 escaping = true;
                 continue;
             }
@@ -2396,15 +2914,25 @@ fn split_args(value: &str) -> Result<Vec<String>, String> {
     }
     for arg in &args {
         if arg == "net.minecraft.client.main.Main" || arg.ends_with(".KnotClient") {
-            return Err(format!("JVM Args should not include the Minecraft main class: {arg}"));
+            return Err(format!(
+                "JVM Args should not include the Minecraft main class: {arg}"
+            ));
         }
     }
     Ok(args)
 }
 
 fn join_classpath(classpath: &[PathBuf]) -> String {
-    let separator = if env::consts::OS == "windows" { ";" } else { ":" };
-    classpath.iter().map(|path| display_path(path)).collect::<Vec<_>>().join(separator)
+    let separator = if env::consts::OS == "windows" {
+        ";"
+    } else {
+        ":"
+    };
+    classpath
+        .iter()
+        .map(|path| display_path(path))
+        .collect::<Vec<_>>()
+        .join(separator)
 }
 
 fn ensure_java_runtime(app: Option<&AppHandle>) -> Result<String, String> {
@@ -2417,7 +2945,13 @@ fn ensure_java_runtime(app: Option<&AppHandle>) -> Result<String, String> {
     }
 
     if let Some(app) = app {
-        emit_launch_progress(app, "Runtime", "Installing the managed Java 21 runtime (first launch only)", 1, 1);
+        emit_launch_progress(
+            app,
+            "Runtime",
+            "Installing the managed Java 21 runtime (first launch only)",
+            1,
+            1,
+        );
     }
 
     let install_root = managed_root().join("runtime").join("temurin-21");
@@ -2436,15 +2970,20 @@ fn ensure_java_runtime(app: Option<&AppHandle>) -> Result<String, String> {
     } else {
         format!("https://api.adoptium.net/v3/binary/latest/21/ga/windows/{arch}/jre/hotspot/normal/eclipse")
     };
-    download_file(&url, &archive).map_err(|error| format!("Managed Java 21 download failed: {error}"))?;
+    download_file(&url, &archive)
+        .map_err(|error| format!("Managed Java 21 download failed: {error}"))?;
     let extracted = extract_runtime_zip(&archive, &install_root);
     let _ = fs::remove_file(&archive);
     extracted?;
 
-    let candidate = find_java_under(&install_root)
-        .ok_or_else(|| "Managed Java archive installed, but bin/java.exe was not found.".to_string())?;
+    let candidate = find_java_under(&install_root).ok_or_else(|| {
+        "Managed Java archive installed, but bin/java.exe was not found.".to_string()
+    })?;
     if !java_candidate_is_compatible(&candidate) {
-        return Err(format!("Managed Java runtime failed its Java 21 check: {}", display_path(&candidate)));
+        return Err(format!(
+            "Managed Java runtime failed its Java 21 check: {}",
+            display_path(&candidate)
+        ));
     }
     Ok(display_path(&windowless_java(&candidate)))
 }
@@ -2468,7 +3007,11 @@ fn windowless_java(candidate: &Path) -> PathBuf {
         return candidate.to_path_buf();
     }
     let javaw = candidate.with_file_name("javaw.exe");
-    if javaw.is_file() { javaw } else { candidate.to_path_buf() }
+    if javaw.is_file() {
+        javaw
+    } else {
+        candidate.to_path_buf()
+    }
 }
 
 fn find_java_under(root: &Path) -> Option<PathBuf> {
@@ -2477,7 +3020,13 @@ fn find_java_under(root: &Path) -> Option<PathBuf> {
         .follow_links(false)
         .into_iter()
         .filter_map(Result::ok)
-        .find(|entry| entry.file_type().is_file() && entry.file_name().to_string_lossy().eq_ignore_ascii_case("java.exe"))
+        .find(|entry| {
+            entry.file_type().is_file()
+                && entry
+                    .file_name()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case("java.exe")
+        })
         .map(|entry| entry.into_path())
 }
 
@@ -2491,7 +3040,8 @@ fn extract_runtime_zip(zip_path: &Path, target: &Path) -> Result<(), String> {
     let mut expanded = 0u64;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(error_text)?;
-        let relative = entry.enclosed_name()
+        let relative = entry
+            .enclosed_name()
             .ok_or_else(|| "Managed Java archive contains an unsafe path.".to_string())?
             .to_path_buf();
         let output = target.join(relative);
@@ -2520,20 +3070,32 @@ fn java_executable() -> String {
 }
 
 fn preferred_java_candidate(candidates: Vec<PathBuf>) -> Option<PathBuf> {
-    let mut compatible = candidates.into_iter().filter_map(|candidate| {
-        let output = java_version_output(&candidate).ok()?;
-        if !output.status.success() { return None; }
-        let feature = java_output_feature(&output);
-        (feature >= 21).then_some((candidate, feature))
-    }).collect::<Vec<_>>();
+    let mut compatible = candidates
+        .into_iter()
+        .filter_map(|candidate| {
+            let output = java_version_output(&candidate).ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let feature = java_output_feature(&output);
+            (feature >= 21).then_some((candidate, feature))
+        })
+        .collect::<Vec<_>>();
     // Minecraft 1.21.11 targets Java 21. Prefer that exact LTS runtime to avoid
     // unsupported LWJGL/JNI combinations, then use the nearest newer runtime.
     compatible.sort_by_key(|(_, feature)| (*feature != 21, *feature));
-    compatible.into_iter().next().map(|(candidate, _)| candidate)
+    compatible
+        .into_iter()
+        .next()
+        .map(|(candidate, _)| candidate)
 }
 
 fn java_candidates() -> Vec<PathBuf> {
-    let executable = if env::consts::OS == "windows" { "java.exe" } else { "java" };
+    let executable = if env::consts::OS == "windows" {
+        "java.exe"
+    } else {
+        "java"
+    };
     let mut candidates = Vec::new();
     let mut roots = Vec::new();
 
@@ -2548,7 +3110,11 @@ fn java_candidates() -> Vec<PathBuf> {
         if let Ok(local) = env::var("LOCALAPPDATA") {
             let local = PathBuf::from(local);
             roots.push(local.join("Programs/Eclipse Adoptium"));
-            roots.push(local.join("Packages/Microsoft.4297127D64EC6_8wekyb3d8bbwe/LocalCache/Local/runtime"));
+            roots.push(
+                local.join(
+                    "Packages/Microsoft.4297127D64EC6_8wekyb3d8bbwe/LocalCache/Local/runtime",
+                ),
+            );
             roots.push(local.join("Packages/Microsoft.4297127D64EC6_8wekyb3d8bbwe/LocalCache/Roaming/.minecraft/runtime"));
         }
         for variable in ["ProgramFiles", "ProgramFiles(x86)"] {
@@ -2575,8 +3141,18 @@ fn java_candidates() -> Vec<PathBuf> {
         if !root.is_dir() {
             continue;
         }
-        for entry in WalkDir::new(root).max_depth(8).follow_links(false).into_iter().filter_map(Result::ok) {
-            if entry.file_type().is_file() && entry.file_name().to_string_lossy().eq_ignore_ascii_case(executable) {
+        for entry in WalkDir::new(root)
+            .max_depth(8)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            if entry.file_type().is_file()
+                && entry
+                    .file_name()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(executable)
+            {
                 candidates.push(entry.into_path());
             }
         }
@@ -2585,7 +3161,10 @@ fn java_candidates() -> Vec<PathBuf> {
     candidates.push(PathBuf::from(executable));
     let mut unique = Vec::new();
     for candidate in candidates {
-        if !unique.iter().any(|existing: &PathBuf| existing == &candidate) {
+        if !unique
+            .iter()
+            .any(|existing: &PathBuf| existing == &candidate)
+        {
             unique.push(candidate);
         }
     }
@@ -2634,7 +3213,13 @@ where
         .map_err(|error| error.to_string())?
 }
 
-fn emit_launch_progress(app: &AppHandle, phase: &str, message: impl Into<String>, current: u32, total: u32) {
+fn emit_launch_progress(
+    app: &AppHandle,
+    phase: &str,
+    message: impl Into<String>,
+    current: u32,
+    total: u32,
+) {
     let total = total.max(1);
     let current = current.min(total);
     let percent = (((current as f64 / total as f64) * 100.0).round() as u8).min(100);
@@ -2653,8 +3238,23 @@ fn emit_launch_progress(app: &AppHandle, phase: &str, message: impl Into<String>
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
     let parsed = reqwest::Url::parse(&url).map_err(|_| "URL is invalid.".to_string())?;
-    let allowed = ["gamble-client.store", "dash.gamble-client.store", "admin.gamble-client.store", "profile.gamble-client.store", "discord.gg", "login.microsoftonline.com", "www.microsoft.com", "microsoft.com"];
-    if parsed.scheme() != "https" || !parsed.host_str().is_some_and(|host| allowed.contains(&host)) || !parsed.username().is_empty() || parsed.password().is_some() {
+    let allowed = [
+        "gamble-client.store",
+        "dash.gamble-client.store",
+        "admin.gamble-client.store",
+        "profile.gamble-client.store",
+        "discord.gg",
+        "login.microsoftonline.com",
+        "www.microsoft.com",
+        "microsoft.com",
+    ];
+    if parsed.scheme() != "https"
+        || !parsed
+            .host_str()
+            .is_some_and(|host| allowed.contains(&host))
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
         return Err("URL is not allowed.".to_string());
     }
     open_external(&url)
@@ -2853,7 +3453,11 @@ fn payload_file(profile: &str, file_name: &str) -> PathBuf {
 
 fn safe_file_name(value: &str) -> Result<&str, String> {
     let path = Path::new(value);
-    if value.trim().is_empty() || path.is_absolute() || path.components().count() != 1 || path.file_name().and_then(|name| name.to_str()) != Some(value) {
+    if value.trim().is_empty()
+        || path.is_absolute()
+        || path.components().count() != 1
+        || path.file_name().and_then(|name| name.to_str()) != Some(value)
+    {
         return Err("Server manifest filename is unsafe.".to_string());
     }
     Ok(value)
@@ -2907,7 +3511,11 @@ fn copy_dir_all(source: &Path, target: &Path) -> io::Result<()> {
 fn set_resource_pack_enabled(profile: &str, file: &Path, enabled: bool) -> Result<(), String> {
     let options = minecraft_folder(profile).join("options.txt");
     let mut lines = if options.is_file() {
-        fs::read_to_string(&options).map_err(error_text)?.lines().map(ToString::to_string).collect::<Vec<_>>()
+        fs::read_to_string(&options)
+            .map_err(error_text)?
+            .lines()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
     } else {
         Vec::new()
     };
@@ -2936,7 +3544,10 @@ fn set_resource_pack_enabled(profile: &str, file: &Path, enabled: bool) -> Resul
     if !found && enabled {
         lines.push(format!("resourcePacks:{}", encode_pack_list(&[entry])));
     }
-    if !lines.iter().any(|line| line.starts_with("incompatibleResourcePacks:")) {
+    if !lines
+        .iter()
+        .any(|line| line.starts_with("incompatibleResourcePacks:"))
+    {
         lines.push("incompatibleResourcePacks:[]".to_string());
     }
     fs::write(options, format!("{}\n", lines.join("\n"))).map_err(error_text)
@@ -2949,7 +3560,11 @@ fn apply_minecraft_option_defaults(profile: &str) -> Result<(), String> {
     }
 
     let mut lines = if options.is_file() {
-        fs::read_to_string(&options).map_err(error_text)?.lines().map(ToString::to_string).collect::<Vec<_>>()
+        fs::read_to_string(&options)
+            .map_err(error_text)?
+            .lines()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
     } else {
         Vec::new()
     };
@@ -3050,7 +3665,10 @@ fn cleanup_stale_launch_payloads(profile: &str) -> Result<(), String> {
 
 fn prepare_launch_payload(profile: &str, source: &Path) -> Result<PathBuf, String> {
     if !source.is_file() {
-        return Err(format!("Managed client payload is missing: {}", display_path(source)));
+        return Err(format!(
+            "Managed client payload is missing: {}",
+            display_path(source)
+        ));
     }
     let folder = profile_data_folder(profile).join("launch");
     fs::create_dir_all(&folder).map_err(error_text)?;
@@ -3094,7 +3712,8 @@ fn ensure_loader_jar(profile: &str) -> Result<(), String> {
     {
         let mut zip = ZipWriter::new(&mut buffer);
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-        zip.start_file("fabric.mod.json", options).map_err(error_text)?;
+        zip.start_file("fabric.mod.json", options)
+            .map_err(error_text)?;
         let json = format!(
             "{{\"schemaVersion\":1,\"id\":\"gamble-client-loader\",\"version\":\"{}\",\"name\":\"Gamble Client Loader\",\"description\":\"Launcher-managed bootstrap marker for Gamble Client.\",\"authors\":[\"Gamble Client\"],\"environment\":\"client\",\"depends\":{{\"fabricloader\":\">=0.18.0\"}}}}",
             VERSION
@@ -3147,7 +3766,9 @@ fn ensure_fabric_api_with_progress(profile: &str, app: Option<&AppHandle>) -> Re
     }
     let release = fetch_modrinth_release(&modrinth_versions_url("fabric-api"))?;
     if release.file_name.trim().is_empty() || release.url.trim().is_empty() {
-        return Err(format!("Could not find Fabric API for Minecraft {MINECRAFT_VERSION}."));
+        return Err(format!(
+            "Could not find Fabric API for Minecraft {MINECRAFT_VERSION}."
+        ));
     }
 
     let target = mods.join(release.file_name);
@@ -3167,10 +3788,19 @@ fn fetch_modrinth_release(url: &str) -> Result<ModrinthRelease, String> {
         .json::<Vec<serde_json::Value>>()
         .map_err(error_text)?;
     let version = versions.first().cloned().unwrap_or_else(|| json!({}));
-    let files = version.get("files").and_then(|value| value.as_array()).cloned().unwrap_or_default();
+    let files = version
+        .get("files")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
     let selected = files
         .iter()
-        .find(|file| json_bool_value(file.get("primary").unwrap_or(&serde_json::Value::Bool(false))))
+        .find(|file| {
+            json_bool_value(
+                file.get("primary")
+                    .unwrap_or(&serde_json::Value::Bool(false)),
+            )
+        })
         .or_else(|| files.first())
         .cloned()
         .unwrap_or_else(|| json!({}));
@@ -3180,7 +3810,11 @@ fn fetch_modrinth_release(url: &str) -> Result<ModrinthRelease, String> {
     })
 }
 
-fn find_managed_mod_jar(mods: &Path, prefix: &str, include_disabled: bool) -> Result<Option<PathBuf>, String> {
+fn find_managed_mod_jar(
+    mods: &Path,
+    prefix: &str,
+    include_disabled: bool,
+) -> Result<Option<PathBuf>, String> {
     if !mods.is_dir() {
         return Ok(None);
     }
@@ -3191,7 +3825,9 @@ fn find_managed_mod_jar(mods: &Path, prefix: &str, include_disabled: bool) -> Re
             continue;
         }
         let lower = entry.file_name().to_string_lossy().to_lowercase();
-        if lower.starts_with(prefix) && (lower.ends_with(".jar") || (include_disabled && lower.ends_with(".jar.disabled"))) {
+        if lower.starts_with(prefix)
+            && (lower.ends_with(".jar") || (include_disabled && lower.ends_with(".jar.disabled")))
+        {
             return Ok(Some(path));
         }
     }
@@ -3209,10 +3845,19 @@ fn modrinth_versions_url(slug: &str) -> String {
     )
 }
 
-fn write_install_marker(profile: &str, build: &str, manifest: &ManifestResponse, installed: &Path) -> Result<(), String> {
+fn write_install_marker(
+    profile: &str,
+    build: &str,
+    manifest: &ManifestResponse,
+    installed: &Path,
+) -> Result<(), String> {
     let folder = profile_data_folder(profile);
     fs::create_dir_all(&folder).map_err(error_text)?;
-    fs::write(folder.join("installed-build.txt"), format!("{build}\n{}\n", manifest.file_name)).map_err(error_text)?;
+    fs::write(
+        folder.join("installed-build.txt"),
+        format!("{build}\n{}\n", manifest.file_name),
+    )
+    .map_err(error_text)?;
     let marker = json!({
         "schema": 1,
         "build": build,
@@ -3236,7 +3881,10 @@ fn selected_microsoft_account() -> Result<Option<MicrosoftAccount>, String> {
         return Ok(None);
     }
     if let Some(uuid) = selected_microsoft_uuid() {
-        if let Some(account) = accounts.iter().find(|account| account.uuid.eq_ignore_ascii_case(&uuid)) {
+        if let Some(account) = accounts
+            .iter()
+            .find(|account| account.uuid.eq_ignore_ascii_case(&uuid))
+        {
             return Ok(Some(account.clone()));
         }
     }
@@ -3272,7 +3920,9 @@ fn read_microsoft_account_list() -> Result<Vec<MicrosoftAccount>, String> {
         }
     }
 
-    accounts.retain(|account| !account.refresh_token.trim().is_empty() && !account.uuid.trim().is_empty());
+    accounts.retain(|account| {
+        !account.refresh_token.trim().is_empty() && !account.uuid.trim().is_empty()
+    });
     Ok(accounts)
 }
 
@@ -3281,7 +3931,10 @@ fn upsert_microsoft_account(accounts: &mut Vec<MicrosoftAccount>, mut account: M
     if account.refresh_token.trim().is_empty() || account.uuid.trim().is_empty() {
         return;
     }
-    if let Some(existing) = accounts.iter_mut().find(|existing| existing.uuid.eq_ignore_ascii_case(&account.uuid)) {
+    if let Some(existing) = accounts
+        .iter_mut()
+        .find(|existing| existing.uuid.eq_ignore_ascii_case(&account.uuid))
+    {
         *existing = account;
     } else {
         accounts.push(account);
@@ -3297,12 +3950,17 @@ fn write_microsoft_account_list(accounts: &[MicrosoftAccount]) -> Result<(), Str
 }
 
 fn selected_microsoft_uuid() -> Option<String> {
-    read_trimmed(&selected_microsoft_account_file()).ok().filter(|value| !value.trim().is_empty())
+    read_trimmed(&selected_microsoft_account_file())
+        .ok()
+        .filter(|value| !value.trim().is_empty())
 }
 
 fn save_selected_microsoft_uuid(uuid: &str) -> Result<(), String> {
     fs::create_dir_all(launcher_data_folder()).map_err(error_text)?;
-    write_private_file(&selected_microsoft_account_file(), format!("{}\n", uuid.trim().replace('-', "")).as_bytes())
+    write_private_file(
+        &selected_microsoft_account_file(),
+        format!("{}\n", uuid.trim().replace('-', "")).as_bytes(),
+    )
 }
 
 fn save_legacy_microsoft_account(account: &MicrosoftAccount) -> Result<(), String> {
@@ -3332,12 +3990,18 @@ fn parse_microsoft_token(body: &serde_json::Value) -> Result<MicrosoftToken, Str
     })
 }
 
-fn exchange_microsoft_for_minecraft(microsoft_access_token: &str) -> Result<MinecraftProfile, String> {
+fn exchange_microsoft_for_minecraft(
+    microsoft_access_token: &str,
+) -> Result<MinecraftProfile, String> {
     let xbox = request_xbox_token(microsoft_access_token)?;
     let xsts = request_xsts_token(&xbox.token)?;
     let minecraft = request_minecraft_token(&xsts.user_hash, &xsts.token)?;
     let mut profile = request_minecraft_profile(&minecraft.access_token)?;
-    profile.xuid = if xsts.xuid.trim().is_empty() { xbox.xuid } else { xsts.xuid };
+    profile.xuid = if xsts.xuid.trim().is_empty() {
+        xbox.xuid
+    } else {
+        xsts.xuid
+    };
     profile.access_token = minecraft.access_token;
     profile.expires_at = unix_millis() + minecraft.expires_in_seconds.max(300) * 1000;
     Ok(profile)
@@ -3382,7 +4046,11 @@ fn parse_xbox_token(body: serde_json::Value, label: &str) -> Result<XboxToken, S
     if token.trim().is_empty() || user_hash.trim().is_empty() {
         return Err(format!("{label} did not return a usable token."));
     }
-    Ok(XboxToken { token, user_hash, xuid })
+    Ok(XboxToken {
+        token,
+        user_hash,
+        xuid,
+    })
 }
 
 fn request_minecraft_token(user_hash: &str, xsts_token: &str) -> Result<MinecraftToken, String> {
@@ -3431,7 +4099,11 @@ fn request_minecraft_profile(minecraft_access_token: &str) -> Result<MinecraftPr
     })
 }
 
-fn post_json(url: &str, body: &serde_json::Value, bearer_token: &str) -> Result<serde_json::Value, String> {
+fn post_json(
+    url: &str,
+    body: &serde_json::Value,
+    bearer_token: &str,
+) -> Result<serde_json::Value, String> {
     let mut request = http_client()?.post(url).json(body);
     if !bearer_token.trim().is_empty() {
         request = request.bearer_auth(bearer_token.trim());
@@ -3442,7 +4114,8 @@ fn post_json(url: &str, body: &serde_json::Value, bearer_token: &str) -> Result<
     let body = if text.trim().is_empty() {
         json!({})
     } else {
-        serde_json::from_str::<serde_json::Value>(&text).unwrap_or_else(|_| json!({ "message": text }))
+        serde_json::from_str::<serde_json::Value>(&text)
+            .unwrap_or_else(|_| json!({ "message": text }))
     };
     if !status.is_success() {
         let message = json_string(&body, "message");
@@ -3456,7 +4129,9 @@ fn post_json_error_message(url: &str, status: u16, message: &str) -> String {
     let clean = message.trim();
     if status == 429 {
         if clean.is_empty() {
-            return format!("{service} rate limited this request. Try again in a minute. (HTTP 429)");
+            return format!(
+                "{service} rate limited this request. Try again in a minute. (HTTP 429)"
+            );
         }
         return format!("{clean} (HTTP 429)");
     }
@@ -3489,12 +4164,17 @@ fn fetch_client_manifest(build: &str, token: &str) -> Result<ManifestResponse, S
         token,
     )?;
     let manifest = serde_json::from_value::<ManifestResponse>(body).map_err(error_text)?;
+    if canonical_build_id(&manifest.build) != canonical_build_id(build) {
+        return Err("Backend manifest was issued for a different client tier.".to_string());
+    }
     safe_file_name(&manifest.file_name)?;
     if manifest.download_url.trim().is_empty() {
         return Err("Backend manifest did not include a client download URL.".to_string());
     }
     if manifest.size == 0 || !is_sha256(&manifest.sha256) {
-        return Err("Backend manifest is missing required size or SHA-256 integrity metadata.".to_string());
+        return Err(
+            "Backend manifest is missing required size or SHA-256 integrity metadata.".to_string(),
+        );
     }
     if manifest.size > MAX_MANAGED_CLIENT_BYTES {
         return Err("Managed client artifact exceeds the 64 MiB safety limit.".to_string());
@@ -3534,14 +4214,25 @@ fn preferred_launcher_download(info: &LauncherVersionResponse) -> LauncherDownlo
 }
 
 fn usable_launcher_download(download: Option<LauncherDownload>) -> Option<LauncherDownload> {
-    download.filter(|item| !item.file_name.trim().is_empty() && !item.download_url.trim().is_empty())
+    download
+        .filter(|item| !item.file_name.trim().is_empty() && !item.download_url.trim().is_empty())
 }
 
 fn linux_package_preference() -> &'static str {
-    let text = fs::read_to_string("/etc/os-release").unwrap_or_default().to_lowercase();
-    if text.contains("fedora") || text.contains("rhel") || text.contains("centos") || text.contains("suse") {
+    let text = fs::read_to_string("/etc/os-release")
+        .unwrap_or_default()
+        .to_lowercase();
+    if text.contains("fedora")
+        || text.contains("rhel")
+        || text.contains("centos")
+        || text.contains("suse")
+    {
         "rpm"
-    } else if text.contains("debian") || text.contains("ubuntu") || text.contains("linuxmint") || text.contains("pop") {
+    } else if text.contains("debian")
+        || text.contains("ubuntu")
+        || text.contains("linuxmint")
+        || text.contains("pop")
+    {
         "deb"
     } else {
         "jar"
@@ -3554,7 +4245,10 @@ fn verify_file(path: &Path, expected_size: u64, expected_sha: &str) -> Result<()
     }
     let metadata = path.metadata().map_err(error_text)?;
     if metadata.len() != expected_size {
-        return Err(format!("Expected {expected_size} bytes but found {} bytes.", metadata.len()));
+        return Err(format!(
+            "Expected {expected_size} bytes but found {} bytes.",
+            metadata.len()
+        ));
     }
     let mut file = File::open(path).map_err(error_text)?;
     let mut hasher = Sha256::new();
@@ -3568,14 +4262,26 @@ fn verify_file(path: &Path, expected_size: u64, expected_sha: &str) -> Result<()
     }
     let actual = format!("{:x}", hasher.finalize());
     if !actual.eq_ignore_ascii_case(expected_sha.trim()) {
-        return Err(format!("Expected SHA-256 {} but found {}.", expected_sha, actual));
+        return Err(format!(
+            "Expected SHA-256 {} but found {}.",
+            expected_sha, actual
+        ));
     }
     Ok(())
 }
 
 fn verify_fabric_mod_id(path: &Path, expected_id: &str) -> Result<(), String> {
+    verify_fabric_mod_identity(path, expected_id, None)
+}
+
+fn verify_fabric_mod_identity(
+    path: &Path,
+    expected_id: &str,
+    expected_build: Option<&str>,
+) -> Result<(), String> {
     let file = File::open(path).map_err(error_text)?;
-    let mut archive = ZipArchive::new(file).map_err(|_| "Managed client is not a valid jar archive.".to_string())?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|_| "Managed client is not a valid jar archive.".to_string())?;
     let mut metadata_entries = 0;
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(error_text)?;
@@ -3584,7 +4290,9 @@ fn verify_fabric_mod_id(path: &Path, expected_id: &str) -> Result<(), String> {
         }
     }
     if metadata_entries != 1 {
-        return Err("Managed client must contain exactly one top-level fabric.mod.json.".to_string());
+        return Err(
+            "Managed client must contain exactly one top-level fabric.mod.json.".to_string(),
+        );
     }
     let mut metadata = archive
         .by_name("fabric.mod.json")
@@ -3605,7 +4313,27 @@ fn verify_fabric_mod_id(path: &Path, expected_id: &str) -> Result<(), String> {
     if identity.id != expected_id {
         return Err(format!("Managed client mod id must be {expected_id}."));
     }
+    if let Some(expected_build) = expected_build.filter(|value| !value.trim().is_empty()) {
+        let variant = identity
+            .custom
+            .get("cg-mod:build_variant")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        if canonical_build_id(variant) != canonical_build_id(expected_build) {
+            return Err(
+                "Managed client build variant does not match the requested tier.".to_string(),
+            );
+        }
+    }
     Ok(())
+}
+
+fn canonical_build_id(value: &str) -> String {
+    match value.trim().to_lowercase().replace('-', "_").as_str() {
+        "beta" | "beta_plus_plus" => "beta_plus".to_string(),
+        "ad" => "ad_tier".to_string(),
+        normalized => normalized.to_string(),
+    }
 }
 
 fn display_version(manifest: &ManifestResponse) -> String {
@@ -3618,7 +4346,11 @@ fn display_version(manifest: &ManifestResponse) -> String {
 fn public_client_version(value: &str) -> String {
     let text = value.trim();
     let parts: Vec<&str> = text.split('.').collect();
-    if parts.len() >= 3 && parts[0] == "1" && parts[1] == "0" && parts[2].chars().all(|c| c.is_ascii_digit()) {
+    if parts.len() >= 3
+        && parts[0] == "1"
+        && parts[1] == "0"
+        && parts[2].chars().all(|c| c.is_ascii_digit())
+    {
         return format!("1.{}", parts[2]);
     }
     text.to_string()
@@ -3648,7 +4380,11 @@ fn json_string(body: &serde_json::Value, key: &str) -> String {
 
 fn json_u64(body: &serde_json::Value, key: &str) -> u64 {
     body.get(key)
-        .and_then(|value| value.as_u64().or_else(|| value.as_i64().map(|v| v.max(0) as u64)))
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_i64().map(|v| v.max(0) as u64))
+        })
         .unwrap_or(0)
 }
 
@@ -3656,7 +4392,14 @@ fn json_bool_value(value: &serde_json::Value) -> bool {
     value
         .as_bool()
         .or_else(|| value.as_i64().map(|number| number != 0))
-        .or_else(|| value.as_str().map(|text| matches!(text.to_ascii_lowercase().as_str(), "true" | "1" | "on" | "yes")))
+        .or_else(|| {
+            value.as_str().map(|text| {
+                matches!(
+                    text.to_ascii_lowercase().as_str(),
+                    "true" | "1" | "on" | "yes"
+                )
+            })
+        })
         .unwrap_or(false)
 }
 
@@ -3681,27 +4424,53 @@ fn push_check(checks: &mut Vec<DiagnosticCheck>, label: &str, ok: bool, detail: 
 }
 
 fn java_output_is_21_or_newer(output: &std::process::Output) -> bool {
-    let text = format!("{} {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let text = format!(
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     java_feature_from_text(&text) >= 21
 }
 
 fn java_output_feature(output: &std::process::Output) -> u32 {
-    let text = format!("{} {}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let text = format!(
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     java_feature_from_text(&text)
 }
 
 fn java_feature_from_text(text: &str) -> u32 {
     let version = text.split('"').nth(1).unwrap_or(&text);
-    let first = version.split('.').next().unwrap_or("").trim().parse::<u32>().unwrap_or(0);
-    if first == 1 { version.split('.').nth(1).and_then(|part| part.parse().ok()).unwrap_or(0) } else { first }
+    let first = version
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(0);
+    if first == 1 {
+        version
+            .split('.')
+            .nth(1)
+            .and_then(|part| part.parse().ok())
+            .unwrap_or(0)
+    } else {
+        first
+    }
 }
 
 fn read_trimmed(path: &Path) -> Result<String, String> {
-    fs::read_to_string(path).map(|value| value.trim().to_string()).map_err(error_text)
+    fs::read_to_string(path)
+        .map(|value| value.trim().to_string())
+        .map_err(error_text)
 }
 
 fn write_private_file(path: &Path, data: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(error_text)?; }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(error_text)?;
+    }
     fs::write(path, data).map_err(error_text)?;
     restrict_private_file(path)
 }
@@ -3772,7 +4541,10 @@ fn open_external(target: &str) -> Result<(), String> {
         command
     };
 
-    command.spawn().map(|_| ()).map_err(|error| format!("Could not open: {error}"))
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not open: {error}"))
 }
 
 #[cfg(test)]
@@ -3790,15 +4562,23 @@ mod tests {
             "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?client_id=test&prompt=select_account"
         ));
         assert!(is_browser_url("http://127.0.0.1:18765/public"));
-        assert!(!is_browser_url(r"C:\\Users\\Player\\AppData\\Roaming\\.gambleclient"));
+        assert!(!is_browser_url(
+            r"C:\\Users\\Player\\AppData\\Roaming\\.gambleclient"
+        ));
         assert!(!is_browser_url("/home/player/.gambleclient"));
         assert!(!is_browser_url("javascript:alert(1)"));
     }
 
     #[test]
     fn java_feature_parser_handles_lts_and_modern_versions() {
-        assert_eq!(java_feature_from_text("openjdk version \"21.0.8\" 2025-07-15"), 21);
-        assert_eq!(java_feature_from_text("openjdk version \"25.0.3\" 2026-04-21"), 25);
+        assert_eq!(
+            java_feature_from_text("openjdk version \"21.0.8\" 2025-07-15"),
+            21
+        );
+        assert_eq!(
+            java_feature_from_text("openjdk version \"25.0.3\" 2026-04-21"),
+            25
+        );
         assert_eq!(java_feature_from_text("java version \"1.8.0_412\""), 8);
     }
 
@@ -3819,36 +4599,58 @@ mod tests {
 
         let path = env::temp_dir().join(format!("gamble-private-{}.txt", launch_payload_name()));
         write_private_file(&path, b"one-use-token").unwrap();
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         let _ = fs::remove_file(path);
     }
 
     #[test]
     fn protected_manifest_file_names_reject_traversal() {
         assert_eq!(safe_file_name("client.jar").unwrap(), "client.jar");
-        for value in ["", ".", "..", "../client.jar", "nested/client.jar", "/tmp/client.jar", r"..\client.jar"] {
+        for value in [
+            "",
+            ".",
+            "..",
+            "../client.jar",
+            "nested/client.jar",
+            "/tmp/client.jar",
+            r"..\client.jar",
+        ] {
             assert!(safe_file_name(value).is_err(), "{value} should be rejected");
         }
     }
 
     #[test]
     fn fabric_identity_requires_one_exact_top_level_id() {
-        let valid = write_test_jar(r#"{"id":"cg-mod","custom":{"id":"other"}}"#);
+        let valid = write_test_jar(
+            r#"{"id":"cg-mod","custom":{"id":"other","cg-mod:build_variant":"ad-tier"}}"#,
+        );
         let nested = write_test_jar(r#"{"id":"other","custom":{"id":"cg-mod"}}"#);
         let duplicate = write_test_jar(r#"{"id":"other","id":"cg-mod"}"#);
         assert!(verify_fabric_mod_id(&valid, MANAGED_CLIENT_MOD_ID).is_ok());
         assert!(verify_fabric_mod_id(&nested, MANAGED_CLIENT_MOD_ID).is_err());
         assert!(verify_fabric_mod_id(&duplicate, MANAGED_CLIENT_MOD_ID).is_err());
+        assert!(verify_fabric_mod_identity(&valid, MANAGED_CLIENT_MOD_ID, Some("ad_tier")).is_ok());
+        assert!(
+            verify_fabric_mod_identity(&valid, MANAGED_CLIENT_MOD_ID, Some("release")).is_err()
+        );
         for path in [valid, nested, duplicate] {
             let _ = fs::remove_file(path);
         }
     }
 
     fn write_test_jar(metadata: &str) -> PathBuf {
-        let path = env::temp_dir().join(format!("gamble-launcher-test-{}.jar", launch_payload_name()));
+        let path = env::temp_dir().join(format!(
+            "gamble-launcher-test-{}.jar",
+            launch_payload_name()
+        ));
         let file = File::create(&path).unwrap();
         let mut archive = ZipWriter::new(file);
-        archive.start_file("fabric.mod.json", SimpleFileOptions::default()).unwrap();
+        archive
+            .start_file("fabric.mod.json", SimpleFileOptions::default())
+            .unwrap();
         archive.write_all(metadata.as_bytes()).unwrap();
         archive.finish().unwrap();
         path

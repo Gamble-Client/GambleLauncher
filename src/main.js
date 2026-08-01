@@ -13,7 +13,7 @@ const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
-const LAUNCHER_VERSION = "0.1.96";
+const LAUNCHER_VERSION = "0.1.97";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 const PREVIEW = !("__TAURI_INTERNALS__" in window);
@@ -184,9 +184,9 @@ async function mockInvoke(command, args = {}) {
         minVersion: LAUNCHER_VERSION,
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.96-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.96-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.96_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.97-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.97-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.97_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -213,8 +213,8 @@ async function mockInvoke(command, args = {}) {
   if (command === "download_launcher_update") {
     return {
       version: LAUNCHER_VERSION,
-      fileName: "Gamble-Client-Launcher_0.1.96_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.96_amd64.deb",
+      fileName: "Gamble-Client-Launcher_0.1.97_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.97_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -458,7 +458,8 @@ function topbar(signedIn) {
 }
 
 function playView(profile, selectedBuild, canInstall, signedIn) {
-  const launchLabel = state.minecraftRunning ? "Stop Minecraft" : "Launch";
+  const sponsorBlocked = !state.minecraftRunning && selectedBuild.id === "ad_tier" && !state.ads?.active;
+  const launchLabel = state.minecraftRunning ? "Stop Minecraft" : sponsorBlocked ? "Watch sponsor first" : "Launch";
   const clientStatus = clientStatusLabel();
   const enabledMods = state.mods.filter((item) => item.enabled).length;
   const enabledPacks = state.packs.filter((item) => item.enabled).length;
@@ -485,7 +486,8 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           </div>
         </div>
         <div class="launch-stack">
-          <button class="launch-button" type="button" data-action="launch" ${state.busy ? "disabled" : ""}>${escapeHtml(launchLabel)}</button>
+          <button class="launch-button" type="button" data-action="launch" ${state.busy || sponsorBlocked ? "disabled" : ""}>${escapeHtml(launchLabel)}</button>
+          ${sponsorBlocked ? `<p class="launch-warning">Ad Tier needs active sponsored time before each new launch.</p>` : ""}
           ${activeMicrosoft ? "" : `<p class="launch-warning">No Microsoft account linked. Launch opens Microsoft sign-in first.</p>`}
         </div>
       </section>
@@ -1270,7 +1272,7 @@ function preferredBuildForAccount(account = state.account) {
 function canUseBuild(buildId, account = state.account) {
   if (!account) return buildId === "release";
   if (account.ownerAccess || hasPlanOrStatus(account, ["owner"])) return true;
-  if (buildId === "ad_tier") return true;
+  if (buildId === "ad_tier") return preferredBuildForAccount(account) === "ad_tier";
   if (buildId === "release") return preferredBuildForAccount(account) !== "ad_tier";
   if (buildId === "beta_plus") return ["beta_plus", "media"].includes(preferredBuildForAccount(account));
   if (buildId === "media") return preferredBuildForAccount(account) === "media";
@@ -2070,6 +2072,10 @@ app.addEventListener("click", async (event) => {
         });
         render();
         await refreshAccountForUpdate();
+        if (buildForAccount().id === "ad_tier" && !state.ads?.active) {
+          showPopup("Sponsor break needed", "Watch the sponsor break in Gamble Client Launcher before launching Ad Tier.", "sponsor");
+          return;
+        }
         state.launchProgress = normalizeLaunchProgress({
           phase: "Client",
           message: "Checking client build",
