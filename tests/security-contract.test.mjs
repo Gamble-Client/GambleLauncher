@@ -43,3 +43,12 @@ test("launch authorization remains ticket-based instead of reusable local licens
     assert.match(rust, /-Dgamble\.launchTicketFile=/);
     assert.match(rust, /write_private_file\(&path, payload\.as_bytes\(\)\)/);
 });
+
+test("Windows retries the embedded app navigation only while WebView2 is blank", async () => {
+    const rust = await source("src-tauri/src/main.rs");
+
+    assert.match(rust, /tauri::Url::parse\("http:\/\/tauri\.localhost\/"\)/);
+    assert.match(rust, /\[250, 1_000, 2_500\]/);
+    assert.match(rust, /url\.as_str\(\) != "about:blank"/);
+    assert.match(rust, /window\.navigate\(app_url\.clone\(\)\)/);
+});

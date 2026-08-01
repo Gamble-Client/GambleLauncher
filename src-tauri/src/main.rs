@@ -18,6 +18,8 @@ use std::{
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+#[cfg(target_os = "windows")]
+use tauri::Manager;
 use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
@@ -25,7 +27,7 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-const VERSION: &str = "0.1.97";
+const VERSION: &str = "0.1.98";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -3263,6 +3265,25 @@ fn open_url(url: String) -> Result<(), String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                let app_url = tauri::Url::parse("http://tauri.localhost/")
+                    .expect("the embedded Windows app URL is valid");
+                std::thread::spawn(move || {
+                    for delay_ms in [250, 1_000, 2_500] {
+                        std::thread::sleep(Duration::from_millis(delay_ms));
+                        if window.url().is_ok_and(|url| url.as_str() != "about:blank") {
+                            break;
+                        }
+                        if let Err(error) = window.navigate(app_url.clone()) {
+                            eprintln!("Windows WebView navigation retry failed: {error}");
+                        }
+                    }
+                });
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             launcher_info,
             launcher_api,
