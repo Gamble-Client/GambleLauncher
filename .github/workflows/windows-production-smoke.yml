@@ -70,10 +70,12 @@ jobs:
               throw "The launcher did not create a main window within 45 seconds."
             }
 
-            $webviews = Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'"
-            if (-not $webviews) {
-              throw "The launcher window opened without a WebView2 process."
-            }
+            $webviewDeadline = [DateTime]::UtcNow.AddSeconds(30)
+            do {
+              $webviews = Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'"
+              if ($webviews) { break }
+              Start-Sleep -Milliseconds 500
+            } while ([DateTime]::UtcNow -lt $webviewDeadline)
 
             Start-Sleep -Seconds 5
             $rect = New-Object GambleWindowCapture+RECT
@@ -105,6 +107,7 @@ jobs:
 
             $screenshot = Join-Path $env:RUNNER_TEMP "gamble-client-launcher-production.png"
             $bitmap.Save($screenshot, [System.Drawing.Imaging.ImageFormat]::Png)
+            "WINDOW_SCREENSHOT=$screenshot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
             $samples = 0
             $sum = 0.0
@@ -131,11 +134,12 @@ jobs:
             $variance = ($sumSquares / $samples) - ($mean * $mean)
             $range = $maximum - $minimum
             Write-Host "Window ${width}x${height}; luma mean=$([Math]::Round($mean, 2)) variance=$([Math]::Round($variance, 2)) range=$([Math]::Round($range, 2)); color buckets=$($buckets.Count)."
+            if (-not $webviews) {
+              throw "The launcher window opened without a WebView2 process."
+            }
             if ($variance -lt 40 -or $range -lt 60 -or $buckets.Count -lt 12) {
               throw "The launcher render is blank or nearly uniform."
             }
-
-            "WINDOW_SCREENSHOT=$screenshot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           } finally {
             if (-not $launcher.HasExited) {
               Stop-Process -Id $launcher.Id -Force
