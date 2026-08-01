@@ -1,0 +1,151 @@
+name: Smoke Test Production Windows Launcher
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: Fresh Windows install and render smoke
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Download and install the public launcher
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Join-Path $env:RUNNER_TEMP "gamble-client-launcher-setup.exe"
+          Invoke-WebRequest -Uri "https://gamble-client.store/api/launcher/download/windows" -OutFile $installer
+          $install = Start-Process -FilePath $installer -ArgumentList "/S" -Wait -PassThru
+          if ($install.ExitCode -ne 0) {
+            throw "The public Windows installer exited with code $($install.ExitCode)."
+          }
+
+          $launcher = Join-Path $env:LOCALAPPDATA "Gamble Client Launcher\gamble-client-launcher.exe"
+          if (-not (Test-Path $launcher)) {
+            throw "The public installer did not create the launcher executable."
+          }
+          "LAUNCHER_EXE=$launcher" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Launch and reject a blank WebView
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Add-Type -AssemblyName System.Drawing
+          Add-Type @'
+          using System;
+          using System.Runtime.InteropServices;
+
+          public static class GambleWindowCapture {
+              [StructLayout(LayoutKind.Sequential)]
+              public struct RECT {
+                  public int Left;
+                  public int Top;
+                  public int Right;
+                  public int Bottom;
+              }
+
+              [DllImport("user32.dll")]
+              public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
+
+              [DllImport("user32.dll")]
+              public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
+          }
+          '@
+
+          $launcher = Start-Process -FilePath $env:LAUNCHER_EXE -PassThru
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(45)
+            $handle = [IntPtr]::Zero
+            do {
+              Start-Sleep -Milliseconds 500
+              $launcher.Refresh()
+              if ($launcher.HasExited) {
+                throw "The launcher exited during startup with code $($launcher.ExitCode)."
+              }
+              $handle = $launcher.MainWindowHandle
+            } while ($handle -eq [IntPtr]::Zero -and [DateTime]::UtcNow -lt $deadline)
+
+            if ($handle -eq [IntPtr]::Zero) {
+              throw "The launcher did not create a main window within 45 seconds."
+            }
+
+            $webviews = Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'"
+            if (-not $webviews) {
+              throw "The launcher window opened without a WebView2 process."
+            }
+
+            Start-Sleep -Seconds 5
+            $rect = New-Object GambleWindowCapture+RECT
+            if (-not [GambleWindowCapture]::GetWindowRect($handle, [ref]$rect)) {
+              throw "Could not read the launcher window bounds."
+            }
+            $width = $rect.Right - $rect.Left
+            $height = $rect.Bottom - $rect.Top
+            if ($width -lt 820 -or $height -lt 560) {
+              throw "The launcher window has invalid bounds: ${width}x${height}."
+            }
+
+            $bitmap = [System.Drawing.Bitmap]::new($width, $height)
+            $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+            try {
+              $hdc = $graphics.GetHdc()
+              try {
+                $captured = [GambleWindowCapture]::PrintWindow($handle, $hdc, 2)
+              } finally {
+                $graphics.ReleaseHdc($hdc)
+              }
+            } finally {
+              $graphics.Dispose()
+            }
+            if (-not $captured) {
+              $bitmap.Dispose()
+              throw "Windows could not capture the launcher window."
+            }
+
+            $screenshot = Join-Path $env:RUNNER_TEMP "gamble-client-launcher-production.png"
+            $bitmap.Save($screenshot, [System.Drawing.Imaging.ImageFormat]::Png)
+
+            $samples = 0
+            $sum = 0.0
+            $sumSquares = 0.0
+            $minimum = 255.0
+            $maximum = 0.0
+            $buckets = [System.Collections.Generic.HashSet[int]]::new()
+            for ($y = 0; $y -lt $height; $y += 8) {
+              for ($x = 0; $x -lt $width; $x += 8) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                $luma = 0.2126 * $pixel.R + 0.7152 * $pixel.G + 0.0722 * $pixel.B
+                $sum += $luma
+                $sumSquares += $luma * $luma
+                $minimum = [Math]::Min($minimum, $luma)
+                $maximum = [Math]::Max($maximum, $luma)
+                $bucket = (($pixel.R -shr 5) -shl 6) -bor (($pixel.G -shr 5) -shl 3) -bor ($pixel.B -shr 5)
+                [void]$buckets.Add($bucket)
+                $samples++
+              }
+            }
+            $bitmap.Dispose()
+
+            $mean = $sum / $samples
+            $variance = ($sumSquares / $samples) - ($mean * $mean)
+            $range = $maximum - $minimum
+            Write-Host "Window ${width}x${height}; luma mean=$([Math]::Round($mean, 2)) variance=$([Math]::Round($variance, 2)) range=$([Math]::Round($range, 2)); color buckets=$($buckets.Count)."
+            if ($variance -lt 40 -or $range -lt 60 -or $buckets.Count -lt 12) {
+              throw "The launcher render is blank or nearly uniform."
+            }
+
+            "WINDOW_SCREENSHOT=$screenshot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          } finally {
+            if (-not $launcher.HasExited) {
+              Stop-Process -Id $launcher.Id -Force
+            }
+          }
+
+      - name: Upload the render proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamble-client-windows-production-smoke
+          path: ${{ runner.temp }}/gamble-client-launcher-production.png
+          if-no-files-found: warn
