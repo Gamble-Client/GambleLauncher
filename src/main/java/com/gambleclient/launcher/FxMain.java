@@ -105,6 +105,7 @@ public class FxMain extends Application {
     private Button sidebarAdButton;
     private Timeline hudInfoRefresh;
     private MediaPlayer sponsorMediaPlayer;
+    private WebView sponsorWebView;
     private String lastLog = "";
     private boolean syncingFromBackend;
     private boolean slotSoundsEnabled = true;
@@ -1121,8 +1122,22 @@ public class FxMain extends Application {
         appRoot.getChildren().add(overlay);
 
         final int[] watchedSeconds = new int[] {0};
+        final int[] waitingSeconds = new int[] {0};
         Timeline timer = new Timeline(new KeyFrame(Duration.seconds(1), event -> {
-            if (sponsorMediaPlayer == null || sponsorMediaPlayer.getStatus() != MediaPlayer.Status.PLAYING) return;
+            SponsorPlaybackState playback = sponsorPlaybackState();
+            if (playback != SponsorPlaybackState.PLAYING) {
+                waitingSeconds[0]++;
+                if (playback == SponsorPlaybackState.FAILED || waitingSeconds[0] >= 15) {
+                    timerRef[0].stop();
+                    stopSponsorMedia();
+                    fallback.setText("Sponsor media could not play on this device. Update the launcher or try again.");
+                    mediaBox.getChildren().setAll(fallback);
+                    countdown.setText("Media unavailable");
+                    appendLog("Sponsor media did not begin playback. No reward was granted.");
+                }
+                return;
+            }
+            waitingSeconds[0] = 0;
             int tick = Math.min(seconds, ++watchedSeconds[0]);
             int remaining = Math.max(0, seconds - tick);
             countdown.setText(remaining == 0 ? "Finishing..." : remaining + "s left");
@@ -1141,14 +1156,16 @@ public class FxMain extends Application {
     }
 
     private void stopSponsorMedia() {
-        if (sponsorMediaPlayer == null) return;
-        try {
-            sponsorMediaPlayer.stop();
-            sponsorMediaPlayer.dispose();
-        } catch (RuntimeException ignored) {
-        } finally {
-            sponsorMediaPlayer = null;
+        if (sponsorMediaPlayer != null) {
+            try {
+                sponsorMediaPlayer.stop();
+                sponsorMediaPlayer.dispose();
+            } catch (RuntimeException ignored) {
+            } finally {
+                sponsorMediaPlayer = null;
+            }
         }
+        sponsorWebView = null;
     }
 
     private void loadSponsorMedia(StackPane mediaBox, Label fallback, String adUrl) {
@@ -1235,6 +1252,7 @@ public class FxMain extends Application {
                 ? "<audio controls autoplay loop muted style=\"width:100%;height:100%;background:#050408\" src=\"" + htmlAttr(source) + "\"></audio>"
                 : "<video controls autoplay loop muted playsinline style=\"width:100%;height:100%;object-fit:contain;background:#050408\" src=\"" + htmlAttr(source) + "\"></video>";
             webView.getEngine().loadContent("<!doctype html><html><body style=\"margin:0;background:#050408;overflow:hidden\">" + tag + "</body></html>");
+            sponsorWebView = webView;
             mediaBox.getChildren().setAll(webView);
         } catch (RuntimeException webError) {
             appendLog("Embedded sponsor media playback failed: " + webError.getMessage());
@@ -1243,8 +1261,42 @@ public class FxMain extends Application {
     }
 
     private void showSponsorFallback(StackPane mediaBox, Label fallback) {
+        stopSponsorMedia();
         fallback.setText("Sponsor media could not be displayed on this device. Try uploading an H.264 MP4 ad.");
         mediaBox.getChildren().setAll(fallback);
+    }
+
+    private SponsorPlaybackState sponsorPlaybackState() {
+        if (sponsorMediaPlayer != null) {
+            if (sponsorMediaPlayer.getError() != null || sponsorMediaPlayer.getStatus() == MediaPlayer.Status.HALTED) {
+                return SponsorPlaybackState.FAILED;
+            }
+            return sponsorMediaPlayer.getStatus() == MediaPlayer.Status.PLAYING
+                ? SponsorPlaybackState.PLAYING
+                : SponsorPlaybackState.WAITING;
+        }
+        if (sponsorWebView == null) return SponsorPlaybackState.WAITING;
+        try {
+            Object result = sponsorWebView.getEngine().executeScript("""
+                (() => {
+                    const media = document.querySelector('video, audio');
+                    if (!media || media.error) return 'failed';
+                    if (!media.paused && !media.ended && media.readyState >= 2) return 'playing';
+                    return 'waiting';
+                })()
+                """);
+            if ("playing".equals(result)) return SponsorPlaybackState.PLAYING;
+            if ("failed".equals(result)) return SponsorPlaybackState.FAILED;
+        } catch (RuntimeException ignored) {
+            return SponsorPlaybackState.FAILED;
+        }
+        return SponsorPlaybackState.WAITING;
+    }
+
+    private enum SponsorPlaybackState {
+        PLAYING,
+        WAITING,
+        FAILED
     }
 
     private boolean isDirectMediaUrl(String url) {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { resolveSponsorMediaUrl } from "../src/sponsor-media.js";
 
 const source = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -14,6 +15,30 @@ test("sponsor rewards use launcher-only API routes", async () => {
     assert.match(frontend, /selectedBuild\.id === "ad_tier" && !state\.ads\?\.active/);
     assert.match(java, /sponsoredAccessActiveFor\(build\)/);
     assert.match(java, /Watch Sponsor First/);
+    assert.match(frontend, /muted loop playsinline/);
+    assert.match(frontend, /Sponsor media did not begin playing/);
+});
+
+test("sponsor media resolves against the production site instead of the embedded app origin", () => {
+    assert.equal(
+        resolveSponsorMediaUrl("/assets/placeholder-ad.mp4"),
+        "https://gamble-client.store/assets/placeholder-ad.mp4"
+    );
+    assert.equal(
+        resolveSponsorMediaUrl("/api/launcherads/demo"),
+        "https://gamble-client.store/api/launcherads/demo"
+    );
+    assert.equal(resolveSponsorMediaUrl("http://gamble-client.store/assets/ad.mp4"), "");
+    assert.equal(resolveSponsorMediaUrl("https://example.com/ad.mp4"), "");
+    assert.equal(resolveSponsorMediaUrl("https://user@gamble-client.store/ad.mp4"), "");
+});
+
+test("JavaFX sponsor fallback advances only while media is actually playing", async () => {
+    const fx = await source("src/main/java/com/gambleclient/launcher/FxMain.java");
+    assert.match(fx, /SponsorPlaybackState playback = sponsorPlaybackState\(\)/);
+    assert.match(fx, /document\.querySelector\('video, audio'\)/);
+    assert.match(fx, /waitingSeconds\[0\] >= 15/);
+    assert.match(fx, /Media unavailable/);
 });
 
 test("both launcher implementations bind manifests and tickets to the requested tier", async () => {

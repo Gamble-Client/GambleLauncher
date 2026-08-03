@@ -1050,6 +1050,7 @@ option {
   font-size: 0.8rem;
 }
 
+.sponsor-media-shell,
 .sponsor-panel video,
 .sponsor-fallback {
   width: 100%;
@@ -1057,6 +1058,30 @@ option {
   border-radius: 6px;
   background: #050505;
 }
+
+.sponsor-media-shell {
+  position: relative;
+  overflow: hidden;
+}
+
+.sponsor-media-shell video {
+  display: block;
+  height: 100%;
+  object-fit: contain;
+}
+
+.sponsor-media-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(5, 5, 5, .88);
+  color: #f1c56c;
+  text-align: center;
+}
+
+.sponsor-media-status[hidden] { display: none; }
 
 .sponsor-fallback {
   display: grid;

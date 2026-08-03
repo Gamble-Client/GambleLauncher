@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open as tauriOpenDialog } from "@tauri-apps/plugin-dialog";
 import "./styles.css";
 import logoUrl from "./assets/cg-mod-icon.png";
+import { resolveSponsorMediaUrl } from "./sponsor-media.js";
 
 const SITE = "https://gamble-client.store";
 const DASH = "https://dash.gamble-client.store";
@@ -13,7 +14,7 @@ const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
-const LAUNCHER_VERSION = "0.1.99";
+const LAUNCHER_VERSION = "0.1.100";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 const PREVIEW = !("__TAURI_INTERNALS__" in window);
@@ -187,9 +188,9 @@ async function mockInvoke(command, args = {}) {
         minVersion: LAUNCHER_VERSION,
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble-Client-Launcher-0.1.99-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.99-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.99_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: "Gamble-Client-Launcher-0.1.100-x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: "Gamble-Client-Launcher-0.1.100-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: "Gamble-Client-Launcher_0.1.100_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
@@ -216,8 +217,8 @@ async function mockInvoke(command, args = {}) {
   if (command === "download_launcher_update") {
     return {
       version: LAUNCHER_VERSION,
-      fileName: "Gamble-Client-Launcher_0.1.99_amd64.deb",
-      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.99_amd64.deb",
+      fileName: "Gamble-Client-Launcher_0.1.100_amd64.deb",
+      path: "/home/theac/Downloads/Gamble-Client-Launcher_0.1.100_amd64.deb",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -1192,7 +1193,7 @@ function sponsorOverlay() {
         <h2 data-sponsor-countdown>${state.sponsor.remaining}s</h2>
         <p>${escapeHtml(state.sponsor.message || "Keep the launcher open until the timer finishes.")}</p>
       </div>
-      ${url ? `<video data-sponsor-media src="${escapeAttr(url)}" controls autoplay muted playsinline></video>` : `<div class="sponsor-fallback">Sponsor media is unavailable. No reward will be granted.</div>`}
+      ${url ? `<div class="sponsor-media-shell"><video data-sponsor-media src="${escapeAttr(url)}" controls autoplay muted loop playsinline></video><div class="sponsor-media-status" data-sponsor-media-status>Loading sponsor…</div></div>` : `<div class="sponsor-fallback">Sponsor media is unavailable. No reward will be granted.</div>`}
     </section>
   `;
 }
@@ -1828,9 +1829,11 @@ async function startSponsor() {
     const start = await api("/api/launcher/ad-reward/start", { method: "POST", body: "{}" });
     const ads = start.ads || start.adReward || {};
     const seconds = Number(ads.adSeconds || start.adSeconds || 30);
+    const adUrl = resolveSponsorMediaUrl(ads.adUrl || start.adUrl || "", SITE);
+    if (!adUrl) throw new Error("Sponsor media URL is missing or invalid.");
     state.sponsor = {
       remaining: seconds,
-      adUrl: ads.adUrl || start.adUrl || "",
+      adUrl,
       challenge: start.challenge || "",
       message: start.message || ads.message || ""
     };
@@ -1842,8 +1845,10 @@ async function startSponsor() {
     state.sponsor = null;
     log(complete.message || "Sponsored access refreshed.");
   } catch (error) {
+    const message = String(error?.message || error || "Sponsor media could not be played.");
     state.sponsor = null;
-    log(`Sponsor break failed: ${error.message || error}`);
+    log(`Sponsor break failed: ${message}`);
+    showPopup("Sponsor unavailable", message, "sponsor");
   } finally {
     setBusy(false);
   }
@@ -1853,10 +1858,36 @@ async function runSponsorPlayback(seconds) {
   await new Promise((resolve) => requestAnimationFrame(resolve));
   const video = document.querySelector("[data-sponsor-media]");
   if (!video) throw new Error("Sponsor media is unavailable; reward was not granted.");
+  const status = document.querySelector("[data-sponsor-media-status]");
+  let mediaError = "";
+  video.addEventListener("error", () => {
+    mediaError = "Sponsor media failed to load on this device.";
+    if (status) status.textContent = mediaError;
+  }, { once: true });
+  video.addEventListener("stalled", () => {
+    if (status) status.textContent = "Sponsor media stalled. Retrying…";
+  });
+
+  try {
+    await video.play();
+  } catch {
+    if (status) status.textContent = "Press play to begin the sponsor break.";
+  }
+
+  const readyDeadline = Date.now() + 15_000;
+  while (video.readyState < 2 || video.paused) {
+    if (!video.isConnected) throw new Error("Sponsor media was closed; reward was not granted.");
+    if (mediaError) throw new Error(mediaError);
+    if (Date.now() >= readyDeadline) throw new Error("Sponsor media did not begin playing. Try again or update the launcher.");
+    await sleep(250);
+  }
+  if (status) status.hidden = true;
+
   let watched = 0;
   while (watched < seconds) {
     await sleep(1000);
     if (!video.isConnected) throw new Error("Sponsor media was closed; reward was not granted.");
+    if (mediaError) throw new Error(mediaError);
     if (!video.paused && !video.ended && video.readyState >= 2 && !document.hidden) watched += 1;
     state.sponsor.remaining = Math.max(0, seconds - watched);
     const countdown = document.querySelector("[data-sponsor-countdown]");
