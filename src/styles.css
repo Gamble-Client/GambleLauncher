@@ -288,8 +288,8 @@ p {
 .icon-button {
   display: grid;
   place-items: center;
-  width: 48px;
-  min-height: 48px;
+  width: 40px;
+  min-height: 40px;
   padding: 0;
   background: #161616;
   line-height: 1;
@@ -297,7 +297,7 @@ p {
 
 .settings-glyph {
   display: block;
-  font-size: 2.15rem;
+  font-size: 1.28rem;
   line-height: 1;
   transform: translateY(-1px);
 }
@@ -642,9 +642,65 @@ p {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.updates-simple {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
 .profiles-layout {
   grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
   align-items: start;
+}
+
+.profile-heading {
+  align-items: end;
+}
+
+.profile-heading p {
+  margin-top: 10px;
+  font-size: 0.9rem;
+}
+
+.profile-create {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(130px, 170px) auto;
+  align-items: end;
+  gap: 8px;
+  min-width: min(100%, 460px);
+}
+
+.profile-create label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.loader-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0d0d0d;
+}
+
+.loader-card strong,
+.loader-card small {
+  display: block;
+}
+
+.loader-card strong {
+  margin-top: 5px;
+}
+
+.loader-card small {
+  margin-top: 4px;
+  color: var(--muted);
 }
 
 .profile-list,
@@ -687,7 +743,8 @@ p {
 }
 
 .profile-type-select {
-  width: min(170px, 32vw);
+  width: 100%;
+  min-width: 0;
 }
 
 .primary-small.danger {
@@ -726,6 +783,12 @@ p {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
+}
+
+.drop-hint {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 h3 {
@@ -1328,6 +1391,7 @@ pre {
   .tune-strip,
   .settings-grid,
   .update-grid,
+  .updates-simple,
   .profiles-layout,
   .account-panel {
     grid-template-columns: 1fr;
@@ -1359,6 +1423,15 @@ pre {
 
   .launch-warning {
     max-width: none;
+  }
+
+  .profile-heading {
+    align-items: stretch;
+  }
+
+  .profile-create {
+    min-width: 0;
+    grid-template-columns: 1fr;
   }
 }
 

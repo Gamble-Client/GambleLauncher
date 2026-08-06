@@ -53,6 +53,7 @@ const state = {
   selectedBuildExplicit: Boolean(initialStoredBuild),
   customProfiles: normalizeStoredProfiles(readJsonStorage(CUSTOM_PROFILES_KEY, [])),
   profileAccountOverrides: normalizeStoredObject(readJsonStorage(PROFILE_ACCOUNTS_KEY, {})),
+  profileLoaderStatus: null,
   newProfileName: "",
   newProfileType: "fabric",
   memory: defaultMemory(),
@@ -230,10 +231,19 @@ async function mockInvoke(command, args = {}) {
       ];
     }
     return [
-      { name: "fabric-api-0.139.5+1.21.11.jar", path: "/mods/fabric-api.jar", enabled: true, locked: true, size: 7200000 },
-      { name: "gamble-client-loader.jar", path: "/mods/gamble-client-loader.jar", enabled: true, locked: true, size: 1800 },
-      { name: "modmenu.jar", path: "/mods/modmenu.jar", enabled: true, locked: false, size: 520000 }
+      { name: "fabric-api-0.139.5+1.21.11.jar", displayName: "Fabric API", path: "/mods/fabric-api.jar", enabled: true, locked: true, size: 7200000 },
+      { name: "gamble-client-loader.jar", displayName: "Gamble Client Loader", path: "/mods/gamble-client-loader.jar", enabled: true, locked: true, size: 1800 },
+      { name: "modmenu.jar", displayName: "Mod Menu", path: "/mods/modmenu.jar", enabled: true, locked: false, size: 520000 }
     ];
+  }
+  if (command === "add_mods") return 0;
+  if (command === "profile_loader_status") {
+    return args.profile === "vanilla"
+      ? { profile: args.profile, installed: false, version: "", latestVersion: "0.18.4", updateAvailable: false }
+      : { profile: args.profile, installed: true, version: "0.18.4", latestVersion: "0.18.4", updateAvailable: false };
+  }
+  if (command === "update_fabric_loader") {
+    return { profile: args.profile, installed: true, version: "0.18.4", latestVersion: "0.18.4", updateAvailable: false, message: "Fabric Loader is current." };
   }
   if (command === "diagnostics") {
     return {
@@ -357,7 +367,7 @@ function render() {
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Launcher ${escapeHtml(state.info?.version || LAUNCHER_VERSION)}</span>
+            <span>Open-source launcher</span>
           </div>
         </div>
         <nav>
@@ -475,8 +485,8 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           <span class="eyebrow">Gamble Client</span>
           <h2>${escapeHtml(selectedBuild.label)}</h2>
           <div class="version-strip">
-            <span>Version</span>
-            <strong>Launcher ${escapeHtml(state.info?.version || LAUNCHER_VERSION)} · Client ${escapeHtml(clientStatus)}</strong>
+            <span>Channel</span>
+            <strong>Latest</strong>
           </div>
           <div class="launch-facts">
             <div>
@@ -678,7 +688,6 @@ function friendRequestRow(request) {
 }
 
 function updatesView(profile, selectedBuild, canInstall, signedIn) {
-  const checkedAt = Math.max(state.lastVersionCheckAt || 0, state.lastManifestCheckAt || 0);
   return `
     <section class="screen-band">
       <div>
@@ -689,30 +698,18 @@ function updatesView(profile, selectedBuild, canInstall, signedIn) {
         <button class="ghost" type="button" data-action="check-updates" ${state.busy ? "disabled" : ""}>Check</button>
       </div>
     </section>
-    <section class="update-grid">
+    <section class="updates-simple">
       <article class="update-card ${launcherNeedsUpdate() ? "warn" : ""}">
         <span>Launcher</span>
         <strong>${escapeHtml(launcherNeedsUpdate() ? "Update required" : "Current")}</strong>
-        <p>Installed ${escapeHtml(state.info?.version || "unknown")} · Latest ${escapeHtml(latestLauncherVersion() || "unknown")}</p>
-        <button class="primary-small" type="button" data-action="download-launcher" ${state.busy || !latestLauncherVersion() ? "disabled" : ""}>Update Launcher</button>
+        <p>Keep the launcher current to unlock launching and sign-in.</p>
+        <button class="primary-small" type="button" data-action="download-launcher" ${state.busy || !latestLauncherVersion() || !launcherNeedsUpdate() ? "disabled" : ""}>Update Launcher</button>
       </article>
       <article class="update-card ${clientNeedsUpdate() ? "warn" : ""}">
         <span>Managed client</span>
         <strong>${escapeHtml(clientStatusLabel())}</strong>
-        <p>${escapeHtml(profile.client ? `${selectedBuild.label} build` : "This profile does not install the managed client jar.")}</p>
+        <p>${escapeHtml(profile.client ? `${selectedBuild.label} profile` : "Select a Gamble Client profile to update the managed jar.")}</p>
         <button class="primary-small" type="button" data-action="install" ${!canInstall || state.busy ? "disabled" : ""}>Update Client</button>
-      </article>
-      <article class="update-card">
-        <span>Profile</span>
-        <strong>${escapeHtml(profile.label)}</strong>
-        <p>${escapeHtml(profile.client ? `Using ${selectedBuild.label} access for this profile.` : "Vanilla and plain Fabric profiles skip the managed client jar.")}</p>
-        <button class="ghost" type="button" data-view="profiles">Profiles</button>
-      </article>
-      <article class="update-card">
-        <span>Last check</span>
-        <strong>${escapeHtml(checkedAt ? new Date(checkedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "Not checked")}</strong>
-        <p>Cached checks keep this tab quick. Use Check when you want a fresh launcher and client status pull.</p>
-        <button class="ghost" type="button" data-action="check-updates" ${state.busy ? "disabled" : ""}>Refresh now</button>
       </article>
     </section>
   `;
@@ -722,18 +719,25 @@ function profilesView(profile, selectedBuild) {
   const profilesList = allProfiles();
   const custom = Boolean(profile.custom);
   return `
-    <section class="screen-band">
+    <section class="screen-band profile-heading">
       <div>
         <span class="eyebrow">Launch folders</span>
         <h2>Profiles</h2>
+        <p>Create another Fabric profile for separate mods, resource packs, and settings.</p>
       </div>
-      <div class="top-actions">
-        <input class="inline-input" data-field="newProfileName" value="${escapeAttr(state.newProfileName)}" placeholder="New profile name">
-        <select class="inline-input profile-type-select" data-field="newProfileType">
+      <div class="profile-create">
+        <label>
+          <span>New profile</span>
+          <input class="inline-input" data-field="newProfileName" value="${escapeAttr(state.newProfileName)}" placeholder="Name">
+        </label>
+        <label>
+          <span>Type</span>
+          <select class="inline-input profile-type-select" data-field="newProfileType">
           <option value="fabric" ${state.newProfileType === "fabric" ? "selected" : ""}>Fabric</option>
           <option value="client" ${state.newProfileType === "client" ? "selected" : ""}>Gamble Client</option>
           <option value="vanilla" ${state.newProfileType === "vanilla" ? "selected" : ""}>Vanilla</option>
-        </select>
+          </select>
+        </label>
         <button class="primary-small" type="button" data-action="create-profile" ${state.busy ? "disabled" : ""}>Create</button>
       </div>
     </section>
@@ -785,6 +789,16 @@ function profilesView(profile, selectedBuild) {
             </select>
           </label>
         </section>
+        ${profile.loader === "fabric" ? `
+          <section class="loader-card">
+            <div>
+              <span class="eyebrow">Fabric loader</span>
+              <strong>${escapeHtml(state.profileLoaderStatus?.version ? `Loader ${state.profileLoaderStatus.version}` : "Not installed")}</strong>
+              <small>${escapeHtml(state.profileLoaderStatus?.updateAvailable ? `Latest ${state.profileLoaderStatus.latestVersion}` : "This profile keeps its own loader version.")}</small>
+            </div>
+            <button class="ghost" type="button" data-action="update-loader" ${state.busy ? "disabled" : ""}>${state.profileLoaderStatus?.updateAvailable ? "Update loader" : "Check loader"}</button>
+          </section>
+        ` : ""}
         ${fileSection("mods", profile, state.mods)}
         ${fileSection("packs", profile, state.packs)}
       </div>
@@ -834,8 +848,6 @@ function settingsView(profile, selectedBuild) {
         </label>
       ` : ""}
     </section>
-    ${antiScreensharePanel()}
-    ${diagnosticsPanel()}
   `;
 }
 
@@ -1008,13 +1020,15 @@ function launcherAvatarStyle() {
 }
 
 function friendAvatarStyle(friend = {}) {
+  const direct = String(friend.avatarUrl || friend.avatar || friend.discordAvatar || "").trim();
+  if (/^https?:\/\//i.test(direct)) return remoteAvatarStyle(direct);
   const uuid = String(friend.minecraftUuid || friend.minecraftUUID || friend.uuid || "").replaceAll("-", "").trim();
   if (/^[a-f0-9]{32}$/i.test(uuid)) return remoteAvatarStyle(`https://mc-heads.net/avatar/${uuid}/128`);
   const minecraftName = String(friend.minecraftName || friend.mcName || "").trim();
   if (minecraftName) return remoteAvatarStyle(`https://mc-heads.net/avatar/${encodeURIComponent(minecraftName)}/128`);
   const username = String(friend.username || "").trim();
   if (/^[a-z0-9_]{3,16}$/i.test(username)) return remoteAvatarStyle(`https://mc-heads.net/avatar/${encodeURIComponent(username)}/128`);
-  return remoteAvatarStyle(friend.avatarUrl || friend.avatar || friend.discordAvatar || "");
+  return "";
 }
 
 function remoteAvatarStyle(url) {
@@ -1090,7 +1104,7 @@ function fileView(kind, profile, files) {
         <h2>${isPacks ? "Resource Packs" : "Mods"}</h2>
       </div>
       <div class="top-actions">
-        ${isPacks ? `<button class="ghost" type="button" data-action="add-packs">Add</button>` : ""}
+        <button class="ghost" type="button" data-action="${isPacks ? "add-packs" : "add-mods"}" ${disabled ? "disabled" : ""}>Add</button>
         <button class="ghost" type="button" data-action="open-${isPacks ? "packs" : "mods"}">Open Folder</button>
         <button class="ghost" type="button" data-action="reload-files">Refresh</button>
       </div>
@@ -1112,12 +1126,13 @@ function fileSection(kind, profile, files) {
           <h3>${isPacks ? "Resource Packs" : "Mods"}</h3>
         </div>
         <div class="top-actions">
-          ${isPacks ? `<button class="ghost" type="button" data-action="add-packs">Add</button>` : ""}
+          <button class="ghost" type="button" data-action="${isPacks ? "add-packs" : "add-mods"}" ${disabled ? "disabled" : ""}>Add</button>
           <button class="ghost" type="button" data-action="open-${isPacks ? "packs" : "mods"}">Open Folder</button>
           <button class="ghost" type="button" data-action="reload-files">Refresh</button>
         </div>
       </div>
       ${disabled ? `<p class="empty">Vanilla has no mods folder. Switch to a Fabric profile to manage jar files.</p>` : ""}
+      ${!disabled ? `<p class="drop-hint">Drop ${isPacks ? ".zip resource packs" : ".jar mods"} here or use Add.</p>` : ""}
       <section class="file-list" data-scroll-key="${kind}-file-list">
         ${files.length ? files.map((file) => fileRow(kind, file)).join("") : `<p class="empty">${isPacks ? "No resource packs yet." : "No mod jars yet."}</p>`}
       </section>
@@ -1126,11 +1141,13 @@ function fileSection(kind, profile, files) {
 }
 
 function fileRow(kind, file) {
+  const title = file.displayName || file.name;
+  const filename = file.displayName && file.displayName !== file.name ? ` · ${file.name}` : "";
   return `
     <article class="file-row">
       <div>
-        <strong>${escapeHtml(file.name)}</strong>
-        <span>${escapeHtml(file.enabled ? "Enabled" : "Disabled")} · ${formatBytes(file.size)}${file.locked ? " · Required" : ""}</span>
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(file.enabled ? "Enabled" : "Disabled")} · ${formatBytes(file.size)}${file.locked ? " · Required" : ""}${escapeHtml(filename)}</span>
       </div>
       <button type="button" data-action="toggle-file" data-kind="${kind}" data-path="${escapeAttr(file.path)}" ${file.locked ? "disabled" : ""}>${file.enabled ? "Disable" : "Enable"}</button>
     </article>
@@ -1390,7 +1407,7 @@ function knownLaunchMessage(error) {
   if (lower.includes("resources.download.minecraft.net") || lower.includes("minecraft asset") || lower.includes("mojang")) {
     return "Minecraft asset download failed from Mojang's CDN. Check VPN/proxy/DNS on this computer, then try Launch again.";
   }
-  if (lower.includes("java")) return `Managed Java setup failed.\n\n${text}\n\nThe native launcher installs Java 21 itself; you should not need a separate Java download. Settings > Diagnostics now contains the runtime check and launch-log location.`;
+  if (lower.includes("java")) return `Managed Java setup failed.\n\n${text}\n\nThe native launcher installs Java 21 itself; you should not need a separate Java download. Open the launcher data folder from Settings if you need the launch log.`;
   return text;
 }
 
@@ -1408,6 +1425,7 @@ async function api(path, options = {}) {
 }
 
 async function boot() {
+  await setupFileDropListener();
   await setupLaunchProgressListener();
   try {
     state.info = await invoke("launcher_info");
@@ -1420,6 +1438,7 @@ async function boot() {
   await loadMicrosoftAccounts();
   await Promise.allSettled([refreshVersion(), refreshFiles(), restoreSession()]);
   await invoke("ensure_profile", { profile: state.selectedProfile }).catch(() => {});
+  await refreshProfileLoaderStatus();
   await refreshAntiScreenshareStatus();
   await refreshManifest();
   await refreshSpotifyStatus();
@@ -1985,6 +2004,65 @@ async function refreshFiles() {
   state.packs = packs;
 }
 
+async function refreshProfileLoaderStatus() {
+  const profile = currentProfile();
+  if (profile.loader !== "fabric") {
+    state.profileLoaderStatus = null;
+    return;
+  }
+  state.profileLoaderStatus = await invoke("profile_loader_status", { profile: state.selectedProfile }).catch(() => null);
+}
+
+async function addMods() {
+  const selection = await openDialog({
+    multiple: true,
+    directory: false,
+    filters: [{ name: "Fabric mods", extensions: ["jar"] }]
+  });
+  const paths = Array.isArray(selection) ? selection : selection ? [selection] : [];
+  if (!paths.length) return;
+  const copied = await invoke("add_mods", { profile: state.selectedProfile, paths });
+  log(`Added ${copied} mod${copied === 1 ? "" : "s"}.`);
+  await refreshFiles();
+  render();
+}
+
+async function addDroppedFiles(rawPaths) {
+  const paths = (Array.isArray(rawPaths) ? rawPaths : [])
+    .map((path) => String(path || "").trim())
+    .filter(Boolean);
+  if (!paths.length) return;
+  const mods = paths.filter((path) => /\.jar$/i.test(path));
+  const packs = paths.filter((path) => /\.zip$/i.test(path) || !/\.[a-z0-9]{1,8}$/i.test(path));
+  setBusy(true, "Adding dropped files");
+  try {
+    if (mods.length && profileHasMods(currentProfile())) {
+      await invoke("add_mods", { profile: state.selectedProfile, paths: mods });
+    }
+    if (packs.length) {
+      await invoke("add_resource_packs", { profile: state.selectedProfile, paths: packs });
+    }
+    await refreshFiles();
+    log(`Added ${mods.length + packs.length} dropped file${mods.length + packs.length === 1 ? "" : "s"}.`);
+  } catch (error) {
+    log(`Drop import failed: ${error.message || error}`);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function setupFileDropListener() {
+  if (PREVIEW) return;
+  try {
+    await listen("tauri://drag-drop", (event) => {
+      const paths = event.payload?.paths || event.payload || [];
+      addDroppedFiles(paths).catch((error) => log(`Drop import failed: ${error.message || error}`));
+    });
+  } catch (error) {
+    log(`File drop unavailable: ${error.message || error}`);
+  }
+}
+
 async function refreshAntiScreenshareStatus() {
   try {
     const status = await invoke("anti_screenshare_status", { profile: state.selectedProfile });
@@ -2191,8 +2269,7 @@ app.addEventListener("click", async (event) => {
     } catch (error) {
       state.launchProgress = null;
       log(`Launch failed: ${error.message || error}`);
-      await runDiagnostics().catch((diagnosticError) => log(`Diagnostics failed: ${diagnosticError.message || diagnosticError}`));
-      state.view = "settings";
+      state.view = "play";
       showPopup("Launch failed", knownLaunchMessage(error), "launch");
       await refreshMinecraftStatus({ render: false, logExit: false });
     } finally {
@@ -2279,6 +2356,7 @@ app.addEventListener("click", async (event) => {
     state.clientStatus = null;
     state.manifest = null;
     await refreshFiles();
+    await refreshProfileLoaderStatus();
     await refreshAntiScreenshareStatus();
     await refreshManifest().catch(() => {});
     render();
@@ -2308,6 +2386,7 @@ app.addEventListener("click", async (event) => {
       saveProfileAccountOverrides();
       if (state.selectedProfile === profileId) state.selectedProfile = "gamble-client";
       await refreshFiles();
+      await refreshProfileLoaderStatus();
       await refreshAntiScreenshareStatus();
       await refreshManifest().catch(() => {});
       log(`Deleted profile: ${target.label}`);
@@ -2319,6 +2398,7 @@ app.addEventListener("click", async (event) => {
   } else if (action === "create-profile") {
     createProfile();
     await refreshFiles();
+    await refreshProfileLoaderStatus();
     await refreshAntiScreenshareStatus();
     await refreshManifest().catch(() => {});
     render();
@@ -2338,6 +2418,18 @@ app.addEventListener("click", async (event) => {
     }).catch((error) => log(`Toggle failed: ${error}`));
     await refreshFiles();
     render();
+  } else if (action === "update-loader") {
+    setBusy(true, "Updating Fabric Loader");
+    try {
+      state.profileLoaderStatus = await invoke("update_fabric_loader", { profile: state.selectedProfile });
+      log(state.profileLoaderStatus?.message || "Fabric Loader updated.");
+    } catch (error) {
+      log(`Fabric Loader update failed: ${error.message || error}`);
+    } finally {
+      setBusy(false);
+    }
+  } else if (action === "add-mods") {
+    await addMods().catch((error) => log(`Mod import failed: ${error.message || error}`));
   } else if (action === "add-packs") {
     const selection = await openDialog({
       multiple: true,

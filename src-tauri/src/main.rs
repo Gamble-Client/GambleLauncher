@@ -32,8 +32,7 @@ const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
 const FABRIC_LOADER_VERSION: &str = "0.18.4";
-const FABRIC_PROFILE_URL: &str =
-    "https://meta.fabricmc.net/v2/versions/loader/1.21.11/0.18.4/profile/json";
+const FABRIC_VERSIONS_URL: &str = "https://meta.fabricmc.net/v2/versions/loader/1.21.11";
 const VERSION_MANIFEST_URL: &str =
     "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
 const ASSET_BASE_URL: &str = "https://resources.download.minecraft.net/";
@@ -132,10 +131,25 @@ struct LaunchProgressEvent {
 #[derive(Serialize)]
 struct LocalFile {
     name: String,
+    #[serde(rename = "displayName")]
+    display_name: String,
     path: String,
     enabled: bool,
     locked: bool,
     size: u64,
+}
+
+#[derive(Serialize)]
+struct FabricLoaderStatus {
+    profile: String,
+    installed: bool,
+    version: String,
+    #[serde(rename = "latestVersion")]
+    latest_version: String,
+    #[serde(rename = "updateAvailable")]
+    update_available: bool,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    message: String,
 }
 
 #[derive(Serialize)]
@@ -751,6 +765,64 @@ fn ensure_profile(profile: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn profile_loader_status(profile: String) -> Result<FabricLoaderStatus, String> {
+    let profile = profile_id(&profile);
+    if profile_kind(&profile) == ProfileKind::Vanilla {
+        return Ok(FabricLoaderStatus {
+            profile,
+            installed: false,
+            version: String::new(),
+            latest_version: String::new(),
+            update_available: false,
+            message: String::new(),
+        });
+    }
+
+    let folder = ensure_profile_folders(&profile)?;
+    let installed = detected_fabric_loader_version(&folder);
+    let latest = latest_fabric_loader_version().unwrap_or_else(|_| {
+        installed
+            .clone()
+            .unwrap_or_else(|| FABRIC_LOADER_VERSION.to_string())
+    });
+    let version = installed.clone().unwrap_or_default();
+    Ok(FabricLoaderStatus {
+        profile,
+        installed: installed.is_some(),
+        update_available: !version.is_empty() && version != latest,
+        version,
+        latest_version: latest,
+        message: String::new(),
+    })
+}
+
+#[tauri::command]
+fn update_fabric_loader(profile: String) -> Result<FabricLoaderStatus, String> {
+    let profile = profile_id(&profile);
+    if profile_kind(&profile) == ProfileKind::Vanilla {
+        return Err("Vanilla profiles do not use Fabric Loader.".to_string());
+    }
+    let folder = ensure_profile_folders(&profile)?;
+    let latest = latest_fabric_loader_version()?;
+    let version_id = fabric_version_id(&latest);
+    let path = folder
+        .join("versions")
+        .join(&version_id)
+        .join(format!("{version_id}.json"));
+    if !path.is_file() {
+        download_file(&fabric_profile_url(&latest), &path)?;
+    }
+    Ok(FabricLoaderStatus {
+        profile,
+        installed: true,
+        version: latest.clone(),
+        latest_version: latest,
+        update_available: false,
+        message: format!("Fabric Loader updated to {version_id}."),
+    })
+}
+
+#[tauri::command]
 fn delete_profile(profile: String) -> Result<(), String> {
     let profile = profile_id(&profile);
     if profile == "gamble-client" || profile == "vanilla" || profile == "fabric" {
@@ -805,8 +877,14 @@ fn list_local_files(profile: String, kind: String) -> Result<Vec<LocalFile>, Str
         } else {
             lower.ends_with(".jar")
         };
+        let display_name = if kind == "resourcepacks" {
+            name.clone()
+        } else {
+            fabric_mod_display_name(&path, &name)
+        };
         files.push(LocalFile {
             name,
+            display_name,
             path: display_path(&path),
             enabled,
             locked,
@@ -815,6 +893,43 @@ fn list_local_files(profile: String, kind: String) -> Result<Vec<LocalFile>, Str
     }
     files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(files)
+}
+
+fn fabric_mod_display_name(path: &Path, fallback: &str) -> String {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(_) => return fallback.to_string(),
+    };
+    let mut archive = match ZipArchive::new(file) {
+        Ok(archive) => archive,
+        Err(_) => return fallback.to_string(),
+    };
+    let mut metadata = match archive.by_name("fabric.mod.json") {
+        Ok(metadata) => metadata,
+        Err(_) => return fallback.to_string(),
+    };
+    if metadata.size() > MAX_FABRIC_METADATA_BYTES {
+        return fallback.to_string();
+    }
+    let mut contents = Vec::new();
+    if (&mut metadata)
+        .take(MAX_FABRIC_METADATA_BYTES + 1)
+        .read_to_end(&mut contents)
+        .is_err()
+    {
+        return fallback.to_string();
+    }
+    let parsed = match serde_json::from_slice::<serde_json::Value>(&contents) {
+        Ok(parsed) => parsed,
+        Err(_) => return fallback.to_string(),
+    };
+    parsed
+        .get("name")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback)
+        .to_string()
 }
 
 #[tauri::command]
@@ -887,6 +1002,34 @@ fn add_resource_packs(profile: String, paths: Vec<String>) -> Result<usize, Stri
             fs::copy(&source, &target).map_err(error_text)?;
         }
         set_resource_pack_enabled(&profile, &target, true)?;
+        copied += 1;
+    }
+    Ok(copied)
+}
+
+#[tauri::command]
+fn add_mods(profile: String, paths: Vec<String>) -> Result<usize, String> {
+    let profile = profile_id(&profile);
+    if profile_kind(&profile) == ProfileKind::Vanilla {
+        return Err("Vanilla profiles do not have a mods folder.".to_string());
+    }
+    let folder = mods_folder(&profile);
+    fs::create_dir_all(&folder).map_err(error_text)?;
+    let mut copied = 0;
+    for source in paths {
+        let source = PathBuf::from(source);
+        if !source.is_file() {
+            continue;
+        }
+        let name = source
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| "Mod path has no filename.".to_string())?;
+        if !name.to_lowercase().ends_with(".jar") {
+            continue;
+        }
+        let target = folder.join(name);
+        fs::copy(&source, &target).map_err(error_text)?;
         copied += 1;
     }
     Ok(copied)
@@ -1358,7 +1501,9 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
             ensure_fabric_version_json_with_progress(&profile_dir, Some(&app))?;
             ensure_vanilla_version_json_with_progress(&profile_dir, MINECRAFT_VERSION, Some(&app))?;
             ensure_fabric_api_with_progress(&profile, Some(&app))?;
-            format!("fabric-loader-{FABRIC_LOADER_VERSION}-{MINECRAFT_VERSION}")
+            let loader_version = detected_fabric_loader_version(&profile_dir)
+                .unwrap_or_else(|| FABRIC_LOADER_VERSION.to_string());
+            fabric_version_id(&loader_version)
         }
     };
     emit_launch_progress(&app, "Profile", "Reading Minecraft launch profile", 7, 13);
@@ -2062,7 +2207,9 @@ fn ensure_fabric_version_json_with_progress(
     game_dir: &Path,
     app: Option<&AppHandle>,
 ) -> Result<PathBuf, String> {
-    let version_id = format!("fabric-loader-{FABRIC_LOADER_VERSION}-{MINECRAFT_VERSION}");
+    let loader_version = detected_fabric_loader_version(game_dir)
+        .unwrap_or_else(|| FABRIC_LOADER_VERSION.to_string());
+    let version_id = fabric_version_id(&loader_version);
     let path = game_dir
         .join("versions")
         .join(&version_id)
@@ -2071,11 +2218,75 @@ fn ensure_fabric_version_json_with_progress(
         if let Some(app) = app {
             emit_launch_progress(app, "Fabric", "Downloading Fabric launch profile", 4, 12);
         }
-        download_file(FABRIC_PROFILE_URL, &path)?;
+        download_file(&fabric_profile_url(&loader_version), &path)?;
     } else if let Some(app) = app {
         emit_launch_progress(app, "Fabric", "Fabric launch profile is ready", 4, 12);
     }
     Ok(path)
+}
+
+fn fabric_version_id(loader_version: &str) -> String {
+    format!("fabric-loader-{loader_version}-{MINECRAFT_VERSION}")
+}
+
+fn fabric_profile_url(loader_version: &str) -> String {
+    format!(
+        "https://meta.fabricmc.net/v2/versions/loader/{MINECRAFT_VERSION}/{loader_version}/profile/json"
+    )
+}
+
+fn detected_fabric_loader_version(game_dir: &Path) -> Option<String> {
+    let versions = game_dir.join("versions");
+    let entries = fs::read_dir(versions).ok()?;
+    let prefix = "fabric-loader-";
+    let suffix = format!("-{MINECRAFT_VERSION}");
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter_map(|name| {
+            let version = name.strip_prefix(prefix)?.strip_suffix(&suffix)?;
+            if version.is_empty() {
+                None
+            } else {
+                Some(version.to_string())
+            }
+        })
+        .max_by(|left, right| compare_version_strings(left, right))
+}
+
+fn latest_fabric_loader_version() -> Result<String, String> {
+    let versions = http_client()?
+        .get(FABRIC_VERSIONS_URL)
+        .send()
+        .map_err(error_text)?
+        .error_for_status()
+        .map_err(error_text)?
+        .json::<Vec<serde_json::Value>>()
+        .map_err(error_text)?;
+    versions
+        .iter()
+        .find(|entry| {
+            json_bool_value(
+                entry
+                    .get("stable")
+                    .unwrap_or(&serde_json::Value::Bool(false)),
+            )
+        })
+        .or_else(|| versions.first())
+        .map(|entry| json_string(entry, "version"))
+        .filter(|version| !version.trim().is_empty())
+        .ok_or_else(|| "Fabric did not return a compatible loader version.".to_string())
+}
+
+fn compare_version_strings(left: &str, right: &str) -> std::cmp::Ordering {
+    let parse = |value: &str| {
+        value
+            .split(|ch: char| !ch.is_ascii_digit())
+            .filter(|part| !part.is_empty())
+            .map(|part| part.parse::<u64>().unwrap_or(0))
+            .collect::<Vec<_>>()
+    };
+    parse(left).cmp(&parse(right))
 }
 
 fn ensure_vanilla_version_json_with_progress(
@@ -3299,10 +3510,13 @@ fn main() {
             microsoft_device_start,
             microsoft_device_poll,
             ensure_profile,
+            profile_loader_status,
+            update_fabric_loader,
             delete_profile,
             list_local_files,
             toggle_local_file,
             add_resource_packs,
+            add_mods,
             open_path,
             open_profile_folder,
             diagnostics,
