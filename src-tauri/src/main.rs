@@ -789,7 +789,8 @@ fn profile_loader_status(profile: String) -> Result<FabricLoaderStatus, String> 
     Ok(FabricLoaderStatus {
         profile,
         installed: installed.is_some(),
-        update_available: !version.is_empty() && version != latest,
+        update_available: !version.is_empty()
+            && compare_version_strings(&version, &latest) == std::cmp::Ordering::Less,
         version,
         latest_version: latest,
         message: String::new(),
@@ -2207,7 +2208,14 @@ fn ensure_fabric_version_json_with_progress(
     game_dir: &Path,
     app: Option<&AppHandle>,
 ) -> Result<PathBuf, String> {
+    // Existing profiles may predate the launcher's current minimum (for example
+    // 0.18.4).  Do not keep selecting that stale folder forever: stage the
+    // supported loader on the next launch.  A newer locally installed loader is
+    // still respected so custom profiles are not silently downgraded.
     let loader_version = detected_fabric_loader_version(game_dir)
+        .filter(|installed| {
+            compare_version_strings(installed, FABRIC_LOADER_VERSION) != std::cmp::Ordering::Less
+        })
         .unwrap_or_else(|| FABRIC_LOADER_VERSION.to_string());
     let version_id = fabric_version_id(&loader_version);
     let path = game_dir
