@@ -316,7 +316,7 @@ public class FxMain extends Application {
 
         body.getChildren().addAll(
             header,
-            section("Versions", chip("Minecraft", "1.21.11"), chip("Fabric Loader", "0.18.4")),
+            section("Versions", chip("Minecraft", "1.21.11"), chip("Fabric Loader", "0.19.3+ (profile selectable)")),
             section("Runtime", controlField("Memory", memoryBox), controlField("Java Args", javaArgs)),
             section("Updates", label("Launcher and client update checks", "muted"), buttonRow(autoCheck, checkUpdatesButton())),
             section("Slots", label("Slot sounds are quiet reel ticks. Win sounds are separate.", "muted"), buttonRow(slotSoundToggle, slotWinSoundToggle)),

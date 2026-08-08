@@ -239,11 +239,11 @@ async function mockInvoke(command, args = {}) {
   if (command === "add_mods") return 0;
   if (command === "profile_loader_status") {
     return args.profile === "vanilla"
-      ? { profile: args.profile, installed: false, version: "", latestVersion: "0.18.4", updateAvailable: false }
-      : { profile: args.profile, installed: true, version: "0.18.4", latestVersion: "0.18.4", updateAvailable: false };
+      ? { profile: args.profile, installed: false, version: "", latestVersion: "0.19.3", updateAvailable: false }
+      : { profile: args.profile, installed: true, version: "0.19.3", latestVersion: "0.19.3", updateAvailable: false };
   }
   if (command === "update_fabric_loader") {
-    return { profile: args.profile, installed: true, version: "0.18.4", latestVersion: "0.18.4", updateAvailable: false, message: "Fabric Loader is current." };
+    return { profile: args.profile, installed: true, version: "0.19.3", latestVersion: "0.19.3", updateAvailable: false, message: "Fabric Loader is current." };
   }
   if (command === "diagnostics") {
     return {

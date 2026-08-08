@@ -31,7 +31,7 @@ const VERSION: &str = "0.1.100";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
-const FABRIC_LOADER_VERSION: &str = "0.18.4";
+const FABRIC_LOADER_VERSION: &str = "0.19.3";
 const FABRIC_VERSIONS_URL: &str = "https://meta.fabricmc.net/v2/versions/loader/1.21.11";
 const VERSION_MANIFEST_URL: &str =
     "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";

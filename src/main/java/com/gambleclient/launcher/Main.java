@@ -143,7 +143,7 @@ public class Main {
     private static final String CAPE_OWNERS_PATH = "/api/capes/owners.txt";
     private static final String CAPES_PATH = "/api/capes/capes.txt";
     private static final String MINECRAFT_VERSION = "1.21.11";
-    private static final String FABRIC_LOADER_VERSION = "0.18.4";
+    private static final String FABRIC_LOADER_VERSION = "0.19.3";
     private static final String MANAGED_CLIENT_MOD_ID = "cg-mod";
     private static final long MAX_DOWNLOAD_BYTES = 512L * 1024L * 1024L;
     private static final long MAX_MANAGED_CLIENT_BYTES = 64L * 1024L * 1024L;
