@@ -98,6 +98,13 @@ test("automatic update prompts never cover an active sign-in flow", async () => 
     assert.match(java, /if \(isLauncherSignInActive\(\)\) \{[\s\S]*Launcher update prompt deferred/);
 });
 
+test("default-size launcher keeps account sign-in controls inside the visible content column", async () => {
+    const css = await source("src/styles.css");
+
+    assert.match(css, /\.topbar,\s*\n\.screen-band \{\s*\n\s*flex-wrap: wrap;/);
+    assert.match(css, /@media \(max-width: 1260px\)[\s\S]*\.topbar \.top-actions,[\s\S]*width: 100%;/);
+});
+
 test("cancelling browser sign-in invalidates its background poll", async () => {
     const frontend = await source("src/main.js");
 

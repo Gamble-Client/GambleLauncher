@@ -222,6 +222,21 @@ nav {
   gap: 18px;
 }
 
+.topbar,
+.screen-band {
+  flex-wrap: wrap;
+}
+
+.topbar > div:first-child,
+.screen-band > div:first-child {
+  min-width: 0;
+}
+
+.topbar .top-actions,
+.screen-band .top-actions {
+  margin-left: auto;
+}
+
 .topbar {
   min-height: 58px;
   padding-bottom: 12px;
@@ -1793,6 +1808,15 @@ input,
   .shell { grid-template-columns: 196px minmax(0, 1fr); }
   .content { padding: 18px; }
   h2 { font-size: 2.8rem; }
+}
+
+@media (max-width: 1260px) {
+  .topbar .top-actions,
+  .screen-band .top-actions {
+    justify-content: flex-start;
+    width: 100%;
+    margin-left: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
