@@ -68,6 +68,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -147,6 +148,7 @@ public class Main {
     private static final String MANAGED_CLIENT_MOD_ID = "cg-mod";
     private static final long MAX_DOWNLOAD_BYTES = 512L * 1024L * 1024L;
     private static final long MAX_MANAGED_CLIENT_BYTES = 64L * 1024L * 1024L;
+    private static final long MAX_LOADER_BYTES = 16L * 1024L * 1024L;
     private static final long MAX_FABRIC_METADATA_BYTES = 1024L * 1024L;
     private static final String LICENSE_PLACEHOLDER = "paste-your-license-key-here";
     private static final String FABRIC_PROFILE_URL = "https://meta.fabricmc.net/v2/versions/loader/"
@@ -2515,10 +2517,12 @@ public class Main {
     private String checkClientVersionStatus(Build build) {
         try {
             LauncherManifest manifest = fetchLauncherManifest(build);
-            File installed = new File(getModsFolder(), manifest.fileName);
+            File installed = new File(getModsFolder(), LOADER_JAR_NAME);
             String version = displayManifestVersion(manifest);
-            if (installed.isFile()) return build.label + " client latest: " + version + ".";
-            return build.label + " client update available: " + version + ".";
+            if (installed.isFile() && isMemoryLoaderJar(installed)) {
+                return build.label + " memory loader latest: " + version + ".";
+            }
+            return build.label + " memory loader update available: " + version + ".";
         } catch (Exception e) {
             return "Could not check client update: " + rootMessage(e);
         }
@@ -3103,7 +3107,7 @@ public class Main {
             throw new IOException("Backend manifest was issued for a different client tier.");
         }
         if (fileName.isEmpty() || downloadUrl.isEmpty()) {
-            throw new IOException("Backend manifest did not include a jar download.");
+            throw new IOException("Backend manifest did not include a client artifact reference.");
         }
         if (!isSafeFileName(fileName)) throw new IOException("Backend manifest filename is unsafe.");
         String sha256 = Json.string(response.body.get("sha256"));
@@ -3112,7 +3116,7 @@ public class Main {
             throw new IOException("Backend manifest is missing required size or SHA-256 integrity metadata.");
         }
         if (size > MAX_MANAGED_CLIENT_BYTES) {
-            throw new IOException("Managed client artifact exceeds the 64 MiB safety limit.");
+            throw new IOException("Client artifact exceeds the 64 MiB safety limit.");
         }
 
         return new LauncherManifest(
@@ -3122,29 +3126,6 @@ public class Main {
             sha256,
             size,
             Json.string(response.body.get("buildVersion"))
-        );
-    }
-
-    private LaunchTicket fetchLaunchTicket(Build build) throws IOException {
-        ensureSignedIn();
-        ApiResponse response = apiRequest(
-            "POST",
-            "/api/launcher/launch-ticket",
-            "{\"build\":\"" + jsonEscape(build.id) + "\"}",
-            launcherToken,
-            201
-        );
-
-        String ticket = Json.string(response.body.get("ticket"));
-        if (ticket.isEmpty()) throw new IOException("Backend did not issue a launch ticket.");
-        String responseBuild = canonicalBuildId(Json.string(response.body.get("build")));
-        if (!canonicalBuildId(build.id).equals(responseBuild)) {
-            throw new IOException("Backend launch ticket was issued for a different client tier.");
-        }
-        return new LaunchTicket(
-            responseBuild,
-            ticket,
-            jsonLong(response.body.get("expiresAt"))
         );
     }
 
@@ -3161,7 +3142,7 @@ public class Main {
     private void installSelectedBuild(final boolean launchAfterInstall) {
         final LaunchProfile profile = selectedProfile();
         if (!profile.includesGambleClient) {
-            JOptionPane.showMessageDialog(frame, profile.label + " does not install the Gamble Client jar.", "Profile", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(frame, profile.label + " does not install the Gamble Client memory loader.", "Profile", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
 
@@ -3186,7 +3167,7 @@ public class Main {
                     Main.this.setProgress(100, result.updated ? "Updated" : "Current");
                     setUpdateStatus(result.message);
                     log(result.message);
-                    log("Client jar: " + result.file.getAbsolutePath());
+                    log("Memory loader: " + result.file.getAbsolutePath());
                     refreshVersionPanel();
                     if (launchAfterInstall) launch();
                     else if (result.updated) log("Press Launch to start Minecraft.");
@@ -3208,119 +3189,14 @@ public class Main {
         ensureSignedIn();
         LauncherManifest manifest = fetchLauncherManifest(build);
         clearLegacyLocalLicenseFiles();
-
-        File installed = payloadJarFile(manifest);
-        if (installed.isFile()) {
-            if (!verifyManagedJar(installed, manifest)) {
-                log("Cached client payload failed verification; replacing " + installed.getName() + ".");
-            } else {
-                hardenPrivateFile(installed);
-                cleanupManagedClientJarsFromMods();
-                ensureLoaderJar();
-                writeInstallMarker(build.id, manifest, installed);
-                return new UpdateResult(installed, false, "Latest managed client payload verified: " + displayManifestVersion(manifest));
-            }
-        }
-
-        if (!installed.isFile()) {
-            File stale = findManagedClientJar(getModsFolder(), build.id);
-            if (stale != null) log("Replacing stale managed client: " + stale.getName());
-        }
-
-        File mods = getModsFolder();
-        if (!mods.exists() && !mods.mkdirs()) {
-            throw new IOException("Failed to create mods folder: " + mods);
-        }
-
-        setProgress(1, "Manifest");
-        log("Updating to " + build.label + " " + displayManifestVersion(manifest) + ".");
-        File temp = File.createTempFile("gamble-client-", ".jar");
-        try {
-            downloadFile(manifest.downloadUrl, temp, manifest.fileName, true);
-            verifyDownloadedJar(temp, manifest);
-            cleanupManagedClientJarsFromMods();
-            ensureLoaderJar();
-            File result = installPayloadJar(temp, manifest);
-            writeInstallMarker(build.id, manifest, result);
-            return new UpdateResult(result, true, "Updated managed client payload to: " + displayManifestVersion(manifest));
-        } finally {
-            if (temp.exists()) temp.delete();
-        }
-    }
-
-    private File ensureBuildInstalled(Build build, boolean forceDownload) throws IOException {
-        ensureSignedIn();
-        LauncherManifest manifest = fetchLauncherManifest(build);
-
-        clearLegacyLocalLicenseFiles();
-
-        File installed = payloadJarFile(manifest);
-        if (!forceDownload && installed.isFile()) {
-            if (!verifyManagedJar(installed, manifest)) {
-                log("Cached client payload failed verification; reinstalling " + installed.getName() + ".");
-            } else {
-                hardenPrivateFile(installed);
-                cleanupManagedClientJarsFromMods();
-                ensureLoaderJar();
-                writeInstallMarker(build.id, manifest, installed);
-                setProgress(6, "Client ready");
-                log("Managed client payload verified: " + displayManifestVersion(manifest) + ".");
-                return installed;
-            }
-        }
-
-        File mods = getModsFolder();
-        if (!mods.exists() && !mods.mkdirs()) {
-            throw new IOException("Failed to create mods folder: " + mods);
-        }
-
-        setProgress(1, "Manifest");
-        log("Installing managed " + build.label + " " + displayManifestVersion(manifest) + ".");
-        File temp = File.createTempFile("gamble-client-", ".jar");
-        try {
-            downloadFile(manifest.downloadUrl, temp, manifest.fileName, true);
-            verifyDownloadedJar(temp, manifest);
-            cleanupManagedClientJarsFromMods();
-            ensureLoaderJar();
-            File result = installPayloadJar(temp, manifest);
-            writeInstallMarker(build.id, manifest, result);
-            return result;
-        } finally {
-            if (temp.exists()) temp.delete();
-        }
-    }
-
-    private boolean verifyManagedJar(File file, LauncherManifest manifest) throws IOException {
-        try {
-            verifyDownloadedJar(file, manifest);
-            return true;
-        } catch (IOException e) {
-            log("Client verification failed: " + e.getMessage());
-            return false;
-        }
-    }
-
-    private void verifyDownloadedJar(File file, LauncherManifest manifest) throws IOException {
-        if (file == null || !file.isFile()) {
-            throw new IOException("Managed client jar is missing.");
-        }
-        if (file.length() == 0) {
-            throw new IOException("Managed client jar is empty.");
-        }
-        if (manifest.size <= 0 || file.length() != manifest.size) {
-            throw new IOException("Expected " + manifest.size + " bytes but found " + file.length() + " bytes.");
-        }
-
-        String expectedHash = normalizeSha256(manifest.sha256);
-        if (expectedHash.isEmpty()) {
-            throw new IOException("Server manifest did not include a valid SHA-256 hash for " + manifest.fileName + ".");
-        }
-
-        String actualHash = sha256Hex(file);
-        if (!expectedHash.equalsIgnoreCase(actualHash)) {
-            throw new IOException("Expected SHA-256 " + expectedHash + " but found " + actualHash + ".");
-        }
-        verifyFabricModIdentity(file, MANAGED_CLIENT_MOD_ID, manifest.build);
+        File loader = new File(getModsFolder(), LOADER_JAR_NAME);
+        boolean alreadyReady = loader.isFile() && isMemoryLoaderJar(loader);
+        removeManagedClientArtifactsForMemory();
+        ensureLoaderJar();
+        writeInstallMarker(build.id, manifest, loader);
+        return new UpdateResult(loader, !alreadyReady,
+            (alreadyReady ? "Memory loader ready for " : "Installed memory loader for ")
+                + displayManifestVersion(manifest));
     }
 
     private void verifyFabricModId(File file, String expectedId) throws IOException {
@@ -3417,23 +3293,6 @@ public class Main {
         return text;
     }
 
-    private File findManagedClientJar(File mods, String buildId) {
-        File[] files = mods.listFiles();
-        if (files == null) return null;
-
-        String needle = buildId == null ? "" : buildId.toLowerCase(Locale.ROOT).replace("_", "-");
-        File fallback = null;
-        for (File file : files) {
-            if (!file.isFile()) continue;
-            String lower = file.getName().toLowerCase(Locale.ROOT);
-            if (!lower.endsWith(".jar") && !lower.endsWith(".jar.disabled")) continue;
-            if (!hasManagedClientIdentity(file)) continue;
-            if (!needle.isEmpty() && lower.contains(needle)) return file;
-            if (fallback == null) fallback = file;
-        }
-        return fallback;
-    }
-
     private void launch() {
         final LaunchProfile launchProfile = selectedProfile();
         final Build build = (Build) buildBox.getSelectedItem();
@@ -3504,16 +3363,20 @@ public class Main {
                         throw new IOException("This account no longer has access to " + build.label + ".");
                     }
                 }
-                File payloadJar = null;
                 if (launchProfile.includesGambleClient) {
-                    payloadJar = ensureBuildInstalled(build, false);
+                    // The standalone loader owns authorization, update selection, and
+                    // the client bootstrap. The launcher only installs that loader;
+                    // it never passes a client JAR to Fabric's addMods path.
+                    removeManagedClientArtifactsForMemory();
+                    ensureLoaderJar();
+                    log("Gamble Client will be authorized and loaded from memory by the standalone loader.");
                 } else {
                     ensureProfileFolders(launchProfile);
                     log("Using " + launchProfile.label + " profile without the Gamble Client jar.");
                 }
                 LaunchIdentity identity = resolveLaunchIdentity(name);
-                LaunchTicket launchTicket = launchProfile.includesGambleClient ? fetchLaunchTicket(build) : null;
-                return launchMinecraftProcess(launchProfile, identity, memory, extraJavaArgs, launchTicket, payloadJar);
+                return launchMinecraftProcess(launchProfile, identity, memory, extraJavaArgs,
+                    launchProfile.includesGambleClient ? canonicalBuildId(build.id) : "");
             }
 
             @Override
@@ -3765,7 +3628,8 @@ public class Main {
         return LaunchIdentity.online(auth.name, auth.uuid, auth.accessToken, auth.xuid);
     }
 
-    private Process launchMinecraftProcess(LaunchProfile launchProfile, LaunchIdentity identity, int memory, List<String> extraJavaArgs, LaunchTicket launchTicket, File payloadJar) throws IOException {
+    private Process launchMinecraftProcess(LaunchProfile launchProfile, LaunchIdentity identity, int memory,
+                                          List<String> extraJavaArgs, String launchBuild) throws IOException {
         File gameDir = getMinecraftFolder(launchProfile);
         File versionsDir = new File(gameDir, "versions");
         if (!versionsDir.exists() && !versionsDir.mkdirs()) {
@@ -3795,12 +3659,8 @@ public class Main {
         File nativesDir = extractNatives(gameDir, versionId, profile);
 
         setProgress(82, "Launching");
-        File launchTicketFile = null;
-        File livePayload = null;
         try {
-            launchTicketFile = launchTicket != null ? writeLaunchTicketFile(launchTicket) : null;
-            livePayload = payloadJar != null ? prepareLaunchPayload(payloadJar) : null;
-            List<String> command = buildLaunchCommand(gameDir, profile, classpath, nativesDir, identity, memory, versionId, extraJavaArgs, launchProfile, launchTicketFile, launchTicket != null ? launchTicket.build : "", livePayload);
+            List<String> command = buildLaunchCommand(gameDir, profile, classpath, nativesDir, identity, memory, versionId, extraJavaArgs, launchProfile, launchBuild);
             LaunchValidation validation = validateLaunchSetup(gameDir, profile, classpath, nativesDir, versionId, launchProfile, identity);
             logValidationReport(validation);
             logLaunchCommandDetails(command, profile.mainClass, gameDir);
@@ -3811,11 +3671,8 @@ public class Main {
             builder.directory(gameDir);
             builder.redirectErrorStream(false);
             Process process = builder.start();
-            scheduleLaunchArtifactCleanup(process, launchTicketFile, livePayload);
             return process;
         } catch (IOException e) {
-            deleteQuietly(launchTicketFile);
-            deleteQuietly(livePayload);
             throw e;
         }
     }
@@ -4297,7 +4154,7 @@ public class Main {
         }
     }
 
-    private List<String> buildLaunchCommand(File gameDir, VersionProfile profile, List<File> classpath, File nativesDir, LaunchIdentity identity, int memory, String versionId, List<String> extraJavaArgs, LaunchProfile launchProfile, File launchTicketFile, String launchBuild, File payloadJar) {
+    private List<String> buildLaunchCommand(File gameDir, VersionProfile profile, List<File> classpath, File nativesDir, LaunchIdentity identity, int memory, String versionId, List<String> extraJavaArgs, LaunchProfile launchProfile, String launchBuild) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable());
         command.add("-Xmx" + memory + "G");
@@ -4305,14 +4162,9 @@ public class Main {
         command.add("-Djava.library.path=" + nativesDir.getAbsolutePath());
         command.add("-Dminecraft.launcher.brand=GambleClientLauncher");
         command.add("-Dminecraft.launcher.version=" + LAUNCHER_VERSION);
-        if (launchTicketFile != null) {
-            command.add("-Dgamble.launchTicketFile=" + launchTicketFile.getAbsolutePath());
-        }
         if (launchProfile.includesGambleClient && launchBuild != null && !launchBuild.isBlank()) {
             command.add("-Dgamble.launchBuild=" + launchBuild);
-        }
-        if (payloadJar != null) {
-            command.add("-Dfabric.addMods=" + payloadJar.getAbsolutePath());
+            command.add("-Dgamble.loader.build=" + launchBuild);
         }
         if (launchProfile.fabric && !profile.clientVersionId.isEmpty()) {
             File gameJar = new File(new File(new File(gameDir, "versions"), profile.clientVersionId), profile.clientVersionId + ".jar");
@@ -5189,69 +5041,6 @@ public class Main {
         }
     }
 
-    private String sha256Hex(File file) throws IOException {
-        MessageDigest digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256");
-        } catch (Exception e) {
-            throw new IOException("SHA-256 is not available.", e);
-        }
-
-        try (InputStream in = new BufferedInputStream(Files.newInputStream(file.toPath()))) {
-            byte[] buffer = new byte[16384];
-            int read;
-            while ((read = in.read(buffer)) != -1) {
-                digest.update(buffer, 0, read);
-            }
-        }
-
-        StringBuilder out = new StringBuilder();
-        for (byte value : digest.digest()) {
-            out.append(String.format("%02x", value & 0xff));
-        }
-        return out.toString();
-    }
-
-    private File installPayloadJar(File downloaded, LauncherManifest manifest) throws IOException {
-        File payloads = getPayloadsFolder();
-        if (!payloads.exists() && !payloads.mkdirs()) {
-            throw new IOException("Failed to create payload folder: " + payloads);
-        }
-
-        File installed = payloadJarFile(manifest);
-        Files.move(downloaded.toPath(), installed.toPath(), StandardCopyOption.REPLACE_EXISTING);
-        try {
-            hardenPrivateFile(installed);
-        } catch (IOException error) {
-            Files.deleteIfExists(installed.toPath());
-            throw error;
-        }
-        return installed;
-    }
-
-    private void cleanupManagedClientJarsFromMods() throws IOException {
-        File mods = getModsFolder();
-        File backupDir = new File(mods, ".gamble-client-backups");
-        if (!backupDir.exists() && !backupDir.mkdirs()) {
-            throw new IOException("Failed to create backup folder: " + backupDir);
-        }
-
-        String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new Date());
-        File[] existing = mods.listFiles();
-        if (existing != null) {
-            for (File file : existing) {
-                String name = file.getName().toLowerCase(Locale.ROOT);
-                if (!file.isFile()) continue;
-                if (!name.endsWith(".jar") && !name.endsWith(".jar.disabled")) continue;
-                if (!hasManagedClientIdentity(file)) continue;
-
-                File backup = new File(backupDir, stamp + "-" + file.getName());
-                Files.move(file.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                log("Moved old jar to backup: " + backup.getName());
-            }
-        }
-    }
-
     private void ensureLoaderJar() throws IOException {
         File mods = getModsFolder();
         if (!mods.exists() && !mods.mkdirs()) {
@@ -5259,24 +5048,92 @@ public class Main {
         }
 
         File loader = new File(mods, LOADER_JAR_NAME);
-        if (loader.isFile()) return;
+        if (loader.isFile() && isMemoryLoaderJar(loader)) return;
 
-        try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(loader))) {
-            zip.putNextEntry(new ZipEntry("fabric.mod.json"));
-            String json = "{"
-                + "\"schemaVersion\":1,"
-                + "\"id\":\"gamble-client-loader\","
-                + "\"version\":\"" + jsonEscape(LAUNCHER_VERSION) + "\","
-                + "\"name\":\"Gamble Client Loader\","
-                + "\"description\":\"Launcher-managed bootstrap marker for Gamble Client.\","
-                + "\"authors\":[\"Gamble Client\"],"
-                + "\"environment\":\"client\","
-                + "\"depends\":{\"fabricloader\":\">=0.18.0\"}"
-                + "}";
-            zip.write(json.getBytes(StandardCharsets.UTF_8));
-            zip.closeEntry();
+        ensureSignedIn();
+        File temporary = new File(loader.getAbsolutePath() + ".part");
+        Files.deleteIfExists(temporary.toPath());
+        HttpURLConnection connection = (HttpURLConnection) URI.create(siteUrl() + "/api/standalone/loader").toURL().openConnection();
+        try {
+            connection.setInstanceFollowRedirects(true);
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(30000);
+            connection.setRequestMethod("POST");
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Accept", "application/java-archive");
+            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            connection.setRequestProperty("Authorization", "Bearer " + launcherToken.trim());
+            byte[] request = ("{\"fileName\":\"" + jsonEscape(LOADER_JAR_NAME)
+                + "\",\"displayName\":\"Gamble Client Launcher\",\"description\":\"Launcher-managed memory bootstrap\"}")
+                .getBytes(StandardCharsets.UTF_8);
+            connection.setFixedLengthStreamingMode(request.length);
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(request);
+            }
+
+            int status = connection.getResponseCode();
+            if (status < 200 || status >= 300) {
+                String body = readSmall(connection.getErrorStream());
+                throw new IOException("Standalone loader download returned HTTP " + status
+                    + (body.isEmpty() ? "." : ": " + body));
+            }
+            long length = connection.getContentLengthLong();
+            if (length <= 0 || length > MAX_LOADER_BYTES) throw new IOException("Standalone loader size is invalid.");
+            try (InputStream input = new BufferedInputStream(connection.getInputStream());
+                 OutputStream output = new BufferedOutputStream(new FileOutputStream(temporary))) {
+                byte[] buffer = new byte[16 * 1024];
+                long total = 0;
+                int read;
+                while ((read = input.read(buffer)) >= 0) {
+                    if (read == 0) continue;
+                    total += read;
+                    if (total > MAX_LOADER_BYTES) throw new IOException("Standalone loader exceeds the safety limit.");
+                    output.write(buffer, 0, read);
+                }
+                if (total != length) throw new IOException("Standalone loader size check failed.");
+            }
+            if (!isMemoryLoaderJar(temporary)) throw new IOException("Server returned an obsolete loader artifact.");
+            hardenPrivateFile(temporary);
+            Files.move(temporary.toPath(), loader.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            log("Installed personalized memory loader: " + loader.getName());
+        } finally {
+            Files.deleteIfExists(temporary.toPath());
+            connection.disconnect();
         }
-        log("Installed loader marker: " + loader.getName());
+    }
+
+    private boolean isMemoryLoaderJar(File file) {
+        if (file == null || !file.isFile()) return false;
+        try (ZipFile zip = new ZipFile(file)) {
+            ZipEntry metadata = zip.getEntry("fabric.mod.json");
+            ZipEntry bootstrap = zip.getEntry("gcclient/loader/MemoryBootstrap.class");
+            ZipEntry loader = zip.getEntry("gcclient/loader/StandaloneLoader.class");
+            ZipEntry payload = zip.getEntry("gcclient/loader/MemoryPayload.class");
+            if (metadata == null || bootstrap == null || loader == null || payload == null) return false;
+            String json = new String(zip.getInputStream(metadata).readNBytes((int) MAX_FABRIC_METADATA_BYTES), StandardCharsets.UTF_8);
+            return "gamble-client-standalone-loader".equals(Json.string(Json.asObject(Json.parse(json)).get("id")));
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private void removeManagedClientArtifactsForMemory() throws IOException {
+        File mods = getModsFolder();
+        deleteManagedClientFiles(mods);
+        deleteManagedClientFiles(new File(mods, ".gamble-client-backups"));
+    }
+
+    private void deleteManagedClientFiles(File folder) throws IOException {
+        if (folder == null || !folder.isDirectory()) return;
+        File[] files = folder.listFiles();
+        if (files == null) return;
+        for (File file : files) {
+            if (!file.isFile()) continue;
+            String lower = file.getName().toLowerCase(Locale.ROOT);
+            if ((!lower.endsWith(".jar") && !lower.endsWith(".jar.disabled")) || !hasManagedClientIdentity(file)) continue;
+            Files.deleteIfExists(file.toPath());
+            log("Removed old managed client artifact before memory launch: " + file.getName());
+        }
     }
 
     private void writeLicenseKey(String key) throws IOException {
@@ -5404,18 +5261,6 @@ public class Main {
         } catch (IOException e) {
             log("Could not remove Microsoft account: " + e.getMessage());
         }
-    }
-
-    private boolean hasGambleJarInstalled() {
-        File[] files = getModsFolder().listFiles();
-        if (files == null) return false;
-
-        for (File file : files) {
-            if (file.isFile() && file.getName().toLowerCase(Locale.ROOT).endsWith(".jar") && hasManagedClientIdentity(file)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private boolean isGambleClientJar(String fileName) {
@@ -6019,89 +5864,9 @@ public class Main {
         return new File(getMinecraftFolder(), "cg-mod");
     }
 
-    private File getPayloadsFolder() {
-        return new File(getProfileDataFolder(), "payloads");
-    }
-
-    private File payloadJarFile(LauncherManifest manifest) {
-        return new File(getPayloadsFolder(), manifest.fileName);
-    }
-
-    private File prepareLaunchPayload(File source) throws IOException {
-        if (source == null || !source.isFile()) {
-            throw new IOException("Managed client payload is missing.");
-        }
-        File folder = new File(getProfileDataFolder(), "launch");
-        if (!folder.exists() && !folder.mkdirs()) {
-            throw new IOException("Failed to create launch payload folder: " + folder);
-        }
-        cleanupStaleLaunchPayloads(folder);
-        File target = new File(folder, "payload-" + randomBase64Url(24) + ".jar");
-        try {
-            Files.copy(source.toPath(), target.toPath());
-            hardenPrivateFile(target);
-            return target;
-        } catch (IOException error) {
-            Files.deleteIfExists(target.toPath());
-            throw error;
-        }
-    }
-
-    private void cleanupStaleLaunchPayloads(File folder) throws IOException {
-        File[] files = folder.listFiles();
-        if (files == null) return;
-        for (File file : files) {
-            String name = file.getName().toLowerCase(Locale.ROOT);
-            if (file.isFile() && name.matches("^payload-[a-z0-9_-]{32}\\.jar$")) {
-                Files.deleteIfExists(file.toPath());
-            }
-        }
-    }
-
     private boolean isSafeFileName(String value) {
         if (value == null || value.isBlank() || value.contains("/") || value.contains("\\") || value.equals(".") || value.equals("..")) return false;
         return new File(value).getName().equals(value) && !new File(value).isAbsolute();
-    }
-
-    private File writeLaunchTicketFile(LaunchTicket launchTicket) throws IOException {
-        File folder = new File(getProfileDataFolder(), "launch");
-        if (!folder.exists() && !folder.mkdirs()) {
-            throw new IOException("Failed to create launch ticket folder: " + folder);
-        }
-
-        File file = new File(folder, "ticket-" + System.currentTimeMillis() + "-" + UUID.randomUUID() + ".txt");
-        String payload = "ticket=" + launchTicket.ticket + "\n"
-            + "build=" + launchTicket.build + "\n"
-            + "expiresAt=" + launchTicket.expiresAt + "\n";
-        Files.writeString(file.toPath(), payload, StandardCharsets.UTF_8);
-        hardenPrivateFile(file);
-        file.deleteOnExit();
-        log("Launch ticket issued for " + launchTicket.build + "; expires at " + launchTicket.expiresAt + ".");
-        return file;
-    }
-
-    private void scheduleLaunchArtifactCleanup(Process process, File launchTicketFile, File livePayload) {
-        if (process == null || (launchTicketFile == null && livePayload == null)) return;
-
-        Thread thread = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    process.waitFor();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                } finally {
-                    deleteQuietly(launchTicketFile);
-                    deleteQuietly(livePayload);
-                }
-            }
-        }, "gamble-launch-artifact-cleanup");
-        thread.setDaemon(true);
-        thread.start();
-    }
-
-    private void deleteQuietly(File file) {
-        if (file != null && file.exists() && !file.delete()) file.deleteOnExit();
     }
 
     private List<String> redactLaunchSecrets(List<String> values) {
@@ -6114,8 +5879,6 @@ public class Main {
             } else if (value != null && (value.equals("--accessToken") || value.equals("--clientId") || value.equals("--xuid") || value.equals("--uuid"))) {
                 redacted.add(value);
                 redactNext = true;
-            } else if (value != null && value.startsWith("-Dgamble.launchTicket")) {
-                redacted.add("-Dgamble.launchTicket=<redacted>");
             } else {
                 redacted.add(value);
             }
@@ -6617,18 +6380,6 @@ public class Main {
             this.sha256 = sha256;
             this.size = size;
             this.buildVersion = buildVersion;
-        }
-    }
-
-    private static final class LaunchTicket {
-        final String build;
-        final String ticket;
-        final long expiresAt;
-
-        LaunchTicket(String build, String ticket, long expiresAt) {
-            this.build = build;
-            this.ticket = ticket;
-            this.expiresAt = expiresAt;
         }
     }
 

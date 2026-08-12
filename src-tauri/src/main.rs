@@ -8,7 +8,7 @@ use std::{
     collections::{HashMap, VecDeque},
     env,
     fs::{self, File},
-    io::{self, Cursor, Read, Write},
+    io::{self, Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -22,7 +22,7 @@ use std::{
 use tauri::Manager;
 use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
-use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
+use zip::ZipArchive;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -50,6 +50,7 @@ const HTTP_REQUEST_TIMEOUT_SECONDS: u64 = 300;
 const HTTP_DOWNLOAD_ATTEMPTS: usize = 3;
 const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_MANAGED_CLIENT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_LOADER_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_FABRIC_METADATA_BYTES: u64 = 1024 * 1024;
 const MANAGED_CLIENT_MOD_ID: &str = "cg-mod";
 const MAX_NATIVE_FILES: usize = 2048;
@@ -94,7 +95,6 @@ const ANTISCREENSHARE_VISUAL_OFF: &[&str] = &[
     "block-update-finder",
 ];
 static MINECRAFT_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
-static ACTIVE_LAUNCH_PAYLOAD: Mutex<Option<PathBuf>> = Mutex::new(None);
 static LAUNCH_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Serialize)]
@@ -1265,29 +1265,24 @@ fn client_install_status_blocking(
 
     ensure_profile_folders(&profile)?;
     let manifest = fetch_client_manifest(&build, &token)?;
-    let installed = find_verified_client_install(&profile, &manifest);
-    let expected_install = payload_file(&profile, &manifest.file_name);
-    let installed_path = installed.as_deref().unwrap_or(expected_install.as_path());
-    let current = installed.is_some();
+    let loader = mods_folder(&profile).join(LOADER_JAR_NAME);
+    let current = is_memory_loader_jar(&loader);
     Ok(ClientInstallStatus {
         file_name: manifest.file_name.clone(),
         build: manifest.build.clone(),
         build_version: public_client_version(&manifest.build_version),
-        path: display_path(installed_path),
-        size: installed_path
-            .metadata()
-            .map(|metadata| metadata.len())
-            .unwrap_or(0),
+        path: display_path(&loader),
+        size: manifest.size,
         sha256: manifest.sha256.clone(),
         installed: current,
         update_available: !current,
         message: if current {
+            format!("Memory loader is ready for {}", display_version(&manifest))
+        } else {
             format!(
-                "Installed client is current: {}",
+                "Memory loader update available: {}",
                 display_version(&manifest)
             )
-        } else {
-            format!("Client update available: {}", display_version(&manifest))
         },
     })
 }
@@ -1349,61 +1344,24 @@ fn install_client_manifest_blocking(
     }
     if !profile_installs_client(&profile) {
         return Err(
-            "Vanilla and plain Fabric profiles do not install the managed client jar.".to_string(),
+            "Vanilla and plain Fabric profiles do not install the managed client memory loader."
+                .to_string(),
         );
     }
     ensure_profile_folders(&profile)?;
 
     let manifest = fetch_client_manifest(&build, &token)?;
 
-    if manifest.file_name.is_empty() || manifest.download_url.is_empty() {
-        return Err("Backend manifest did not include a jar download.".to_string());
-    }
-    safe_file_name(&manifest.file_name)?;
-    if manifest.size == 0 || !is_sha256(&manifest.sha256) {
-        return Err(
-            "Backend manifest is missing required size or SHA-256 integrity metadata.".to_string(),
-        );
-    }
-    if manifest.size > MAX_MANAGED_CLIENT_BYTES {
-        return Err("Managed client artifact exceeds the 64 MiB safety limit.".to_string());
-    }
-
-    let client_jar = payload_file(&profile, &manifest.file_name);
-    if let Some(parent) = client_jar.parent() {
-        fs::create_dir_all(parent).map_err(error_text)?;
-    }
-    let staging = client_jar.with_extension("jar.part");
-    let existing = find_verified_client_install(&profile, &manifest);
-    let downloaded = existing.is_none();
-    let staging_result = (|| {
-        if let Some(path) = existing {
-            fs::copy(path, &staging).map_err(error_text)?;
-        } else {
-            download_file(&manifest.download_url, &staging)?;
-        }
-        verify_file(&staging, manifest.size, &manifest.sha256)?;
-        verify_fabric_mod_identity(&staging, MANAGED_CLIENT_MOD_ID, Some(&manifest.build))
-    })();
-    if let Err(error) = staging_result {
-        let _ = fs::remove_file(&staging);
-        return Err(error);
-    }
-
+    let loader = mods_folder(&profile).join(LOADER_JAR_NAME);
+    let already_ready = is_memory_loader_jar(&loader);
     let install_result = (|| {
-        ensure_loader_jar(&profile)?;
+        ensure_loader_jar(&profile, &token)?;
         ensure_fabric_api(&profile)?;
         cleanup_managed_mod_jars(&profile)?;
         cleanup_payload_client_jars(&profile)?;
-        fs::rename(&staging, &client_jar).map_err(error_text)?;
-        if let Err(error) = restrict_private_file(&client_jar) {
-            let _ = fs::remove_file(&client_jar);
-            return Err(error);
-        }
-        write_install_marker(&profile, &build, &manifest, &client_jar)
+        write_install_marker(&profile, &build, &manifest, &loader)
     })();
     if let Err(error) = install_result {
-        let _ = fs::remove_file(&staging);
         return Err(error);
     }
 
@@ -1411,15 +1369,15 @@ fn install_client_manifest_blocking(
         file_name: manifest.file_name.clone(),
         build: manifest.build.clone(),
         build_version: public_client_version(&manifest.build_version),
-        path: display_path(&client_jar),
-        size: client_jar.metadata().map(|m| m.len()).unwrap_or(0),
+        path: display_path(&loader),
+        size: manifest.size,
         sha256: manifest.sha256.clone(),
-        updated: downloaded,
-        message: if downloaded {
-            format!("Updated managed client to: {}", display_version(&manifest))
+        updated: !already_ready,
+        message: if already_ready {
+            format!("Memory loader is ready for: {}", display_version(&manifest))
         } else {
             format!(
-                "Refreshed managed client in this profile: {}",
+                "Installed memory loader for: {}",
                 display_version(&manifest)
             )
         },
@@ -1448,11 +1406,9 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
                 child.kill().map_err(error_text)?;
                 child.wait().map_err(error_text)?;
                 *running = None;
-                cleanup_active_launch_payload()?;
                 return Ok("Minecraft stop signal sent.".to_string());
             }
             *running = None;
-            cleanup_active_launch_payload()?;
         }
     }
 
@@ -1477,17 +1433,20 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         identity.name = input.username.trim().to_string();
     }
     cleanup_stale_launch_payloads(&profile)?;
-    emit_launch_progress(&app, "Client", "Checking managed client payload", 3, 13);
-    let managed_client_payload = if profile_installs_client(&profile) {
-        let install = install_client_manifest_blocking(
+    emit_launch_progress(
+        &app,
+        "Client",
+        "Checking managed client memory loader",
+        3,
+        13,
+    );
+    if profile_installs_client(&profile) {
+        install_client_manifest_blocking(
             profile.to_string(),
             build.to_string(),
             token.to_string(),
         )?;
-        Some((PathBuf::from(install.path), install.file_name))
-    } else {
-        None
-    };
+    }
 
     write_launcher_preferences(&profile, input.anti_screenshare)?;
 
@@ -1517,19 +1476,20 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
     )?);
     ensure_assets_with_progress(&profile_dir, &version, Some(&app))?;
     let natives = extract_natives_with_progress(&profile_dir, &version_id, &version, Some(&app))?;
-    emit_launch_progress(&app, "Client", "Preparing temporary client payload", 11, 13);
-    let managed_client = if let Some((payload, _file_name)) = managed_client_payload.as_ref() {
-        Some(prepare_launch_payload(&profile, payload)?)
-    } else {
-        None
-    };
-    emit_launch_progress(&app, "Ticket", "Creating launch ticket", 12, 13);
-    let launch_ticket_file = if profile_installs_client(&profile) {
-        Some(write_launch_ticket_file(&profile, token, build)?)
-    } else {
-        None
-    };
-
+    emit_launch_progress(
+        &app,
+        "Client",
+        "Standalone loader will authorize the client in memory",
+        11,
+        13,
+    );
+    emit_launch_progress(
+        &app,
+        "Ticket",
+        "Standalone loader will create the launch ticket",
+        12,
+        13,
+    );
     emit_launch_progress(&app, "Starting", "Starting Minecraft", 13, 13);
     let command = match build_minecraft_command(
         &profile_dir,
@@ -1543,17 +1503,10 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         input.memory.max(2).min(16),
         &input.java_args,
         input.anti_screenshare,
-        managed_client.as_deref(),
-        launch_ticket_file.as_deref(),
         &java,
     ) {
         Ok(command) => command,
-        Err(error) => {
-            if let Some(payload) = managed_client.as_deref() {
-                cleanup_launch_payload(payload);
-            }
-            return Err(error);
-        }
+        Err(error) => return Err(error),
     };
     let log_file = latest_launch_log_file();
     let launch_result = (|| {
@@ -1593,38 +1546,13 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
             )
         })
     })();
-    let mut child = launch_result.map_err(|error| {
-        if let Some(payload) = managed_client.as_deref() {
-            cleanup_launch_payload(payload);
-        }
-        error
-    })?;
+    let mut child = launch_result?;
     let pid = child.id();
-    {
-        let mut active_payload = match ACTIVE_LAUNCH_PAYLOAD.lock() {
-            Ok(active_payload) => active_payload,
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                if let Some(payload) = managed_client.as_deref() {
-                    cleanup_launch_payload(payload);
-                }
-                return Err(error_text(error));
-            }
-        };
-        *active_payload = managed_client.clone();
-    }
     let mut running = match MINECRAFT_PROCESS.lock() {
         Ok(running) => running,
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            if let Ok(mut active_payload) = ACTIVE_LAUNCH_PAYLOAD.lock() {
-                active_payload.take();
-            }
-            if let Some(payload) = managed_client.as_deref() {
-                cleanup_launch_payload(payload);
-            }
             return Err(error_text(error));
         }
     };
@@ -1646,7 +1574,6 @@ fn minecraft_status() -> Result<MinecraftStatus, String> {
             });
         }
         *running = None;
-        cleanup_active_launch_payload()?;
     }
     Ok(MinecraftStatus {
         running: false,
@@ -2175,33 +2102,6 @@ fn read_anti_screenshare_bridge(path: &str, method: &str) -> Result<serde_json::
         return Ok(json!({}));
     }
     Ok(serde_json::from_str(&text).unwrap_or_else(|_| json!({ "ok": true, "body": text })))
-}
-
-fn write_launch_ticket_file(profile: &str, token: &str, build: &str) -> Result<PathBuf, String> {
-    let body = post_json(
-        &format!("{SITE_URL}/api/launcher/launch-ticket"),
-        &json!({ "build": build }),
-        token,
-    )?;
-    let ticket = json_string(&body, "ticket");
-    if ticket.trim().is_empty() {
-        return Err("Backend did not issue a launch ticket.".to_string());
-    }
-    let response_build = canonical_build_id(&json_string(&body, "build"));
-    if response_build != canonical_build_id(build) {
-        return Err("Backend launch ticket was issued for a different client tier.".to_string());
-    }
-    let folder = profile_data_folder(profile).join("launch");
-    fs::create_dir_all(&folder).map_err(error_text)?;
-    let path = folder.join(format!("ticket-{}-{}.txt", timestamp(), process_id()));
-    let payload = format!(
-        "ticket={}\nbuild={}\nexpiresAt={}\n",
-        ticket,
-        json_string(&body, "build"),
-        json_u64(&body, "expiresAt")
-    );
-    write_private_file(&path, payload.as_bytes())?;
-    Ok(path)
 }
 
 fn ensure_fabric_version_json_with_progress(
@@ -2786,8 +2686,6 @@ fn build_minecraft_command(
     memory: u8,
     extra_java_args: &str,
     anti_screenshare: bool,
-    payload: Option<&Path>,
-    launch_ticket_file: Option<&Path>,
     java: &str,
 ) -> Result<Vec<String>, String> {
     let mut command = Vec::new();
@@ -2797,17 +2695,9 @@ fn build_minecraft_command(
     command.push("-Dminecraft.launcher.brand=GambleClientLauncher".to_string());
     command.push(format!("-Dminecraft.launcher.version={VERSION}"));
     command.push(format!("-Dgamble.antiScreenshare={anti_screenshare}"));
-    if let Some(ticket) = launch_ticket_file {
-        command.push(format!(
-            "-Dgamble.launchTicketFile={}",
-            display_path(ticket)
-        ));
-    }
     if profile_installs_client(profile_id) && !build.is_empty() {
         command.push(format!("-Dgamble.launchBuild={build}"));
-    }
-    if let Some(payload) = payload.filter(|path| path.parent() != Some(&game_dir.join("mods"))) {
-        command.push(format!("-Dfabric.addMods={}", display_path(payload)));
+        command.push(format!("-Dgamble.loader.build={build}"));
     }
     if matches!(
         profile_kind(profile_id),
@@ -3412,9 +3302,7 @@ fn redacted_command(command: &[String]) -> String {
     command
         .iter()
         .map(|arg| {
-            if arg.starts_with("-Dgamble.launchTicket") {
-                "-Dgamble.launchTicketFile=<redacted>".to_string()
-            } else if arg.len() > 60 && !arg.starts_with('-') {
+            if arg.len() > 60 && !arg.starts_with('-') {
                 "<token-or-path>".to_string()
             } else {
                 arg.clone()
@@ -3690,10 +3578,6 @@ fn payloads_folder(profile: &str) -> PathBuf {
     profile_data_folder(profile).join("payloads")
 }
 
-fn payload_file(profile: &str, file_name: &str) -> PathBuf {
-    payloads_folder(profile).join(file_name)
-}
-
 fn safe_file_name(value: &str) -> Result<&str, String> {
     let path = Path::new(value);
     if value.trim().is_empty()
@@ -3898,7 +3782,9 @@ fn cleanup_stale_launch_payloads(profile: &str) -> Result<(), String> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_lowercase();
-        if name.starts_with("payload-") && name.ends_with(".jar") {
+        if (name.starts_with("payload-") && name.ends_with(".jar"))
+            || (name.starts_with("ticket-") && name.ends_with(".txt"))
+        {
             let _ = fs::remove_file(path);
         }
     }
@@ -3906,79 +3792,104 @@ fn cleanup_stale_launch_payloads(profile: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn prepare_launch_payload(profile: &str, source: &Path) -> Result<PathBuf, String> {
-    if !source.is_file() {
-        return Err(format!(
-            "Managed client payload is missing: {}",
-            display_path(source)
-        ));
-    }
-    let folder = profile_data_folder(profile).join("launch");
-    fs::create_dir_all(&folder).map_err(error_text)?;
-    let target = folder.join(launch_payload_name());
-    let result = fs::copy(source, &target)
-        .map(|_| ())
-        .map_err(error_text)
-        .and_then(|_| restrict_private_file(&target));
-    if let Err(error) = result {
-        let _ = fs::remove_file(&target);
-        return Err(error);
-    }
-    Ok(target)
-}
-
-fn launch_payload_name() -> String {
-    format!("payload-{}.jar", random_base64_url(24))
-}
-
-fn cleanup_launch_payload(path: &Path) {
-    let _ = fs::remove_file(path);
-}
-
-fn cleanup_active_launch_payload() -> Result<(), String> {
-    let payload = {
-        let mut active = ACTIVE_LAUNCH_PAYLOAD.lock().map_err(error_text)?;
-        active.take()
-    };
-    if let Some(path) = payload {
-        cleanup_launch_payload(&path);
-    }
-    Ok(())
-}
-
-fn ensure_loader_jar(profile: &str) -> Result<(), String> {
+fn ensure_loader_jar(profile: &str, token: &str) -> Result<(), String> {
     let mods = mods_folder(profile);
     fs::create_dir_all(&mods).map_err(error_text)?;
     let loader = mods.join(LOADER_JAR_NAME);
 
-    let mut buffer = Cursor::new(Vec::new());
-    {
-        let mut zip = ZipWriter::new(&mut buffer);
-        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-        zip.start_file("fabric.mod.json", options)
-            .map_err(error_text)?;
-        let json = format!(
-            "{{\"schemaVersion\":1,\"id\":\"gamble-client-loader\",\"version\":\"{}\",\"name\":\"Gamble Client Loader\",\"description\":\"Launcher-managed bootstrap marker for Gamble Client.\",\"authors\":[\"Gamble Client\"],\"environment\":\"client\",\"depends\":{{\"fabricloader\":\">=0.18.0\"}}}}",
-            VERSION
-        );
-        zip.write_all(json.as_bytes()).map_err(error_text)?;
-        zip.finish().map_err(error_text)?;
+    if is_memory_loader_jar(&loader) {
+        return Ok(());
     }
-    fs::write(loader, buffer.into_inner()).map_err(error_text)
+
+    if token.trim().is_empty() {
+        return Err("Sign in before installing the standalone memory loader.".to_string());
+    }
+
+    let staging = loader.with_extension("jar.part");
+    let result = (|| {
+        let body = json!({
+            "fileName": LOADER_JAR_NAME,
+            "displayName": "Gamble Client Launcher",
+            "description": "Launcher-managed memory bootstrap"
+        });
+        let response = http_client()?
+            .post(format!("{SITE_URL}/api/standalone/loader"))
+            .bearer_auth(token.trim())
+            .json(&body)
+            .send()
+            .map_err(error_text)?;
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().unwrap_or_default();
+            let parsed =
+                serde_json::from_str::<serde_json::Value>(&message).unwrap_or_else(|_| json!({}));
+            let detail = json_string(&parsed, "message");
+            return Err(if detail.trim().is_empty() {
+                format!(
+                    "Standalone loader download returned HTTP {}.",
+                    status.as_u16()
+                )
+            } else {
+                detail
+            });
+        }
+        let bytes = response.bytes().map_err(error_text)?;
+        if bytes.is_empty() || bytes.len() as u64 > MAX_LOADER_BYTES {
+            return Err("Standalone loader exceeds the 16 MiB safety limit.".to_string());
+        }
+        fs::write(&staging, &bytes).map_err(error_text)?;
+        if !is_memory_loader_jar(&staging) {
+            return Err("Server returned an obsolete standalone loader artifact.".to_string());
+        }
+        restrict_private_file(&staging)?;
+        fs::rename(&staging, &loader).map_err(error_text)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&staging);
+    }
+    result
 }
 
-fn find_verified_client_install(profile: &str, manifest: &ManifestResponse) -> Option<PathBuf> {
-    client_install_candidates(profile, manifest)
-        .into_iter()
-        .find(|path| {
-            path.is_file()
-                && verify_file(path, manifest.size, &manifest.sha256).is_ok()
-                && verify_fabric_mod_id(path, MANAGED_CLIENT_MOD_ID).is_ok()
+fn is_memory_loader_jar(path: &Path) -> bool {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let mut archive = match ZipArchive::new(file) {
+        Ok(archive) => archive,
+        Err(_) => return false,
+    };
+    for required in [
+        "fabric.mod.json",
+        "gcclient/loader/StandaloneLoader.class",
+        "gcclient/loader/MemoryBootstrap.class",
+        "gcclient/loader/MemoryPayload.class",
+    ] {
+        if archive.by_name(required).is_err() {
+            return false;
+        }
+    }
+    let mut metadata = match archive.by_name("fabric.mod.json") {
+        Ok(metadata) => metadata,
+        Err(_) => return false,
+    };
+    if metadata.size() > MAX_FABRIC_METADATA_BYTES {
+        return false;
+    }
+    let mut bytes = Vec::new();
+    if metadata.read_to_end(&mut bytes).is_err() {
+        return false;
+    }
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("id")
+                .and_then(|id| id.as_str())
+                .map(str::to_string)
         })
-}
-
-fn client_install_candidates(profile: &str, manifest: &ManifestResponse) -> Vec<PathBuf> {
-    vec![payload_file(profile, &manifest.file_name)]
+        .is_some_and(|id| id == "gamble-client-standalone-loader")
 }
 
 fn ensure_fabric_api(profile: &str) -> Result<(), String> {
@@ -4793,7 +4704,7 @@ fn open_external(target: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_browser_url, java_feature_from_text, launch_payload_name, safe_file_name,
+        is_browser_url, java_feature_from_text, random_base64_url, safe_file_name,
         verify_fabric_mod_id, write_private_file, MANAGED_CLIENT_MOD_ID,
     };
     use std::{env, fs, fs::File, io::Write, path::PathBuf};
@@ -4825,22 +4736,12 @@ mod tests {
         assert_eq!(java_feature_from_text("java version \"1.8.0_412\""), 8);
     }
 
-    #[test]
-    fn protected_launch_payload_names_are_opaque_and_unique() {
-        let first = launch_payload_name();
-        let second = launch_payload_name();
-        assert!(first.starts_with("payload-") && first.ends_with(".jar"));
-        assert!(second.starts_with("payload-") && second.ends_with(".jar"));
-        assert_ne!(first, second);
-        assert!(!first.contains("cg-client"));
-    }
-
     #[cfg(unix)]
     #[test]
     fn security_tokens_are_written_owner_only() {
         use std::os::unix::fs::PermissionsExt;
 
-        let path = env::temp_dir().join(format!("gamble-private-{}.txt", launch_payload_name()));
+        let path = env::temp_dir().join(format!("gamble-private-{}.txt", random_base64_url(24)));
         write_private_file(&path, b"one-use-token").unwrap();
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
@@ -4887,7 +4788,7 @@ mod tests {
     fn write_test_jar(metadata: &str) -> PathBuf {
         let path = env::temp_dir().join(format!(
             "gamble-launcher-test-{}.jar",
-            launch_payload_name()
+            random_base64_url(24)
         ));
         let file = File::create(&path).unwrap();
         let mut archive = ZipWriter::new(file);

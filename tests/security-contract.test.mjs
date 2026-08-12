@@ -41,32 +41,37 @@ test("JavaFX sponsor fallback advances only while media is actually playing", as
     assert.match(fx, /Media unavailable/);
 });
 
-test("both launcher implementations bind manifests and tickets to the requested tier", async () => {
+test("both launcher implementations bind manifests to the requested tier and install the memory loader", async () => {
     const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
     const rust = await source("src-tauri/src/main.rs");
 
     assert.match(java, /Backend manifest was issued for a different client tier/);
-    assert.match(java, /Backend launch ticket was issued for a different client tier/);
-    assert.match(java, /verifyFabricModIdentity\(file, MANAGED_CLIENT_MOD_ID, manifest\.build\)/);
+    assert.match(java, /ensureLoaderJar\(\)/);
+    assert.match(java, /isMemoryLoaderJar\(loader\)/);
+    assert.match(java, /removeManagedClientArtifactsForMemory\(\)/);
     assert.match(java, /cg-mod:build_variant/);
 
     assert.match(rust, /Backend manifest was issued for a different client tier/);
-    assert.match(rust, /Backend launch ticket was issued for a different client tier/);
-    assert.match(rust, /verify_fabric_mod_identity\(&staging, MANAGED_CLIENT_MOD_ID, Some\(&manifest\.build\)\)/);
-    assert.match(rust, /cg-mod:build_variant/);
+    assert.match(rust, /ensure_loader_jar\(&profile, &token\)/);
+    assert.match(rust, /is_memory_loader_jar\(&loader\)/);
+    assert.match(rust, /fetch_client_manifest\(&build, &token\)/);
 });
 
-test("launch authorization remains ticket-based instead of reusable local licenses", async () => {
+test("launch authorization stays in the standalone loader instead of launcher files", async () => {
     const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
     const rust = await source("src-tauri/src/main.rs");
 
     assert.match(java, /Local license files cleared; launch tickets handle current client access/);
-    assert.match(java, /-Dgamble\.launchTicketFile=/);
+    assert.match(java, /Gamble Client will be authorized and loaded from memory by the standalone loader/);
+    assert.doesNotMatch(java, /-Dgamble\.launchTicketFile=/);
+    assert.doesNotMatch(java, /fabric\.addMods/);
     assert.doesNotMatch(java, /\/api\/launcher\/license/);
     assert.doesNotMatch(java, /requestLauncherLicense/);
     assert.doesNotMatch(java, /complete\.body\.get\("licenseKey"\)/);
-    assert.match(rust, /-Dgamble\.launchTicketFile=/);
-    assert.match(rust, /write_private_file\(&path, payload\.as_bytes\(\)\)/);
+    assert.match(rust, /Standalone loader will create the launch ticket/);
+    assert.doesNotMatch(rust, /-Dgamble\.launchTicketFile=/);
+    assert.doesNotMatch(rust, /fabric\.addMods/);
+    assert.doesNotMatch(rust, /write_launch_ticket_file/);
 });
 
 test("Windows retries the embedded app navigation only while WebView2 is blank", async () => {

@@ -935,7 +935,7 @@ function updatePopup() {
         <article class="update-modal">
           <span class="eyebrow">Client update</span>
           <h2>Client update available</h2>
-          <p>${escapeHtml(state.clientStatus?.message || "Install the latest managed client build.")}</p>
+          <p>${escapeHtml(state.clientStatus?.message || "Install the latest managed client memory loader.")}</p>
           <div class="top-actions">
             <button class="primary-small" type="button" data-action="install" ${state.busy ? "disabled" : ""}>Update Client</button>
             <button class="ghost" type="button" data-action="dismiss-client-popup">Later</button>
@@ -1252,9 +1252,9 @@ function profileLabel() {
 }
 
 function playCopy(profile, signedIn) {
-  if (!signedIn) return "Sign in to check access, refresh Ad Tier, and install the managed client jar.";
-  if (!profile.client) return `${profile.label} uses the same managed folders without installing the Gamble Client jar.`;
-  return "Install and verify the managed client, keep mods/resource packs organized, and prepare the native launch path.";
+  if (!signedIn) return "Sign in to check access, refresh Ad Tier, and install the managed client memory loader.";
+  if (!profile.client) return `${profile.label} uses the same managed folders without installing the Gamble Client memory loader.`;
+  return "Install and verify the managed client memory loader, keep mods/resource packs organized, and prepare the native launch path.";
 }
 
 function accountTitle() {
@@ -2222,7 +2222,7 @@ app.addEventListener("click", async (event) => {
       const selectedProfile = currentProfile();
       const selectedAccount = profileAccount(selectedProfile);
       if (!state.minecraftRunning && clientNeedsUpdate()) {
-        showPopup("Client update needed", state.clientStatus?.message || "Install the latest managed client build before launching.", "client");
+        showPopup("Client update needed", state.clientStatus?.message || "Install the latest managed client memory loader before launching.", "client");
         return;
       }
       if (!state.minecraftRunning && !selectedAccount) {
