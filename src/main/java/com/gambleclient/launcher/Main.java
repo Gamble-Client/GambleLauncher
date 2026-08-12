@@ -126,7 +126,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.103";
+    private static final String LAUNCHER_VERSION = "0.1.104";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -2518,11 +2518,18 @@ public class Main {
         try {
             LauncherManifest manifest = fetchLauncherManifest(build);
             File installed = new File(getModsFolder(), LOADER_JAR_NAME);
-            String version = displayManifestVersion(manifest);
-            if (installed.isFile() && isMemoryLoaderJar(installed)) {
-                return build.label + " memory loader latest: " + version + ".";
+            String latestLoaderVersion = fetchStandaloneLoaderVersion();
+            String installedLoaderVersion = installed.isFile() ? memoryLoaderVersion(installed) : "";
+            boolean current = installed.isFile()
+                && isMemoryLoaderJar(installed)
+                && !installedLoaderVersion.isEmpty()
+                && compareVersionStrings(installedLoaderVersion, latestLoaderVersion) >= 0;
+            if (current) {
+                return build.label + " memory loader latest: " + latestLoaderVersion + " (client "
+                    + displayManifestVersion(manifest) + ").";
             }
-            return build.label + " memory loader update available: " + version + ".";
+            return build.label + " memory loader update available: " + latestLoaderVersion + " (client "
+                + displayManifestVersion(manifest) + ").";
         } catch (Exception e) {
             return "Could not check client update: " + rootMessage(e);
         }
@@ -3139,6 +3146,13 @@ public class Main {
         );
     }
 
+    private String fetchStandaloneLoaderVersion() throws IOException {
+        ApiResponse response = apiRequest("GET", "/api/standalone/version", "", "", 200);
+        String version = Json.string(response.body.get("version"));
+        if (version.isEmpty()) throw new IOException("Backend did not return a standalone loader version.");
+        return version;
+    }
+
     private void installSelectedBuild(final boolean launchAfterInstall) {
         final LaunchProfile profile = selectedProfile();
         if (!profile.includesGambleClient) {
@@ -3190,7 +3204,7 @@ public class Main {
         LauncherManifest manifest = fetchLauncherManifest(build);
         clearLegacyLocalLicenseFiles();
         File loader = new File(getModsFolder(), LOADER_JAR_NAME);
-        boolean alreadyReady = loader.isFile() && isMemoryLoaderJar(loader);
+        boolean alreadyReady = loader.isFile() && isCurrentMemoryLoaderJar(loader);
         removeManagedClientArtifactsForMemory();
         ensureLoaderJar();
         writeInstallMarker(build.id, manifest, loader);
@@ -5048,7 +5062,14 @@ public class Main {
         }
 
         File loader = new File(mods, LOADER_JAR_NAME);
-        if (loader.isFile() && isMemoryLoaderJar(loader)) return;
+        if (loader.isFile() && isMemoryLoaderJar(loader)) {
+            try {
+                if (isCurrentMemoryLoaderJar(loader)) return;
+            } catch (IOException e) {
+                log("Could not check standalone loader version; retaining the valid installed loader.");
+                return;
+            }
+        }
 
         ensureSignedIn();
         File temporary = new File(loader.getAbsolutePath() + ".part");
@@ -5114,6 +5135,44 @@ public class Main {
             return "gamble-client-standalone-loader".equals(Json.string(Json.asObject(Json.parse(json)).get("id")));
         } catch (Exception ignored) {
             return false;
+        }
+    }
+
+    private boolean isCurrentMemoryLoaderJar(File file) throws IOException {
+        if (!isMemoryLoaderJar(file)) return false;
+        String installed = memoryLoaderVersion(file);
+        String latest = fetchStandaloneLoaderVersion();
+        return !installed.isEmpty() && compareVersionStrings(installed, latest) >= 0;
+    }
+
+    private String memoryLoaderVersion(File file) throws IOException {
+        try (ZipFile zip = new ZipFile(file)) {
+            ZipEntry metadata = zip.getEntry("fabric.mod.json");
+            if (metadata == null) return "";
+            String json = new String(zip.getInputStream(metadata).readNBytes((int) MAX_FABRIC_METADATA_BYTES), StandardCharsets.UTF_8);
+            return Json.string(Json.asObject(Json.parse(json)).get("version"));
+        } catch (Exception e) {
+            throw new IOException("Could not read the installed standalone loader version.", e);
+        }
+    }
+
+    private static int compareVersionStrings(String left, String right) {
+        String[] leftParts = left.split("[^0-9]+");
+        String[] rightParts = right.split("[^0-9]+");
+        int count = Math.max(leftParts.length, rightParts.length);
+        for (int i = 0; i < count; i++) {
+            long leftValue = i < leftParts.length && !leftParts[i].isEmpty() ? parseVersionPart(leftParts[i]) : 0L;
+            long rightValue = i < rightParts.length && !rightParts[i].isEmpty() ? parseVersionPart(rightParts[i]) : 0L;
+            if (leftValue != rightValue) return Long.compare(leftValue, rightValue);
+        }
+        return 0;
+    }
+
+    private static long parseVersionPart(String part) {
+        try {
+            return Long.parseLong(part);
+        } catch (NumberFormatException ignored) {
+            return Long.MAX_VALUE;
         }
     }
 

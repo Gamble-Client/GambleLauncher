@@ -27,7 +27,7 @@ use zip::ZipArchive;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-const VERSION: &str = "0.1.103";
+const VERSION: &str = "0.1.104";
 const SITE_URL: &str = "https://gamble-client.store";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
@@ -312,6 +312,12 @@ struct MicrosoftDeviceStart {
     interval_seconds: u64,
     #[serde(rename = "expiresInSeconds")]
     expires_in_seconds: u64,
+}
+
+#[derive(Deserialize)]
+struct StandaloneLoaderVersionResponse {
+    #[serde(default)]
+    version: String,
 }
 
 struct MicrosoftToken {
@@ -1266,7 +1272,12 @@ fn client_install_status_blocking(
     ensure_profile_folders(&profile)?;
     let manifest = fetch_client_manifest(&build, &token)?;
     let loader = mods_folder(&profile).join(LOADER_JAR_NAME);
-    let current = is_memory_loader_jar(&loader);
+    let latest_loader_version = fetch_standalone_loader_version()?;
+    let installed_loader_version = memory_loader_version(&loader).unwrap_or_default();
+    let current = is_memory_loader_jar(&loader)
+        && !installed_loader_version.trim().is_empty()
+        && compare_version_strings(&installed_loader_version, &latest_loader_version)
+            != std::cmp::Ordering::Less;
     Ok(ClientInstallStatus {
         file_name: manifest.file_name.clone(),
         build: manifest.build.clone(),
@@ -1277,10 +1288,15 @@ fn client_install_status_blocking(
         installed: current,
         update_available: !current,
         message: if current {
-            format!("Memory loader is ready for {}", display_version(&manifest))
+            format!(
+                "Memory loader {} is ready for {}",
+                latest_loader_version,
+                display_version(&manifest)
+            )
         } else {
             format!(
-                "Memory loader update available: {}",
+                "Memory loader update available: {} (client {})",
+                latest_loader_version,
                 display_version(&manifest)
             )
         },
@@ -1353,7 +1369,8 @@ fn install_client_manifest_blocking(
     let manifest = fetch_client_manifest(&build, &token)?;
 
     let loader = mods_folder(&profile).join(LOADER_JAR_NAME);
-    let already_ready = is_memory_loader_jar(&loader);
+    let already_ready =
+        is_memory_loader_jar(&loader) && current_memory_loader_is_current(&loader).unwrap_or(true);
     let install_result = (|| {
         ensure_loader_jar(&profile, &token)?;
         ensure_fabric_api(&profile)?;
@@ -3798,7 +3815,10 @@ fn ensure_loader_jar(profile: &str, token: &str) -> Result<(), String> {
     let loader = mods.join(LOADER_JAR_NAME);
 
     if is_memory_loader_jar(&loader) {
-        return Ok(());
+        match current_memory_loader_is_current(&loader) {
+            Ok(true) | Err(_) => return Ok(()),
+            Ok(false) => {}
+        }
     }
 
     if token.trim().is_empty() {
@@ -3890,6 +3910,33 @@ fn is_memory_loader_jar(path: &Path) -> bool {
                 .map(str::to_string)
         })
         .is_some_and(|id| id == "gamble-client-standalone-loader")
+}
+
+fn memory_loader_version(path: &Path) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let mut archive = ZipArchive::new(file).ok()?;
+    let mut metadata = archive.by_name("fabric.mod.json").ok()?;
+    if metadata.size() > MAX_FABRIC_METADATA_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    metadata.read_to_end(&mut bytes).ok()?;
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()?
+        .get("version")?
+        .as_str()
+        .map(str::to_string)
+        .filter(|version| !version.trim().is_empty())
+}
+
+fn current_memory_loader_is_current(path: &Path) -> Result<bool, String> {
+    if !is_memory_loader_jar(path) {
+        return Ok(false);
+    }
+    let installed = memory_loader_version(path)
+        .ok_or_else(|| "Installed standalone loader has no readable version.".to_string())?;
+    let latest = fetch_standalone_loader_version()?;
+    Ok(compare_version_strings(&installed, &latest) != std::cmp::Ordering::Less)
 }
 
 fn ensure_fabric_api(profile: &str) -> Result<(), String> {
@@ -4345,6 +4392,21 @@ fn fetch_launcher_version_info() -> Result<LauncherVersionResponse, String> {
         .map_err(error_text)?
         .json::<LauncherVersionResponse>()
         .map_err(error_text)
+}
+
+fn fetch_standalone_loader_version() -> Result<String, String> {
+    let response = http_client()?
+        .get(format!("{SITE_URL}/api/standalone/version"))
+        .send()
+        .map_err(error_text)?
+        .error_for_status()
+        .map_err(error_text)?
+        .json::<StandaloneLoaderVersionResponse>()
+        .map_err(error_text)?;
+    if response.version.trim().is_empty() {
+        return Err("Backend did not return a standalone loader version.".to_string());
+    }
+    Ok(response.version)
 }
 
 fn preferred_launcher_download(info: &LauncherVersionResponse) -> LauncherDownload {

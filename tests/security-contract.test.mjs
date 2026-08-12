@@ -48,12 +48,18 @@ test("both launcher implementations bind manifests to the requested tier and ins
     assert.match(java, /Backend manifest was issued for a different client tier/);
     assert.match(java, /ensureLoaderJar\(\)/);
     assert.match(java, /isMemoryLoaderJar\(loader\)/);
+    assert.match(java, /fetchStandaloneLoaderVersion\(\)/);
+    assert.match(java, /isCurrentMemoryLoaderJar\(loader\)/);
+    assert.match(java, /compareVersionStrings\(installed, latest\)/);
     assert.match(java, /removeManagedClientArtifactsForMemory\(\)/);
     assert.match(java, /cg-mod:build_variant/);
 
     assert.match(rust, /Backend manifest was issued for a different client tier/);
     assert.match(rust, /ensure_loader_jar\(&profile, &token\)/);
     assert.match(rust, /is_memory_loader_jar\(&loader\)/);
+    assert.match(rust, /fetch_standalone_loader_version\(\)/);
+    assert.match(rust, /current_memory_loader_is_current\(&loader\)/);
+    assert.match(rust, /compare_version_strings\(&installed, &latest\)/);
     assert.match(rust, /fetch_client_manifest\(&build, &token\)/);
 });
 
