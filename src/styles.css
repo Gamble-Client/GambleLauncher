@@ -224,7 +224,9 @@ nav {
 
 .topbar,
 .screen-band {
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
 }
 
 .topbar > div:first-child,
