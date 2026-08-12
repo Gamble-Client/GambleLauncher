@@ -234,7 +234,10 @@ nav {
 
 .topbar .top-actions,
 .screen-band .top-actions {
-  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  width: 100%;
+  margin-left: 0;
 }
 
 .topbar {
@@ -1808,15 +1811,6 @@ input,
   .shell { grid-template-columns: 196px minmax(0, 1fr); }
   .content { padding: 18px; }
   h2 { font-size: 2.8rem; }
-}
-
-@media (max-width: 1260px) {
-  .topbar .top-actions,
-  .screen-band .top-actions {
-    justify-content: flex-start;
-    width: 100%;
-    margin-left: 0;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -100,9 +100,12 @@ test("automatic update prompts never cover an active sign-in flow", async () => 
 
 test("default-size launcher keeps account sign-in controls inside the visible content column", async () => {
     const css = await source("src/styles.css");
+    const rust = await source("src-tauri/src/main.rs");
 
     assert.match(css, /\.topbar,\s*\n\.screen-band \{\s*\n\s*flex-wrap: wrap;/);
-    assert.match(css, /@media \(max-width: 1260px\)[\s\S]*\.topbar \.top-actions,[\s\S]*width: 100%;/);
+    assert.match(css, /\.topbar \.top-actions,\s*\n\.screen-band \.top-actions \{[\s\S]*width: 100%;/);
+    assert.match(rust, /const VERSION: &str = env!\("CARGO_PKG_VERSION"\);/);
+    assert.doesNotMatch(rust, /const VERSION: &str = "\d+\.\d+\.\d+";/);
 });
 
 test("cancelling browser sign-in invalidates its background poll", async () => {
