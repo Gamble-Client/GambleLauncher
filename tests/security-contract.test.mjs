@@ -104,7 +104,9 @@ test("default-size launcher keeps account sign-in controls inside the visible co
 
     assert.match(css, /\.topbar,\s*\n\.screen-band \{[\s\S]*display: grid;[\s\S]*grid-template-columns: minmax\(0, 1fr\);/);
     assert.match(css, /\.topbar \.top-actions,\s*\n\.screen-band \.top-actions \{[\s\S]*width: 100%;/);
-    assert.match(css, /\.topbar \{\s*\n\s*min-height: 68px;\s*\n\s*padding-bottom: 44px;/);
+    assert.match(css, /\.topbar,\s*\n\.screen-band \{[\s\S]*grid-template-columns: minmax\(0, 1fr\);[\s\S]*row-gap: 12px;/);
+    assert.match(css, /\.topbar,\s*\n\.screen-band \{[\s\S]*flex: 0 0 auto;/);
+    assert.match(css, /\.topbar \{\s*\n\s*min-height: 0;\s*\n\s*padding-bottom: 14px;/);
     assert.match(rust, /const VERSION: &str = env!\("CARGO_PKG_VERSION"\);/);
     assert.doesNotMatch(rust, /const VERSION: &str = "\d+\.\d+\.\d+";/);
 });

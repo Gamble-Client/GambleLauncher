@@ -32,6 +32,13 @@ body {
   background: var(--bg);
 }
 
+html,
+#app {
+  min-width: 0;
+  min-height: 100%;
+  width: 100%;
+}
+
 button,
 select,
 input {
@@ -227,6 +234,8 @@ nav {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
+  flex: 0 0 auto;
+  row-gap: 12px;
 }
 
 .topbar > div:first-child,
@@ -243,7 +252,7 @@ nav {
 }
 
 .topbar {
-  min-height: 58px;
+  min-height: 0;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--line);
 }
@@ -1662,8 +1671,8 @@ nav { gap: 4px; }
 .content { padding: 20px 28px 24px; }
 
 .topbar {
-  min-height: 68px;
-  padding-bottom: 44px;
+  min-height: 0;
+  padding-bottom: 14px;
   border-bottom-color: rgba(255,255,255,.12);
 }
 
