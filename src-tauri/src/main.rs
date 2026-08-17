@@ -3830,7 +3830,11 @@ fn ensure_loader_jar(profile: &str, token: &str) -> Result<(), String> {
         let body = json!({
             "fileName": LOADER_JAR_NAME,
             "displayName": "Gamble Client Launcher",
-            "description": "Launcher-managed memory bootstrap"
+            "platform": match env::consts::OS {
+                "windows" => "windows",
+                "linux" => "linux",
+                _ => "universal",
+            }
         });
         let response = http_client()?
             .post(format!("{SITE_URL}/api/standalone/loader"))

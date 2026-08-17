@@ -53,6 +53,8 @@ test("both launcher implementations bind manifests to the requested tier and ins
     assert.match(java, /compareVersionStrings\(installed, latest\)/);
     assert.match(java, /removeManagedClientArtifactsForMemory\(\)/);
     assert.match(java, /cg-mod:build_variant/);
+    assert.match(java, /standaloneLoaderPlatform\(\)/);
+    assert.doesNotMatch(java, /Launcher-managed memory bootstrap/);
 
     assert.match(rust, /Backend manifest was issued for a different client tier/);
     assert.match(rust, /ensure_loader_jar\(&profile, &token\)/);
@@ -61,6 +63,9 @@ test("both launcher implementations bind manifests to the requested tier and ins
     assert.match(rust, /current_memory_loader_is_current\(&loader\)/);
     assert.match(rust, /compare_version_strings\(&installed, &latest\)/);
     assert.match(rust, /fetch_client_manifest\(&build, &token\)/);
+    assert.match(rust, /"windows" => "windows"/);
+    assert.match(rust, /"linux" => "linux"/);
+    assert.doesNotMatch(rust, /Launcher-managed memory bootstrap/);
 });
 
 test("launch authorization stays in the standalone loader instead of launcher files", async () => {

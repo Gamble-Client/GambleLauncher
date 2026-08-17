@@ -126,7 +126,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.106";
+    private static final String LAUNCHER_VERSION = "0.1.107";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
@@ -5085,7 +5085,8 @@ public class Main {
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
             connection.setRequestProperty("Authorization", "Bearer " + launcherToken.trim());
             byte[] request = ("{\"fileName\":\"" + jsonEscape(LOADER_JAR_NAME)
-                + "\",\"displayName\":\"Gamble Client Launcher\",\"description\":\"Launcher-managed memory bootstrap\"}")
+                + "\",\"displayName\":\"Gamble Client Launcher\",\"platform\":\""
+                + standaloneLoaderPlatform() + "\"}")
                 .getBytes(StandardCharsets.UTF_8);
             connection.setFixedLengthStreamingMode(request.length);
             try (OutputStream output = connection.getOutputStream()) {
@@ -6059,6 +6060,17 @@ public class Main {
                 return "osx";
             default:
                 return "linux";
+        }
+    }
+
+    private String standaloneLoaderPlatform() {
+        switch (getOS()) {
+            case WINDOWS:
+                return "windows";
+            case LINUX:
+                return "linux";
+            default:
+                return "universal";
         }
     }
 
