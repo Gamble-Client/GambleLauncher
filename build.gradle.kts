@@ -1,10 +1,17 @@
+buildscript {
+    repositories { mavenCentral() }
+    dependencies {
+        classpath("com.guardsquare:proguard-gradle:7.5.0")
+    }
+}
+
 plugins {
     application
     id("org.openjfx.javafxplugin") version "0.1.0"
 }
 
 group = "com.gambleclient"
-version = "0.1.107"
+version = "0.1.108"
 
 val javafxVersion = "22.0.2"
 val javafxModuleNames = listOf("base", "graphics", "controls", "media", "web")
@@ -33,14 +40,42 @@ dependencies {
     }
 }
 
+val launcherClassesJar = tasks.register<Jar>("launcherClassesJar") {
+    archiveBaseName = "gamble-client-launcher-classes"
+    archiveClassifier = "raw"
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(sourceSets.main.get().output)
+}
+
+val obfuscatedLauncherClasses = layout.buildDirectory.file("obfuscation/launcher-classes.jar")
+val obfuscateLauncherClasses = tasks.register("obfuscateLauncherClasses", proguard.gradle.ProGuardTask::class) {
+    dependsOn(launcherClassesJar)
+    injars(launcherClassesJar.flatMap { it.archiveFile })
+    outjars(obfuscatedLauncherClasses)
+    libraryjars(
+        mapOf("jarfilter" to "!**.jar", "filter" to "!module-info.class"),
+        "${System.getProperty("java.home")}/jmods/"
+    )
+    configurations.compileClasspath.get().filter { it.exists() }.forEach {
+        libraryjars(mapOf("filter" to "!module-info.class"), it)
+    }
+    configuration(file("proguard-launcher.pro"))
+    printmapping(layout.buildDirectory.file("obfuscation/launcher-mapping.txt").get().asFile)
+}
+
 tasks.jar {
+    enabled = false
+}
+
+val hardenedLauncherJar = tasks.register<Jar>("hardenedLauncherJar") {
+    dependsOn(obfuscateLauncherClasses)
     archiveBaseName = "gamble-client-launcher"
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     manifest {
         attributes["Main-Class"] = application.mainClass.get()
     }
 
-    from(sourceSets.main.get().output)
+    from({ zipTree(obfuscatedLauncherClasses.get().asFile) })
     from({
         configurations.runtimeClasspath.get().map { dependency ->
             if (dependency.isDirectory) dependency else zipTree(dependency)
@@ -50,19 +85,39 @@ tasks.jar {
     }
 }
 
+tasks.assemble {
+    dependsOn(hardenedLauncherJar)
+}
+
+val verifyHardenedLauncherJar = tasks.register<Exec>("verifyHardenedLauncherJar") {
+    group = "verification"
+    description = "Checks that the release launcher hides implementation class names and debug tables."
+    dependsOn(hardenedLauncherJar)
+    inputs.file(hardenedLauncherJar.flatMap { it.archiveFile })
+    commandLine(
+        "python3",
+        layout.projectDirectory.file("scripts/verify-hardened-jar.py").asFile.absolutePath,
+        layout.buildDirectory.file("libs/gamble-client-launcher-${project.version}.jar").get().asFile.absolutePath
+    )
+}
+
+tasks.check {
+    dependsOn(verifyHardenedLauncherJar)
+}
+
 fun jpackageExecutable(): String {
     val javaHome = System.getProperty("java.home")
     val executable = if (System.getProperty("os.name").lowercase().contains("win")) "jpackage.exe" else "jpackage"
     return file("$javaHome/bin/$executable").absolutePath
 }
 
-val launcherJar = tasks.named<Jar>("jar").flatMap { it.archiveFile }
+val launcherJar = hardenedLauncherJar.flatMap { it.archiveFile }
 val nativeOutputDir = layout.buildDirectory.dir("native")
 
 tasks.register<Exec>("packageNativeImage") {
     group = "distribution"
     description = "Builds a portable native launcher image for the current OS using jpackage."
-    dependsOn(tasks.jar)
+    dependsOn(hardenedLauncherJar)
 
     doFirst {
         val output = nativeOutputDir.get().asFile
@@ -84,7 +139,7 @@ tasks.register<Exec>("packageNativeImage") {
 tasks.register<Exec>("packageWindowsExe") {
     group = "distribution"
     description = "Builds a Windows .exe installer. Run this on Windows with jpackage and WiX available."
-    dependsOn(tasks.jar)
+    dependsOn(hardenedLauncherJar)
     onlyIf {
         System.getProperty("os.name").lowercase().contains("win")
     }
@@ -111,7 +166,7 @@ tasks.register<Exec>("packageWindowsExe") {
 tasks.register<Exec>("packageLinuxRpm") {
     group = "distribution"
     description = "Builds a Linux .rpm package for the current OS using jpackage."
-    dependsOn(tasks.jar)
+    dependsOn(hardenedLauncherJar)
     onlyIf {
         System.getProperty("os.name").lowercase().contains("linux") && file("/usr/bin/rpmbuild").exists()
     }
@@ -137,7 +192,7 @@ tasks.register<Exec>("packageLinuxRpm") {
 tasks.register<Exec>("packageLinuxDeb") {
     group = "distribution"
     description = "Builds a Linux .deb package for the current OS using jpackage."
-    dependsOn(tasks.jar)
+    dependsOn(hardenedLauncherJar)
     onlyIf {
         System.getProperty("os.name").lowercase().contains("linux") && file("/usr/bin/dpkg-deb").exists()
     }

@@ -74,23 +74,25 @@ public final class FxLauncher {
 
         File root = managedMinecraftRoot();
         File data = new File(root, "cg-mod");
-        check("Managed Minecraft root", root.isDirectory(), root.getAbsolutePath());
-        check("Launcher data folder", data.isDirectory(), data.getAbsolutePath());
-        check("Launcher account session", new File(data, "launcher-session.txt").isFile(), "launcher-session.txt");
-        check("Microsoft account cache", new File(data, "microsoft-account.json").isFile(), "microsoft-account.json");
+        check("Managed Minecraft root", root.isDirectory(), availability(root.isDirectory()));
+        check("Launcher data folder", data.isDirectory(), availability(data.isDirectory()));
+        boolean launcherSession = new File(data, "launcher-session.txt").isFile();
+        boolean microsoftCache = new File(data, "microsoft-account.json").isFile();
+        check("Launcher account session", launcherSession, availability(launcherSession));
+        check("Microsoft account cache", microsoftCache, availability(microsoftCache));
 
         File profiles = new File(root, "profiles");
-        check("Profiles folder", profiles.isDirectory(), profiles.getAbsolutePath());
+        check("Profiles folder", profiles.isDirectory(), availability(profiles.isDirectory()));
         if (profiles.isDirectory()) {
             File[] children = profiles.listFiles(File::isDirectory);
             int count = children == null ? 0 : children.length;
             check("Profile count", count > 0, String.valueOf(count));
             if (children != null) {
                 for (File profile : children) {
-                    check("Profile " + profile.getName() + " mods", new File(profile, "mods").isDirectory(), new File(profile, "mods").getAbsolutePath());
-                    check("Profile " + profile.getName() + " versions", new File(profile, "versions").isDirectory(), new File(profile, "versions").getAbsolutePath());
-                    check("Profile " + profile.getName() + " libraries", new File(profile, "libraries").isDirectory(), new File(profile, "libraries").getAbsolutePath());
-                    check("Profile " + profile.getName() + " assets", new File(profile, "assets/indexes").isDirectory(), new File(profile, "assets/indexes").getAbsolutePath());
+                    checkFolder("Profile " + profile.getName() + " mods", new File(profile, "mods"));
+                    checkFolder("Profile " + profile.getName() + " versions", new File(profile, "versions"));
+                    checkFolder("Profile " + profile.getName() + " libraries", new File(profile, "libraries"));
+                    checkFolder("Profile " + profile.getName() + " assets", new File(profile, "assets/indexes"));
                 }
             }
         }
@@ -101,13 +103,13 @@ public final class FxLauncher {
         http("Minecraft asset CDN", "https://resources.download.minecraft.net/", true);
 
         File latestLaunch = new File(data, "latest-launch.log");
-        check("Latest launch log", latestLaunch.isFile(), latestLaunch.getAbsolutePath());
+        check("Latest launch log", latestLaunch.isFile(), availability(latestLaunch.isFile()));
         if (latestLaunch.isFile()) {
             try {
                 long lines = Files.lines(latestLaunch.toPath(), StandardCharsets.UTF_8).count();
                 check("Latest launch log readable", true, lines + " lines");
             } catch (IOException e) {
-                check("Latest launch log readable", false, e.getMessage());
+                check("Latest launch log readable", false, "unreadable");
             }
         }
     }
@@ -127,8 +129,16 @@ public final class FxLauncher {
             boolean ok = hostReachabilityOnly ? status < 500 : status >= 200 && status < 400;
             check(label, ok, "HTTP " + status);
         } catch (Exception e) {
-            check(label, false, e.getMessage());
+            check(label, false, "request failed");
         }
+    }
+
+    private static void checkFolder(String label, File folder) {
+        check(label, folder.isDirectory(), availability(folder.isDirectory()));
+    }
+
+    private static String availability(boolean available) {
+        return available ? "ready" : "not found";
     }
 
     private static void check(String label, boolean ok, String detail) {

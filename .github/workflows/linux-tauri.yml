@@ -61,6 +61,8 @@ jobs:
         run: npm ci
 
       - name: Build Linux bundles
+        env:
+          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/src/gamble-client-launcher --remap-path-prefix=/home/runner/.cargo=/rust/cargo
         run: npm run tauri -- build --bundles rpm,deb
 
       - name: Install upload tooling

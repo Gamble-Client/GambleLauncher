@@ -14,10 +14,12 @@ const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
-const LAUNCHER_VERSION = "0.1.104";
+const LAUNCHER_VERSION = "0.1.108";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
-const PREVIEW = !("__TAURI_INTERNALS__" in window);
+// Browser mocks are a development-only visual harness. Vite removes this branch
+// and its sample data from production launcher bundles.
+const PREVIEW = import.meta.env.DEV && !("__TAURI_INTERNALS__" in window);
 
 const app = document.querySelector("#app");
 
@@ -153,25 +155,27 @@ async function openDialog(options) {
   return null;
 }
 
+let previewClientInstalled = false;
+
 async function mockInvoke(command, args = {}) {
   await sleep(35);
   if (command === "launcher_info") {
     return {
       version: LAUNCHER_VERSION,
-      managed_root: "/home/theac/.local/share/gamble-client/minecraft",
-      data_folder: "/home/theac/.local/share/gamble-client/cg-mod",
-      session_file: "/home/theac/.local/share/gamble-client/cg-mod/launcher-session.txt",
+      managed_root: "Preview managed files",
+      data_folder: "Preview launcher data",
+      session_file: "Preview session file",
       os: "linux"
     };
   }
-  if (command === "read_launcher_token") return "preview-token";
-  if (command === "read_microsoft_account") return { name: "BaseToucher", uuid: "8667ba71b85a4004af54457a9734eed7", xuid: "preview" };
+  if (command === "read_launcher_token") return "development-preview-session";
+  if (command === "read_microsoft_account") return { name: "DemoPlayer", uuid: "00000000000000000000000000000001", xuid: "preview" };
   if (command === "list_microsoft_accounts") {
     return {
-      selectedUuid: "8667ba71b85a4004af54457a9734eed7",
+      selectedUuid: "00000000000000000000000000000001",
       accounts: [
-        { name: "BaseToucher", uuid: "8667ba71b85a4004af54457a9734eed7", xuid: "preview" },
-        { name: "AltStacker", uuid: "df2c98f29f4a4b29b7ca5a2a43c1f333", xuid: "preview2" }
+        { name: "DemoPlayer", uuid: "00000000000000000000000000000001", xuid: "preview" },
+        { name: "SecondProfile", uuid: "00000000000000000000000000000002", xuid: "preview2" }
       ]
     };
   }
@@ -189,15 +193,15 @@ async function mockInvoke(command, args = {}) {
         minVersion: LAUNCHER_VERSION,
         downloadUrl: "/api/launcher/download",
         downloads: {
-          windows: { fileName: "Gamble Client Launcher_0.1.104_x64-setup.exe", downloadUrl: "/api/launcher/download/windows" },
-          linuxRpm: { fileName: "Gamble Client Launcher-0.1.104-1.x86_64.rpm", downloadUrl: "/api/launcher/download/linux-rpm" },
-          linuxDeb: { fileName: "Gamble Client Launcher_0.1.104_amd64.deb", downloadUrl: "/api/launcher/download/linux-deb" }
+          windows: { fileName: `Gamble Client Launcher_${LAUNCHER_VERSION}_x64-setup.exe`, downloadUrl: "/api/launcher/download/windows" },
+          linuxRpm: { fileName: `Gamble Client Launcher-${LAUNCHER_VERSION}-1.x86_64.rpm`, downloadUrl: "/api/launcher/download/linux-rpm" },
+          linuxDeb: { fileName: `Gamble Client Launcher_${LAUNCHER_VERSION}_amd64.deb`, downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
     if (path === "/api/launcher/session" || path === "/api/launcher/account") {
       return {
-        user: { displayName: "BaseToucher", selectedPlan: "owner", accessStatus: "owner", ownerAccess: true },
+        user: { displayName: "DemoPlayer", selectedPlan: "owner", accessStatus: "owner", ownerAccess: true },
         ads: { required: false, canWatch: false, remainingSeconds: 0 }
       };
     }
@@ -210,16 +214,16 @@ async function mockInvoke(command, args = {}) {
       fileName: "cg-client-1.21.11.jar",
       build: args.build || "release",
       buildVersion: "1.21.11",
-      installed: false,
-      updateAvailable: true,
-      message: "Client update available: 1.21.11"
+      installed: previewClientInstalled,
+      updateAvailable: !previewClientInstalled,
+      message: previewClientInstalled ? "Managed client is current." : "Client update available: 1.21.11"
     };
   }
   if (command === "download_launcher_update") {
     return {
       version: LAUNCHER_VERSION,
-      fileName: "Gamble Client Launcher_0.1.104_amd64.deb",
-      path: "/home/theac/Downloads/Gamble Client Launcher_0.1.104_amd64.deb",
+      fileName: `Gamble Client Launcher_${LAUNCHER_VERSION}_amd64.deb`,
+      path: "Downloads",
       message: "Opened the downloaded launcher installer."
     };
   }
@@ -261,7 +265,7 @@ async function mockInvoke(command, args = {}) {
       bridgeOnline: false,
       source: "Preview config",
       message: state.antiScreenshare ? "Saved config has AntiScreenshare on." : "Saved config has AntiScreenshare off.",
-      modulesPath: "/preview/cg-mod/modules.txt"
+      modulesPath: ""
     };
   }
   if (command === "set_anti_screenshare") {
@@ -272,7 +276,7 @@ async function mockInvoke(command, args = {}) {
       bridgeOnline: false,
       source: "Preview config",
       message: `AntiScreenshare ${state.antiScreenshare ? "enabled" : "disabled"} in preview config.`,
-      modulesPath: "/preview/cg-mod/modules.txt"
+      modulesPath: ""
     };
   }
   if (command === "apply_anti_screenshare_clean_view") {
@@ -283,11 +287,12 @@ async function mockInvoke(command, args = {}) {
       bridgeOnline: false,
       source: "Preview config",
       message: "Clean View applied for preview modules.",
-      modulesPath: "/preview/cg-mod/modules.txt"
+      modulesPath: ""
     };
   }
   if (command === "open_anti_screenshare_obs") return "Opened OBS Browser Source view.";
   if (command === "install_client_manifest") {
+    previewClientInstalled = true;
     return {
       buildVersion: "1.21.11",
       fileName: "cg-client-1.21.11.jar",
@@ -300,7 +305,7 @@ async function mockInvoke(command, args = {}) {
     state.minecraftRunning = !state.minecraftRunning;
     state.minecraftPid = state.minecraftRunning ? 4242 : null;
     if (!state.minecraftRunning) return "Minecraft stop signal sent.";
-    return "Minecraft process started (pid 4242). Latest launch log: /preview/latest-launch.log";
+    return "Minecraft process started.";
   }
   if (command === "minecraft_status") return { running: state.minecraftRunning, pid: state.minecraftPid };
   return null;
@@ -367,7 +372,7 @@ function render() {
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
             <strong>Gamble Client</strong>
-            <span>Open-source launcher</span>
+            <span>Official launcher</span>
           </div>
         </div>
         <nav>
@@ -588,7 +593,7 @@ function accountCard(account) {
         <div>
           <span class="eyebrow">${active ? "Active" : "Saved"}</span>
           <strong>${escapeHtml(account.name || "Minecraft account")}</strong>
-          <small>${escapeHtml(account.uuid || account.xuid || "")}</small>
+          <small>Microsoft account</small>
         </div>
       </div>
       <div class="top-actions">
@@ -848,6 +853,7 @@ function settingsView(profile, selectedBuild) {
         </label>
       ` : ""}
     </section>
+    ${diagnosticsPanel()}
   `;
 }
 
@@ -1154,30 +1160,6 @@ function fileRow(kind, file) {
   `;
 }
 
-function diagnosticsView() {
-  return `
-    <section class="screen-band">
-      <div>
-        <span class="eyebrow">Local checks</span>
-        <h2>Diagnostics</h2>
-      </div>
-      <div class="top-actions">
-        <button class="ghost" type="button" data-action="open-data">Data Folder</button>
-        <button class="ghost" type="button" data-action="run-diagnostics">Run</button>
-      </div>
-    </section>
-    <section class="diagnostics-list" data-scroll-key="diagnostics-list">
-      ${state.diagnostics.length ? state.diagnostics.map((check) => `
-        <article class="diagnostic-row ${check.ok ? "ok" : "warn"}">
-          <strong>${escapeHtml(check.label)}</strong>
-          <span>${escapeHtml(check.detail)}</span>
-        </article>
-      `).join("") : `<p class="empty">Run diagnostics to check folders, session files, Microsoft cache, Java, and latest launch log.</p>`}
-    </section>
-    ${logView()}
-  `;
-}
-
 function diagnosticsPanel() {
   return `
     <section class="screen-band">
@@ -1266,7 +1248,17 @@ function accountMeta() {
   if (!state.account) return "Launcher account required";
   const plan = state.account.selectedPlan || "ad_tier";
   const status = state.account.accessStatus || "ad_tier";
-  return `${plan.replaceAll("_", " ")} · ${status.replaceAll("_", " ")}`;
+  const planLabel = titleWords(plan);
+  const statusLabel = titleWords(status);
+  return planLabel.toLowerCase() === statusLabel.toLowerCase()
+    ? `${planLabel} access`
+    : `${planLabel} · ${statusLabel}`;
+}
+
+function titleWords(value) {
+  return String(value || "")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function microsoftTitle() {
@@ -1373,14 +1365,31 @@ function compareVersions(left, right) {
 }
 
 function log(message) {
+  const visible = publicMessage(message, "Launcher status updated.");
   const time = new Date().toLocaleTimeString();
-  state.log.push(`[${time}] ${message}`);
-  state.status = message;
+  state.log.push(`[${time}] ${visible}`);
+  state.status = visible;
 }
 
 function showPopup(title, message, kind = "notice") {
-  state.popup = { title, message, kind };
+  state.popup = { title, message: publicMessage(message, "The launcher could not complete that action."), kind };
   render();
+}
+
+function publicMessage(value, fallback = "The launcher could not complete that action.") {
+  let text = String(value?.message || value || "").replaceAll("\u0000", " ").trim();
+  if (!text) return fallback;
+  text = text
+    .replace(/([?&](?:token|code|ticket|session|signature)=)[^&\s]+/gi, "$1[private]")
+    .replace(/https?:\/\/[^\s<>'\"]+/gi, "[secure link]")
+    .replace(/[A-Za-z]:\\(?:[^\r\n:*?\"<>|]+\\)*[^\r\n:*?\"<>|]*/g, "[launcher files]")
+    .replace(/(^|\s)\/(?:[^\s/]+\/)+[^\s]*/g, "$1[launcher files]")
+    .replace(/\bpid\s+\d+\b/gi, "game process")
+    .replace(/(?:^|\n)\s*at\s+[A-Za-z0-9_.$/]+\([^\n]*\)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return fallback;
+  return text.length > 320 ? `${text.slice(0, 317).trim()}...` : text;
 }
 
 async function setupLaunchProgressListener() {
@@ -1397,7 +1406,7 @@ async function setupLaunchProgressListener() {
 }
 
 function knownLaunchMessage(error) {
-  const text = String(error?.message || error || "Minecraft could not launch.");
+  const text = publicMessage(error, "Minecraft could not launch.");
   const lower = text.toLowerCase();
   if (lower.includes("update") || lower.includes("outdated")) return "Update the client or launcher, then launch again.";
   if (lower.includes("429") || lower.includes("rate limit") || lower.includes("too many requests")) {
@@ -1429,9 +1438,9 @@ async function boot() {
   await setupLaunchProgressListener();
   try {
     state.info = await invoke("launcher_info");
-    log(`Managed root: ${state.info.managed_root}`);
+    log("Launcher files are ready.");
   } catch (error) {
-    log(`Launcher info failed: ${error}`);
+    log(`Launcher setup failed: ${publicMessage(error)}`);
   }
 
   state.token = await invoke("read_launcher_token").catch(() => "");
@@ -1474,9 +1483,9 @@ async function restoreSession(attempt = 0) {
       }
       state.account = null;
       state.ads = null;
-      log(`The server rejected the saved sign-in, but the credential was preserved: ${message}`);
+      log("The saved sign-in was rejected. Sign in again to continue.");
     } else {
-      log(`Could not verify the saved sign-in yet; it was kept for the next retry: ${message}`);
+      log("Could not verify the saved sign-in yet. It was kept for the next retry.");
     }
   }
 }
@@ -1591,7 +1600,7 @@ async function startSignIn() {
     if (generation !== state.signInGeneration || !state.signInActive) return;
     log(`Sign-in failed: ${error.message || error}`);
     if (state.signIn?.loginUrl) {
-      state.signInError = error.message || "Sign-in failed. Open or copy the link below.";
+      state.signInError = publicMessage(error, "Sign-in failed. Open or copy the link below.");
       render();
     }
   } finally {
@@ -1709,7 +1718,7 @@ async function refreshSpotifyStatus() {
   try {
     state.spotify = await api("/api/spotify/status");
   } catch (error) {
-    state.spotify = { configured: false, connected: false, message: String(error.message || error) };
+    state.spotify = { configured: false, connected: false, message: publicMessage(error) };
   }
 }
 
@@ -1723,7 +1732,7 @@ async function refreshSocial() {
     state.social = await api("/api/friends");
     state.lastSocialCheckAt = Date.now();
   } catch (error) {
-    state.social = { friends: [], incomingRequests: [], outgoingRequests: [], settings: {}, message: String(error.message || error) };
+    state.social = { friends: [], incomingRequests: [], outgoingRequests: [], settings: {}, message: publicMessage(error) };
     state.lastSocialCheckAt = Date.now();
   }
 }
@@ -1834,7 +1843,7 @@ async function downloadLauncherUpdate() {
     const result = await invoke("download_launcher_update");
     state.dismissedLauncherVersion = latestLauncherVersion();
     localStorage.setItem(LAUNCHER_DISMISS_KEY, state.dismissedLauncherVersion);
-    log(`${result.message} ${result.path ? `Saved: ${result.path}` : ""}`.trim());
+    log(result.message || "Launcher update downloaded to your Downloads folder.");
   } catch (error) {
     log(`Launcher update failed: ${error.message || error}`);
   } finally {
@@ -2261,8 +2270,7 @@ app.addEventListener("click", async (event) => {
         state.minecraftPid = null;
       } else if (String(message).toLowerCase().includes("process started")) {
         state.minecraftRunning = true;
-        const match = String(message).match(/pid\s+(\d+)/i);
-        state.minecraftPid = match ? Number(match[1]) : state.minecraftPid;
+        state.minecraftPid = state.minecraftPid || null;
       }
       log(message);
       await refreshMinecraftStatus({ render: false, logExit: false });
@@ -2444,16 +2452,16 @@ app.addEventListener("click", async (event) => {
       render();
     }
   } else if (action === "open-mods") {
-    const path = await invoke("open_profile_folder", { profile: state.selectedProfile, kind: "mods" });
-    log(`Opened ${path}`);
+    await invoke("open_profile_folder", { profile: state.selectedProfile, kind: "mods" });
+    log("Opened the mods folder.");
     render();
   } else if (action === "open-packs") {
-    const path = await invoke("open_profile_folder", { profile: state.selectedProfile, kind: "resourcepacks" });
-    log(`Opened ${path}`);
+    await invoke("open_profile_folder", { profile: state.selectedProfile, kind: "resourcepacks" });
+    log("Opened the resource packs folder.");
     render();
   } else if (action === "open-data") {
-    const path = await invoke("open_profile_folder", { profile: state.selectedProfile, kind: "data" });
-    log(`Opened ${path}`);
+    await invoke("open_profile_folder", { profile: state.selectedProfile, kind: "data" });
+    log("Opened the profile data folder.");
     render();
   } else if (action === "reload-files") {
     await refreshFiles();

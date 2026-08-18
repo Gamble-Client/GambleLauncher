@@ -47,7 +47,12 @@ jobs:
         run: npm ci
 
       - name: Build Windows bundles
-        run: npm run tauri -- build --bundles nsis
+        shell: pwsh
+        run: |
+          $workspace = (Resolve-Path ".").Path
+          $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE ".cargo" }
+          $env:RUSTFLAGS = "--remap-path-prefix=$workspace=C:/src/gamble-client-launcher --remap-path-prefix=$cargoHome=C:/rust/cargo"
+          npm run tauri -- build --bundles nsis
 
       - name: Upload Windows installer directly to R2
         shell: pwsh

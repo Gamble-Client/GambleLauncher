@@ -2399,12 +2399,13 @@ public class FxMain extends Application {
     }
 
     private void appendLog(String message) {
+        String visible = sanitizeVisibleMessage(message);
         if (logLines == null) {
-            System.err.println(message);
+            System.err.println(visible);
             return;
         }
         Platform.runLater(() -> {
-            lastLog = lastLog.isEmpty() ? message : lastLog + "\n" + message;
+            lastLog = lastLog.isEmpty() ? visible : lastLog + "\n" + visible;
             renderLogText(lastLog);
         });
     }
@@ -2434,7 +2435,22 @@ public class FxMain extends Application {
     private String rootMessage(Throwable throwable) {
         Throwable current = throwable;
         while (current.getCause() != null) current = current.getCause();
-        return current.getMessage() == null ? current.toString() : current.getMessage();
+        return sanitizeVisibleMessage(current.getMessage() == null ? current.toString() : current.getMessage());
+    }
+
+    private String sanitizeVisibleMessage(String message) {
+        String value = message == null ? "Launcher status updated." : message.replace('\0', ' ').trim();
+        value = value
+            .replaceAll("(?i)([?&](?:token|code|ticket|session|signature)=)[^&\\s]+", "$1[private]")
+            .replaceAll("(?i)https?://[^\\s]+\\?[^\\s]+", "[secure link]")
+            .replaceAll("[A-Za-z]:\\\\(?:[^\\r\\n:*?\"<>|]+\\\\)*[^\\r\\n:*?\"<>|]*", "[launcher files]")
+            .replaceAll("(^|\\s)/(?:[^\\s/]+/)+[^\\s]*", "$1[launcher files]")
+            .replaceAll("(?:[A-Za-z_$][\\w$]*\\.){2,}[A-Za-z_$][\\w$]*(?::\\d+)?", "launcher component")
+            .replaceAll("(?i)\\bpid\\s+\\d+\\b", "game process")
+            .replaceAll("\\s+", " ")
+            .trim();
+        if (value.isEmpty()) return "Launcher status updated.";
+        return value.length() > 320 ? value.substring(0, 317).trim() + "..." : value;
     }
 
     private String objectFieldString(Object object, String name) {
@@ -2542,7 +2558,7 @@ public class FxMain extends Application {
     }
 
     private String defaultUsername() {
-        return "BaseToucher";
+        return "Player";
     }
 
     private Image resourceImage(String path) {

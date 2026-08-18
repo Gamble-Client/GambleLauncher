@@ -54,6 +54,10 @@ test("both launcher implementations bind manifests to the requested tier and ins
     assert.match(java, /removeManagedClientArtifactsForMemory\(\)/);
     assert.match(java, /cg-mod:build_variant/);
     assert.match(java, /standaloneLoaderPlatform\(\)/);
+    assert.match(java, /LOADER_PROVENANCE_ENTRY/);
+    assert.match(java, /verifyLoaderProvenance\(bytes, provenance, metadataVersion\)/);
+    assert.match(java, /Managed loader immutable core was modified/);
+    assert.doesNotMatch(java, /retaining the valid installed loader/);
     assert.doesNotMatch(java, /Launcher-managed memory bootstrap/);
 
     assert.match(rust, /Backend manifest was issued for a different client tier/);
@@ -65,6 +69,11 @@ test("both launcher implementations bind manifests to the requested tier and ins
     assert.match(rust, /fetch_client_manifest\(&build, &token\)/);
     assert.match(rust, /"windows" => "windows"/);
     assert.match(rust, /"linux" => "linux"/);
+    assert.match(rust, /LOADER_PROVENANCE_ENTRY/);
+    assert.match(rust, /verify_loader_provenance\(bytes, &provenance, metadata_version\)/);
+    assert.match(rust, /Managed loader immutable core was modified/);
+    assert.match(rust, /unwrap_or\(false\)/);
+    assert.doesNotMatch(rust, /Ok\(true\) \| Err\(_\)/);
     assert.doesNotMatch(rust, /Launcher-managed memory bootstrap/);
 });
 
@@ -83,6 +92,41 @@ test("launch authorization stays in the standalone loader instead of launcher fi
     assert.doesNotMatch(rust, /-Dgamble\.launchTicketFile=/);
     assert.doesNotMatch(rust, /fabric\.addMods/);
     assert.doesNotMatch(rust, /write_launch_ticket_file/);
+});
+
+test("launcher release checks cannot mint a direct client download", async () => {
+    const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
+    const rust = await source("src-tauri/src/main.rs");
+
+    assert.doesNotMatch(java, /Backend manifest did not include a client download URL/);
+    assert.doesNotMatch(rust, /Backend manifest did not include a client download URL/);
+    assert.match(java, /gcclient-memory-loader\.txt/);
+    assert.match(rust, /gcclient-memory-loader\.txt/);
+    assert.match(java, /verified-memory-only-v1/);
+    assert.match(rust, /verified-memory-only-v1/);
+});
+
+test("production launcher UI omits owner-specific preview data and sanitizes visible diagnostics", async () => {
+    const frontend = await source("src/main.js");
+    const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
+    const javaFx = await source("src/main/java/com/gambleclient/launcher/FxMain.java");
+    const bootstrap = await source("src/main/java/com/gambleclient/launcher/LauncherBootstrap.java");
+    const cargo = await source("src-tauri/Cargo.toml");
+
+    assert.match(frontend, /const PREVIEW = import\.meta\.env\.DEV/);
+    assert.doesNotMatch(frontend, /\/home\/theac|BaseToucher|8667ba71b85a4004af54457a9734eed7|preview-token/);
+    assert.doesNotMatch(java, /BaseToucher/);
+    assert.match(frontend, /function publicMessage\(/);
+    assert.doesNotMatch(frontend, /log\(`Managed root:/);
+    assert.match(java, /diagnosticLog\("  Full command:/);
+    assert.doesNotMatch(java, /log\("  Full command:/);
+    assert.match(java, /sanitizeVisibleMessage\(/);
+    assert.match(javaFx, /String visible = sanitizeVisibleMessage\(message\)/);
+    assert.match(javaFx, /return sanitizeVisibleMessage\(current\.getMessage\(\)/);
+    assert.match(bootstrap, /if \(diagnostics\) cause\.printStackTrace/);
+    assert.doesNotMatch(bootstrap, /showFallbackNotice\(cause\)/);
+    assert.match(cargo, /\[profile\.release\][\s\S]*strip = "symbols"/);
+    assert.match(cargo, /panic = "abort"/);
 });
 
 test("Windows retries the embedded app navigation only while WebView2 is blank", async () => {

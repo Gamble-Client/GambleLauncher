@@ -6,10 +6,13 @@ import java.lang.reflect.Method;
 import java.util.Arrays;
 
 public final class LauncherBootstrap {
+    private static boolean diagnostics;
+
     private LauncherBootstrap() {
     }
 
     public static void main(String[] args) {
+        diagnostics = Arrays.asList(args).contains("--diagnostics") || Arrays.asList(args).contains("--self-test");
         if (Arrays.asList(args).contains("--swing")) {
             launchSwing(args);
             return;
@@ -22,8 +25,8 @@ public final class LauncherBootstrap {
         } catch (Throwable error) {
             Throwable cause = unwrap(error);
             System.err.println("JavaFX launcher failed, falling back to Swing launcher.");
-            cause.printStackTrace(System.err);
-            showFallbackNotice(cause);
+            if (diagnostics) cause.printStackTrace(System.err);
+            showFallbackNotice();
             launchSwing(args);
         }
     }
@@ -38,12 +41,11 @@ public final class LauncherBootstrap {
         return error;
     }
 
-    private static void showFallbackNotice(Throwable cause) {
+    private static void showFallbackNotice() {
         try {
             JOptionPane.showMessageDialog(
                 null,
-                "The modern launcher UI could not start on this system, so Gamble Client will open the compatibility launcher instead.\n\n"
-                    + rootMessage(cause),
+                "The modern launcher UI could not start on this system, so Gamble Client will open the compatibility launcher instead.",
                 "Gamble Client Launcher",
                 JOptionPane.WARNING_MESSAGE
             );
@@ -56,14 +58,8 @@ public final class LauncherBootstrap {
         try {
             Main.main(args);
         } catch (Throwable error) {
-            throw new RuntimeException("Could not start Gamble Client Launcher.", error);
+            if (diagnostics) error.printStackTrace(System.err);
+            throw new RuntimeException("Could not start Gamble Client Launcher. Run with --diagnostics for technical details.");
         }
-    }
-
-    private static String rootMessage(Throwable error) {
-        Throwable current = error;
-        while (current.getCause() != null) current = current.getCause();
-        String message = current.getMessage();
-        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
     }
 }

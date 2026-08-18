@@ -1,14 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::{
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    Engine as _,
+};
+use ring::signature::{UnparsedPublicKey, ED25519};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     env,
     fs::{self, File},
-    io::{self, Read, Write},
+    io::{self, Cursor, Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -53,6 +57,16 @@ const MAX_MANAGED_CLIENT_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_LOADER_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_FABRIC_METADATA_BYTES: u64 = 1024 * 1024;
 const MANAGED_CLIENT_MOD_ID: &str = "cg-mod";
+const LOADER_PROVENANCE_ENTRY: &str = "META-INF/gamble-loader-provenance.json";
+const LOADER_SIGNING_KEY_ID: &str = "617acff9930c4e68";
+const LOADER_SIGNING_PUBLIC_KEY: &str =
+    "MCowBQYDK2VwAyEAOFpbSkB+oSSa6fr4el70SgAiOLUAsBDmb2RWhktNhyg=";
+const LOADER_MUTABLE_ENTRIES: &[&str] = &[
+    "fabric.mod.json",
+    "assets/cg-mod/icon.png",
+    "gcclient-standalone-enrollment.json",
+    LOADER_PROVENANCE_ENTRY,
+];
 const MAX_NATIVE_FILES: usize = 2048;
 const MAX_NATIVE_EXPANDED_BYTES: u64 = 512 * 1024 * 1024;
 const TEMURIN_21_WINDOWS_URL: &str =
@@ -111,6 +125,23 @@ struct FabricModIdentity {
     id: String,
     #[serde(default)]
     custom: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LoaderProvenance {
+    schema_version: u32,
+    loader_version: String,
+    platform: String,
+    canonical_file_name: String,
+    canonical_sha256: String,
+    core_sha256: String,
+    canonical_size: u64,
+    source_commit: String,
+    client_delivery: String,
+    signature_algorithm: String,
+    signature_key_id: String,
+    signature: String,
 }
 
 #[derive(Serialize)]
@@ -360,8 +391,6 @@ struct ManifestResponse {
     build: String,
     #[serde(default, rename = "fileName")]
     file_name: String,
-    #[serde(default, rename = "downloadUrl")]
-    download_url: String,
     #[serde(default)]
     sha256: String,
     #[serde(default)]
@@ -1050,50 +1079,84 @@ fn open_path(path: String) -> Result<(), String> {
 #[tauri::command]
 fn open_profile_folder(profile: String, kind: String) -> Result<String, String> {
     let profile = profile_id(&profile);
-    let path = match kind.as_str() {
-        "mods" => mods_folder(&profile),
-        "resourcepacks" => resource_packs_folder(&profile),
-        "data" => profile_data_folder(&profile),
-        _ => minecraft_folder(&profile),
+    let (path, label) = match kind.as_str() {
+        "mods" => (mods_folder(&profile), "Mods folder opened."),
+        "resourcepacks" => (
+            resource_packs_folder(&profile),
+            "Resource packs folder opened.",
+        ),
+        "data" => (profile_data_folder(&profile), "Profile data folder opened."),
+        _ => (minecraft_folder(&profile), "Game folder opened."),
     };
     fs::create_dir_all(&path).map_err(error_text)?;
     open_external(&display_path(&path))?;
-    Ok(display_path(&path))
+    Ok(label.to_string())
 }
 
 #[tauri::command]
 fn diagnostics(profile: String) -> Result<Diagnostics, String> {
     let profile = profile_id(&profile);
     let mut checks = Vec::new();
+    let root = managed_root();
+    let profile_folder = minecraft_folder(&profile);
+    let mods = mods_folder(&profile);
+    let packs = resource_packs_folder(&profile);
+    let session = launcher_session_file();
+    let accounts = microsoft_accounts_file();
     push_check(
         &mut checks,
-        "Managed root",
-        managed_root().is_dir(),
-        display_path(&managed_root()),
+        "Launcher files",
+        root.is_dir(),
+        if root.is_dir() {
+            "Ready"
+        } else {
+            "Not created yet"
+        }
+        .to_string(),
     );
     push_check(
         &mut checks,
         "Profile folder",
-        minecraft_folder(&profile).is_dir(),
-        display_path(&minecraft_folder(&profile)),
+        profile_folder.is_dir(),
+        if profile_folder.is_dir() {
+            "Ready"
+        } else {
+            "Not created yet"
+        }
+        .to_string(),
     );
     push_check(
         &mut checks,
         "Mods folder",
-        mods_folder(&profile).is_dir(),
-        display_path(&mods_folder(&profile)),
+        mods.is_dir(),
+        if mods.is_dir() {
+            "Ready"
+        } else {
+            "Not created yet"
+        }
+        .to_string(),
     );
     push_check(
         &mut checks,
         "Resource packs",
-        resource_packs_folder(&profile).is_dir(),
-        display_path(&resource_packs_folder(&profile)),
+        packs.is_dir(),
+        if packs.is_dir() {
+            "Ready"
+        } else {
+            "Not created yet"
+        }
+        .to_string(),
     );
     push_check(
         &mut checks,
         "Launcher session",
-        launcher_session_file().is_file(),
-        display_path(&launcher_session_file()),
+        session.is_file(),
+        if session.is_file() {
+            "Saved securely"
+        } else {
+            "Sign-in required"
+        }
+        .to_string(),
     );
     let microsoft_saved = read_microsoft_account()
         .map(|account| account.is_some())
@@ -1102,17 +1165,22 @@ fn diagnostics(profile: String) -> Result<Diagnostics, String> {
         &mut checks,
         "Microsoft account",
         microsoft_saved,
-        display_path(&microsoft_accounts_file()),
+        if microsoft_saved {
+            "Connected"
+        } else {
+            "Not connected"
+        }
+        .to_string(),
     );
     let selected_java = java_executable();
     let java = java_version_output(Path::new(&selected_java));
-    push_check(
-        &mut checks,
-        "Java runtime",
-        java.as_ref()
-            .map(|out| out.status.success() && java_output_is_21_or_newer(out))
-            .unwrap_or(false),
-        java.map(|out| {
+    let java_ok = java
+        .as_ref()
+        .map(|out| out.status.success() && java_output_is_21_or_newer(out))
+        .unwrap_or(false);
+    let java_technical = java
+        .as_ref()
+        .map(|out| {
             format!(
                 "{} — {}",
                 selected_java,
@@ -1122,52 +1190,58 @@ fn diagnostics(profile: String) -> Result<Diagnostics, String> {
                     .unwrap_or("java")
             )
         })
-        .unwrap_or_else(|error| format!("{} — {}", selected_java, error)),
+        .unwrap_or_else(|error| format!("{} — {}", selected_java, error));
+    push_check(
+        &mut checks,
+        "Java runtime",
+        java_ok,
+        if java_ok {
+            "Java 21 is ready"
+        } else {
+            "Java runtime needs repair"
+        }
+        .to_string(),
     );
     let launch_log = latest_launch_log_file();
-    let launch_log_detail = if launch_log.is_file() {
+    let launch_log_last = if launch_log.is_file() {
         let tail = fs::read_to_string(&launch_log).unwrap_or_default();
-        let last = tail
-            .lines()
+        tail.lines()
             .rev()
             .find(|line| !line.trim().is_empty())
-            .unwrap_or("");
-        format!(
-            "{}{}",
-            display_path(&launch_log),
-            if last.is_empty() {
-                String::new()
-            } else {
-                format!(" — {last}")
-            }
-        )
+            .unwrap_or("")
+            .to_string()
     } else {
-        display_path(&launch_log)
+        String::new()
     };
     push_check(
         &mut checks,
         "Latest launch log",
         launch_log.is_file(),
-        launch_log_detail,
+        if launch_log.is_file() {
+            "Available for support"
+        } else {
+            "No launch recorded yet"
+        }
+        .to_string(),
     );
-    let report = checks
-        .iter()
-        .map(|check| {
-            format!(
-                "[{}] {}: {}",
-                if check.ok { "OK" } else { "WARN" },
-                check.label,
-                check.detail
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let report = format!(
+        "Launcher files: {}\nProfile: {}\nMods: {}\nResource packs: {}\nLauncher session: {}\nMicrosoft accounts: {}\nJava: {}\nLatest launch log: {}{}",
+        display_path(&root),
+        display_path(&profile_folder),
+        display_path(&mods),
+        display_path(&packs),
+        display_path(&session),
+        display_path(&accounts),
+        java_technical,
+        display_path(&launch_log),
+        if launch_log_last.is_empty() { String::new() } else { format!("\nLast log line: {launch_log_last}") }
+    );
     if let Some(parent) = diagnostics_report_file().parent() {
         fs::create_dir_all(parent).map_err(error_text)?;
     }
     fs::write(
         diagnostics_report_file(),
-        format!("Gamble Client Launcher {VERSION}\n{report}\n"),
+        format!("Gamble Client Launcher {VERSION} technical diagnostics\n{report}\n"),
     )
     .map_err(error_text)?;
     Ok(Diagnostics { checks })
@@ -1370,7 +1444,7 @@ fn install_client_manifest_blocking(
 
     let loader = mods_folder(&profile).join(LOADER_JAR_NAME);
     let already_ready =
-        is_memory_loader_jar(&loader) && current_memory_loader_is_current(&loader).unwrap_or(true);
+        is_memory_loader_jar(&loader) && current_memory_loader_is_current(&loader).unwrap_or(false);
     let install_result = (|| {
         ensure_loader_jar(&profile, &token)?;
         ensure_fabric_api(&profile)?;
@@ -1564,7 +1638,6 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         })
     })();
     let mut child = launch_result?;
-    let pid = child.id();
     let mut running = match MINECRAFT_PROCESS.lock() {
         Ok(running) => running,
         Err(error) => {
@@ -1574,10 +1647,7 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         }
     };
     *running = Some(child);
-    Ok(format!(
-        "Minecraft process started (pid {pid}). Latest launch log: {}",
-        display_path(&log_file)
-    ))
+    Ok("Minecraft process started.".to_string())
 }
 
 #[tauri::command]
@@ -2797,7 +2867,7 @@ fn download_file_once(url: &str, path: &Path) -> Result<(), String> {
             .unwrap_or("download")
     ));
     let _ = fs::remove_file(&temp);
-    let mut response = http_client()?
+    let response = http_client()?
         .get(url)
         .send()
         .map_err(error_text)?
@@ -3311,10 +3381,6 @@ fn is_64_bit() -> bool {
     env::consts::ARCH.contains("64")
 }
 
-fn process_id() -> u32 {
-    std::process::id()
-}
-
 fn redacted_command(command: &[String]) -> String {
     command
         .iter()
@@ -3389,9 +3455,9 @@ fn open_url(url: String) -> Result<(), String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
+        .setup(|_app| {
             #[cfg(target_os = "windows")]
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(window) = _app.get_webview_window("main") {
                 let app_url = tauri::Url::parse("http://tauri.localhost/")
                     .expect("the embedded Windows app URL is valid");
                 std::thread::spawn(move || {
@@ -3598,6 +3664,12 @@ fn payloads_folder(profile: &str) -> PathBuf {
 fn safe_file_name(value: &str) -> Result<&str, String> {
     let path = Path::new(value);
     if value.trim().is_empty()
+        || value != value.trim()
+        || value == "."
+        || value == ".."
+        || value.contains('/')
+        || value.contains('\\')
+        || value.chars().any(char::is_control)
         || path.is_absolute()
         || path.components().count() != 1
         || path.file_name().and_then(|name| name.to_str()) != Some(value)
@@ -3816,8 +3888,8 @@ fn ensure_loader_jar(profile: &str, token: &str) -> Result<(), String> {
 
     if is_memory_loader_jar(&loader) {
         match current_memory_loader_is_current(&loader) {
-            Ok(true) | Err(_) => return Ok(()),
-            Ok(false) => {}
+            Ok(true) => return Ok(()),
+            Ok(false) | Err(_) => {}
         }
     }
 
@@ -3876,44 +3948,272 @@ fn ensure_loader_jar(profile: &str, token: &str) -> Result<(), String> {
 }
 
 fn is_memory_loader_jar(path: &Path) -> bool {
-    let file = match File::open(path) {
-        Ok(file) => file,
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
         Err(_) => return false,
     };
-    let mut archive = match ZipArchive::new(file) {
-        Ok(archive) => archive,
-        Err(_) => return false,
-    };
+    verify_memory_loader_bytes(&bytes).is_ok()
+}
+
+fn verify_memory_loader_bytes(bytes: &[u8]) -> Result<(), String> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes))
+        .map_err(|_| "Managed loader is not a valid jar archive.".to_string())?;
     for required in [
         "fabric.mod.json",
         "gcclient/loader/StandaloneLoader.class",
-        "gcclient/loader/MemoryBootstrap.class",
-        "gcclient/loader/MemoryPayload.class",
+        "gcclient-memory-loader.txt",
+        LOADER_PROVENANCE_ENTRY,
     ] {
-        if archive.by_name(required).is_err() {
-            return false;
+        let count = (0..archive.len())
+            .filter_map(|index| {
+                archive
+                    .by_index(index)
+                    .ok()
+                    .map(|entry| entry.name().to_string())
+            })
+            .filter(|name| name == required)
+            .count();
+        if count != 1 {
+            return Err(format!(
+                "Managed loader must contain exactly one {required}."
+            ));
         }
     }
-    let mut metadata = match archive.by_name("fabric.mod.json") {
-        Ok(metadata) => metadata,
-        Err(_) => return false,
+
+    let marker_text = {
+        let mut marker = archive
+            .by_name("gcclient-memory-loader.txt")
+            .map_err(error_text)?;
+        let mut text = String::new();
+        (&mut marker)
+            .take(64)
+            .read_to_string(&mut text)
+            .map_err(error_text)?;
+        text
     };
-    if metadata.size() > MAX_FABRIC_METADATA_BYTES {
-        return false;
+    if marker_text.trim() != "verified-memory-only-v1" {
+        return Err("Managed loader memory marker is invalid.".to_string());
     }
-    let mut bytes = Vec::new();
-    if metadata.read_to_end(&mut bytes).is_err() {
-        return false;
+
+    let metadata = {
+        let mut entry = archive.by_name("fabric.mod.json").map_err(error_text)?;
+        if entry.size() > MAX_FABRIC_METADATA_BYTES {
+            return Err("Managed loader metadata is too large.".to_string());
+        }
+        let mut data = Vec::new();
+        entry.read_to_end(&mut data).map_err(error_text)?;
+        serde_json::from_slice::<serde_json::Value>(&data).map_err(error_text)?
+    };
+    if metadata.get("id").and_then(|value| value.as_str())
+        != Some("gamble-client-standalone-loader")
+    {
+        return Err("Managed loader has the wrong Fabric identity.".to_string());
     }
-    serde_json::from_slice::<serde_json::Value>(&bytes)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("id")
-                .and_then(|id| id.as_str())
-                .map(str::to_string)
-        })
-        .is_some_and(|id| id == "gamble-client-standalone-loader")
+    let metadata_version = metadata
+        .get("version")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Managed loader has no readable version.".to_string())?;
+
+    let provenance = {
+        let mut entry = archive
+            .by_name(LOADER_PROVENANCE_ENTRY)
+            .map_err(error_text)?;
+        if entry.size() > MAX_FABRIC_METADATA_BYTES {
+            return Err("Managed loader provenance is too large.".to_string());
+        }
+        let mut data = Vec::new();
+        entry.read_to_end(&mut data).map_err(error_text)?;
+        serde_json::from_slice::<LoaderProvenance>(&data).map_err(error_text)?
+    };
+    verify_loader_provenance(bytes, &provenance, metadata_version)
+}
+
+fn verify_loader_provenance(
+    bytes: &[u8],
+    provenance: &LoaderProvenance,
+    metadata_version: &str,
+) -> Result<(), String> {
+    let expected_platform = match env::consts::OS {
+        "windows" => "windows",
+        "linux" => "linux",
+        _ => "universal",
+    };
+    if provenance.schema_version != 1
+        || provenance.loader_version != metadata_version
+        || provenance.platform != expected_platform
+        || !provenance
+            .canonical_file_name
+            .to_ascii_lowercase()
+            .ends_with(".jar")
+        || !is_sha256(&provenance.canonical_sha256)
+        || !is_sha256(&provenance.core_sha256)
+        || provenance.canonical_size == 0
+        || provenance.source_commit.len() < 7
+        || !provenance
+            .source_commit
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+        || provenance.client_delivery != "verified-memory-only"
+        || provenance.signature_algorithm != "Ed25519"
+        || provenance.signature_key_id != LOADER_SIGNING_KEY_ID
+    {
+        return Err("Managed loader provenance claims are invalid.".to_string());
+    }
+    let actual_core = loader_core_sha256(bytes)?;
+    if actual_core != provenance.core_sha256 {
+        return Err("Managed loader immutable core was modified.".to_string());
+    }
+    let canonical = [
+        "gc-standalone-loader-provenance-v1".to_string(),
+        provenance.schema_version.to_string(),
+        provenance.loader_version.clone(),
+        provenance.platform.clone(),
+        provenance.canonical_file_name.clone(),
+        provenance.canonical_sha256.clone(),
+        provenance.core_sha256.clone(),
+        provenance.canonical_size.to_string(),
+        provenance.source_commit.clone(),
+        provenance.client_delivery.clone(),
+        provenance.signature_algorithm.clone(),
+        provenance.signature_key_id.clone(),
+    ]
+    .join("\n");
+    let spki = STANDARD
+        .decode(LOADER_SIGNING_PUBLIC_KEY)
+        .map_err(|_| "Managed loader verification key is invalid.".to_string())?;
+    let public_key = spki
+        .get(spki.len().saturating_sub(32)..)
+        .filter(|key| key.len() == 32)
+        .ok_or_else(|| "Managed loader verification key is invalid.".to_string())?;
+    let signature = URL_SAFE_NO_PAD
+        .decode(&provenance.signature)
+        .map_err(|_| "Managed loader provenance signature is invalid.".to_string())?;
+    UnparsedPublicKey::new(&ED25519, public_key)
+        .verify(canonical.as_bytes(), &signature)
+        .map_err(|_| "Managed loader provenance signature is invalid.".to_string())
+}
+
+#[derive(Debug)]
+struct LoaderCoreEntry {
+    name: String,
+    method: u16,
+    compressed_size: u32,
+    uncompressed_size: u32,
+    crc32: u32,
+    payload_offset: usize,
+}
+
+fn loader_core_sha256(bytes: &[u8]) -> Result<String, String> {
+    if bytes.len() < 22 {
+        return Err("Managed loader ZIP directory is missing.".to_string());
+    }
+    let search_start = bytes.len().saturating_sub(65_557);
+    let eocd = (search_start..=bytes.len() - 22)
+        .rev()
+        .find(|offset| zip_u32(bytes, *offset).ok() == Some(0x0605_4b50))
+        .ok_or_else(|| "Managed loader ZIP directory is missing.".to_string())?;
+    let count = zip_u16(bytes, eocd + 10)? as usize;
+    let central_size = zip_u32(bytes, eocd + 12)? as usize;
+    let central_offset = zip_u32(bytes, eocd + 16)? as usize;
+    let central_end = central_offset
+        .checked_add(central_size)
+        .filter(|end| *end <= bytes.len())
+        .ok_or_else(|| "Managed loader ZIP directory is invalid.".to_string())?;
+    let mut entries = Vec::new();
+    let mut offset = central_offset;
+    for _ in 0..count {
+        if offset + 46 > central_end || zip_u32(bytes, offset)? != 0x0201_4b50 {
+            return Err("Managed loader ZIP directory is corrupt.".to_string());
+        }
+        let flags = zip_u16(bytes, offset + 8)?;
+        if flags & 1 != 0 {
+            return Err("Encrypted managed loader entries are not supported.".to_string());
+        }
+        let method = zip_u16(bytes, offset + 10)?;
+        let crc32 = zip_u32(bytes, offset + 16)?;
+        let compressed_size = zip_u32(bytes, offset + 20)?;
+        let uncompressed_size = zip_u32(bytes, offset + 24)?;
+        let name_length = zip_u16(bytes, offset + 28)? as usize;
+        let extra_length = zip_u16(bytes, offset + 30)? as usize;
+        let comment_length = zip_u16(bytes, offset + 32)? as usize;
+        let local_offset = zip_u32(bytes, offset + 42)? as usize;
+        let name_start = offset + 46;
+        let name_end = name_start
+            .checked_add(name_length)
+            .filter(|end| *end <= central_end)
+            .ok_or_else(|| "Managed loader entry name is invalid.".to_string())?;
+        let name = std::str::from_utf8(&bytes[name_start..name_end])
+            .map_err(|_| "Managed loader entry name is not UTF-8.".to_string())?
+            .to_string();
+        offset = name_end
+            .checked_add(extra_length)
+            .and_then(|value| value.checked_add(comment_length))
+            .filter(|end| *end <= central_end)
+            .ok_or_else(|| "Managed loader ZIP directory is corrupt.".to_string())?;
+        if LOADER_MUTABLE_ENTRIES.contains(&name.as_str()) {
+            continue;
+        }
+        if local_offset + 30 > bytes.len() || zip_u32(bytes, local_offset)? != 0x0403_4b50 {
+            return Err("Managed loader local ZIP entry is corrupt.".to_string());
+        }
+        let local_name_length = zip_u16(bytes, local_offset + 26)? as usize;
+        let local_extra_length = zip_u16(bytes, local_offset + 28)? as usize;
+        let payload_offset = local_offset
+            .checked_add(30)
+            .and_then(|value| value.checked_add(local_name_length))
+            .and_then(|value| value.checked_add(local_extra_length))
+            .ok_or_else(|| "Managed loader entry offset overflowed.".to_string())?;
+        payload_offset
+            .checked_add(compressed_size as usize)
+            .filter(|end| *end <= bytes.len())
+            .ok_or_else(|| "Managed loader entry payload is truncated.".to_string())?;
+        entries.push(LoaderCoreEntry {
+            name,
+            method,
+            compressed_size,
+            uncompressed_size,
+            crc32,
+            payload_offset,
+        });
+    }
+    if offset != central_end || entries.is_empty() {
+        return Err("Managed loader immutable core is empty or malformed.".to_string());
+    }
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
+    let mut seen = HashSet::new();
+    let mut digest = Sha256::new();
+    digest.update(b"gc-loader-core-v1\0");
+    for entry in entries {
+        if !seen.insert(entry.name.clone()) {
+            return Err("Managed loader contains duplicate immutable entries.".to_string());
+        }
+        let name = entry.name.as_bytes();
+        digest.update((name.len() as u32).to_be_bytes());
+        digest.update(entry.method.to_be_bytes());
+        digest.update(entry.compressed_size.to_be_bytes());
+        digest.update(entry.uncompressed_size.to_be_bytes());
+        digest.update(entry.crc32.to_be_bytes());
+        digest.update(name);
+        digest.update(
+            &bytes[entry.payload_offset..entry.payload_offset + entry.compressed_size as usize],
+        );
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn zip_u16(bytes: &[u8], offset: usize) -> Result<u16, String> {
+    let value = bytes
+        .get(offset..offset + 2)
+        .ok_or_else(|| "Managed loader ZIP value is truncated.".to_string())?;
+    Ok(u16::from_le_bytes([value[0], value[1]]))
+}
+
+fn zip_u32(bytes: &[u8], offset: usize) -> Result<u32, String> {
+    let value = bytes
+        .get(offset..offset + 4)
+        .ok_or_else(|| "Managed loader ZIP value is truncated.".to_string())?;
+    Ok(u32::from_le_bytes([value[0], value[1], value[2], value[3]]))
 }
 
 fn memory_loader_version(path: &Path) -> Option<String> {
@@ -4373,9 +4673,6 @@ fn fetch_client_manifest(build: &str, token: &str) -> Result<ManifestResponse, S
         return Err("Backend manifest was issued for a different client tier.".to_string());
     }
     safe_file_name(&manifest.file_name)?;
-    if manifest.download_url.trim().is_empty() {
-        return Err("Backend manifest did not include a client download URL.".to_string());
-    }
     if manifest.size == 0 || !is_sha256(&manifest.sha256) {
         return Err(
             "Backend manifest is missing required size or SHA-256 integrity metadata.".to_string(),
@@ -4576,12 +4873,6 @@ fn public_client_version(value: &str) -> String {
     text.to_string()
 }
 
-fn sha256_hex(data: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    format!("{:x}", hasher.finalize())
-}
-
 fn http_client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .user_agent(format!("GambleClientLauncher/{VERSION}"))
@@ -4726,6 +5017,7 @@ fn error_text<E: std::fmt::Display>(error: E) -> String {
     error.to_string()
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn is_browser_url(target: &str) -> bool {
     reqwest::Url::parse(target)
         .map(|url| matches!(url.scheme(), "http" | "https"))
@@ -4770,10 +5062,11 @@ fn open_external(target: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_browser_url, java_feature_from_text, random_base64_url, safe_file_name,
-        verify_fabric_mod_id, write_private_file, MANAGED_CLIENT_MOD_ID,
+        is_browser_url, java_feature_from_text, loader_core_sha256, random_base64_url,
+        safe_file_name, verify_fabric_mod_id, verify_fabric_mod_identity, write_private_file,
+        MANAGED_CLIENT_MOD_ID,
     };
-    use std::{env, fs, fs::File, io::Write, path::PathBuf};
+    use std::{env, fs, fs::File, io::Cursor, io::Write, path::PathBuf};
     use zip::{write::SimpleFileOptions, ZipWriter};
 
     #[test]
@@ -4849,6 +5142,50 @@ mod tests {
         for path in [valid, nested, duplicate] {
             let _ = fs::remove_file(path);
         }
+    }
+
+    #[test]
+    fn loader_core_hash_ignores_personalization_but_detects_executable_changes() {
+        let first = write_loader_bytes(
+            r#"{"id":"gamble-client-standalone-loader","name":"First"}"#,
+            b"signed executable core",
+        );
+        let personalized = write_loader_bytes(
+            r#"{"id":"gamble-client-standalone-loader","name":"Personalized"}"#,
+            b"signed executable core",
+        );
+        let tampered = write_loader_bytes(
+            r#"{"id":"gamble-client-standalone-loader","name":"Personalized"}"#,
+            b"modified executable core",
+        );
+        assert_eq!(
+            loader_core_sha256(&first).unwrap(),
+            loader_core_sha256(&personalized).unwrap()
+        );
+        assert_ne!(
+            loader_core_sha256(&first).unwrap(),
+            loader_core_sha256(&tampered).unwrap()
+        );
+    }
+
+    fn write_loader_bytes(metadata: &str, executable: &[u8]) -> Vec<u8> {
+        let mut archive = ZipWriter::new(Cursor::new(Vec::new()));
+        archive
+            .start_file("fabric.mod.json", SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(metadata.as_bytes()).unwrap();
+        archive
+            .start_file(
+                "gcclient/loader/StandaloneLoader.class",
+                SimpleFileOptions::default(),
+            )
+            .unwrap();
+        archive.write_all(executable).unwrap();
+        archive
+            .start_file("gcclient-memory-loader.txt", SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(b"verified-memory-only-v1\n").unwrap();
+        archive.finish().unwrap().into_inner()
     }
 
     fn write_test_jar(metadata: &str) -> PathBuf {

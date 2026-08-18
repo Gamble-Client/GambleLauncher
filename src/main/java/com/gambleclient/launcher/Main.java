@@ -74,14 +74,19 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.CodingErrorAction;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.awt.datatransfer.StringSelection;
+import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.security.Signature;
+import java.security.spec.X509EncodedKeySpec;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
@@ -89,6 +94,8 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.Date;
 import java.util.Deque;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -126,8 +133,17 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.107";
+    private static final String LAUNCHER_VERSION = "0.1.108";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
+    private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
+    private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
+    private static final String LOADER_SIGNING_PUBLIC_KEY = "MCowBQYDK2VwAyEAOFpbSkB+oSSa6fr4el70SgAiOLUAsBDmb2RWhktNhyg=";
+    private static final Set<String> LOADER_MUTABLE_ENTRIES = Set.of(
+        "fabric.mod.json",
+        "assets/cg-mod/icon.png",
+        "gcclient-standalone-enrollment.json",
+        LOADER_PROVENANCE_ENTRY
+    );
     private static final String COMPATIBILITY_DEFAULTS_MARKER_NAME = ".gamble-compat-disabled-by-default";
     private static final String[] ANTISCREENSHARE_CORE_ON = {"antiscreenshare"};
     private static final String[] ANTISCREENSHARE_SCOREBOARD_ON = {"hide-scoreboard"};
@@ -315,8 +331,8 @@ public class Main {
         styleControls();
 
         log("Ready. Sign in, then press Launch.");
-        log("Managed game folder: " + getManagedMinecraftRoot().getAbsolutePath());
-        log("Active profile folder: " + getMinecraftFolder().getAbsolutePath());
+        diagnosticLog("Managed game folder: " + getManagedMinecraftRoot().getAbsolutePath());
+        diagnosticLog("Active profile folder: " + getMinecraftFolder().getAbsolutePath());
         refreshStoredLauncherSession();
         return root;
     }
@@ -844,16 +860,16 @@ public class Main {
         if (persist) {
             saveSelectedProfile(profile);
             log("Selected profile: " + profile.label + ".");
-            log("Profile folder: " + getMinecraftFolder(profile).getAbsolutePath());
+            diagnosticLog("Profile folder: " + getMinecraftFolder(profile).getAbsolutePath());
         }
     }
 
     private void updateRuntimeInfo() {
         if (runtimeInfo == null) return;
-        runtimeInfo.setText("Managed root: " + getManagedMinecraftRoot().getAbsolutePath() + "\n"
+        runtimeInfo.setText("Launcher files: Ready\n"
             + "Active profile: " + selectedProfile().label + "\n"
-            + "Active profile folder: " + getMinecraftFolder().getAbsolutePath() + "\n"
-            + "Active mods folder: " + getModsFolder().getAbsolutePath() + "\n"
+            + "Profile files: Ready\n"
+            + "Mods folder: Ready\n"
             + "Minecraft: " + MINECRAFT_VERSION + "\n"
             + "Fabric Loader: " + FABRIC_LOADER_VERSION + "\n"
             + "Java: " + Runtime.version().feature());
@@ -864,7 +880,7 @@ public class Main {
         try {
             ensureProfileFolders(profile);
         } catch (IOException e) {
-            JOptionPane.showMessageDialog(frame, e.getMessage(), "Profile", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(frame, rootMessage(e), "Profile", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -888,7 +904,7 @@ public class Main {
         try {
             ensureProfileFolders(profile);
         } catch (IOException e) {
-            JOptionPane.showMessageDialog(frame, e.getMessage(), "Mods", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(frame, rootMessage(e), "Mods", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -899,7 +915,7 @@ public class Main {
 
         File mods = new File(getMinecraftFolder(profile), "mods");
         if (!mods.exists() && !mods.mkdirs()) {
-            JOptionPane.showMessageDialog(frame, "Failed to create mods folder: " + mods, "Mods", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(frame, "Could not create the mods folder.", "Mods", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -952,7 +968,7 @@ public class Main {
                 reload.run();
                 refreshVersionPanel();
             } catch (IOException ex) {
-                JOptionPane.showMessageDialog(dialog, ex.getMessage(), "Mods", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(dialog, rootMessage(ex), "Mods", JOptionPane.ERROR_MESSAGE);
             }
         });
         openFolder.addActionListener(e -> open(mods));
@@ -977,13 +993,13 @@ public class Main {
         try {
             ensureProfileFolders(profile);
         } catch (IOException e) {
-            JOptionPane.showMessageDialog(frame, e.getMessage(), "Resource Packs", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(frame, rootMessage(e), "Resource Packs", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
         File packs = getResourcePacksFolder(profile);
         if (!packs.exists() && !packs.mkdirs()) {
-            JOptionPane.showMessageDialog(frame, "Failed to create resource packs folder: " + packs, "Resource Packs", JOptionPane.ERROR_MESSAGE);
+            JOptionPane.showMessageDialog(frame, "Could not create the resource packs folder.", "Resource Packs", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -1033,7 +1049,7 @@ public class Main {
                 log((entry.enabled ? "Disabled " : "Enabled ") + target.getName() + ".");
                 reload.run();
             } catch (IOException ex) {
-                JOptionPane.showMessageDialog(dialog, ex.getMessage(), "Resource Packs", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(dialog, rootMessage(ex), "Resource Packs", JOptionPane.ERROR_MESSAGE);
             }
         });
         add.addActionListener(e -> {
@@ -1051,7 +1067,7 @@ public class Main {
                     setResourcePackEnabled(profile, target, true);
                     copied++;
                 } catch (IOException ex) {
-                    JOptionPane.showMessageDialog(dialog, ex.getMessage(), "Resource Packs", JOptionPane.ERROR_MESSAGE);
+                    JOptionPane.showMessageDialog(dialog, rootMessage(ex), "Resource Packs", JOptionPane.ERROR_MESSAGE);
                 }
             }
             if (copied > 0) {
@@ -1393,30 +1409,30 @@ public class Main {
             log("Restored AntiScreenshare module backup: " + latest.getName());
             return "Restored " + latest.getName() + ".";
         } catch (IOException e) {
-            return "Could not restore backup: " + e.getMessage();
+            return "Could not restore the AntiScreenshare backup.";
         }
     }
 
     private String saveAntiScreenshareConfig() {
         File modules = getAntiScreenshareModulesFile();
         if (!modules.isFile()) {
-            return "No modules.txt found yet. Launch Gamble Client once first:\n" + modules.getAbsolutePath();
+            return "No client module settings exist yet. Launch Gamble Client once first.";
         }
 
         File folder = new File(getProfileDataFolder(), "saved-configs");
         if (!folder.isDirectory() && !folder.mkdirs()) {
-            return "Could not create saved config folder:\n" + folder.getAbsolutePath();
+            return "Could not create the saved config folder.";
         }
 
         String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new Date());
         File saved = new File(folder, "antiscreenshare-" + selectedProfile().id + "-" + stamp + ".txt");
         try {
             Files.copy(modules.toPath(), saved.toPath(), StandardCopyOption.REPLACE_EXISTING);
-            String message = "Saved AntiScreenshare config: " + saved.getAbsolutePath();
+            String message = "Saved AntiScreenshare config as " + saved.getName() + ".";
             log(message);
             return message;
         } catch (IOException e) {
-            return "Could not save AntiScreenshare config: " + e.getMessage();
+            return "Could not save the AntiScreenshare config.";
         }
     }
 
@@ -1561,7 +1577,7 @@ public class Main {
     private String updateAntiScreenshareModules(LinkedHashMap<String, Boolean> changes, String message) {
         File modules = getAntiScreenshareModulesFile();
         if (!modules.isFile()) {
-            return "No modules.txt found yet. Launch Gamble Client once first:\n" + modules.getAbsolutePath();
+            return "No client module settings exist yet. Launch Gamble Client once first.";
         }
 
         try {
@@ -1584,7 +1600,7 @@ public class Main {
             log(result);
             return result;
         } catch (IOException e) {
-            return "Could not update AntiScreenshare config: " + e.getMessage();
+            return "Could not update the AntiScreenshare config.";
         }
     }
 
@@ -3113,8 +3129,8 @@ public class Main {
         if (!canonicalBuildId(build.id).equals(responseBuild)) {
             throw new IOException("Backend manifest was issued for a different client tier.");
         }
-        if (fileName.isEmpty() || downloadUrl.isEmpty()) {
-            throw new IOException("Backend manifest did not include a client artifact reference.");
+        if (fileName.isEmpty()) {
+            throw new IOException("Backend manifest did not include client release metadata.");
         }
         if (!isSafeFileName(fileName)) throw new IOException("Backend manifest filename is unsafe.");
         String sha256 = Json.string(response.body.get("sha256"));
@@ -3349,7 +3365,7 @@ public class Main {
             extraJavaArgs = splitArgs(javaArgs.getText());
             validateExtraJavaArgs(extraJavaArgs);
         } catch (IllegalArgumentException e) {
-            JOptionPane.showMessageDialog(frame, e.getMessage(), "Java args", JOptionPane.WARNING_MESSAGE);
+            JOptionPane.showMessageDialog(frame, rootMessage(e), "Java args", JOptionPane.WARNING_MESSAGE);
             return;
         }
 
@@ -3678,8 +3694,9 @@ public class Main {
             LaunchValidation validation = validateLaunchSetup(gameDir, profile, classpath, nativesDir, versionId, launchProfile, identity);
             logValidationReport(validation);
             logLaunchCommandDetails(command, profile.mainClass, gameDir);
-            log("Starting Java: " + command.get(0));
-            log("Main class: " + profile.mainClass);
+            diagnosticLog("Starting Java: " + command.get(0));
+            diagnosticLog("Main class: " + profile.mainClass);
+            log("Starting Minecraft.");
 
             ProcessBuilder builder = new ProcessBuilder(command);
             builder.directory(gameDir);
@@ -3794,10 +3811,10 @@ public class Main {
     }
 
     private void logValidationReport(LaunchValidation validation) {
-        log("Pre-launch validation:");
-        for (String line : validation.ok) log("  OK: " + line);
-        for (String line : validation.warnings) log("  WARN: " + line);
-        for (String line : validation.errors) log("  ERROR: " + line);
+        diagnosticLog("Pre-launch validation:");
+        for (String line : validation.ok) diagnosticLog("  OK: " + line);
+        for (String line : validation.warnings) diagnosticLog("  WARN: " + line);
+        for (String line : validation.errors) diagnosticLog("  ERROR: " + line);
         if (validation.errors.isEmpty()) log("Pre-launch validation passed.");
         else log("Pre-launch validation found " + validation.errors.size() + " issue(s).");
     }
@@ -3820,15 +3837,15 @@ public class Main {
             ? new ArrayList<>(command.subList(mainIndex + 1, command.size()))
             : Collections.emptyList();
 
-        log("Launch command diagnostics:");
-        log("  Working directory: " + gameDir.getAbsolutePath());
-        log("  Java executable: " + command.get(0));
-        log("  JVM arguments: " + String.join(" ", redactLaunchSecrets(jvmArgs)));
-        log("  Main class: " + mainClass);
-        log("  Classpath entries: " + (classpath.isEmpty() ? 0 : classpath.split(Pattern.quote(File.pathSeparator), -1).length));
-        log("  Classpath: " + classpath);
-        log("  Minecraft arguments: " + String.join(" ", redactLaunchSecrets(gameArgs)));
-        log("  Full command: " + String.join(" ", redactLaunchSecrets(command)));
+        diagnosticLog("Launch command diagnostics:");
+        diagnosticLog("  Working directory: " + gameDir.getAbsolutePath());
+        diagnosticLog("  Java executable: " + command.get(0));
+        diagnosticLog("  JVM arguments: " + String.join(" ", redactLaunchSecrets(jvmArgs)));
+        diagnosticLog("  Main class: " + mainClass);
+        diagnosticLog("  Classpath entries: " + (classpath.isEmpty() ? 0 : classpath.split(Pattern.quote(File.pathSeparator), -1).length));
+        diagnosticLog("  Classpath: " + classpath);
+        diagnosticLog("  Minecraft arguments: " + String.join(" ", redactLaunchSecrets(gameArgs)));
+        diagnosticLog("  Full command: " + String.join(" ", redactLaunchSecrets(command)));
     }
 
     private String ensureFabricVersionJson(File gameDir) throws IOException {
@@ -5066,8 +5083,7 @@ public class Main {
             try {
                 if (isCurrentMemoryLoaderJar(loader)) return;
             } catch (IOException e) {
-                log("Could not check standalone loader version; retaining the valid installed loader.");
-                return;
+                log("Could not verify the installed memory loader; downloading a fresh copy.");
             }
         }
 
@@ -5125,18 +5141,199 @@ public class Main {
     }
 
     private boolean isMemoryLoaderJar(File file) {
-        if (file == null || !file.isFile()) return false;
-        try (ZipFile zip = new ZipFile(file)) {
-            ZipEntry metadata = zip.getEntry("fabric.mod.json");
-            ZipEntry bootstrap = zip.getEntry("gcclient/loader/MemoryBootstrap.class");
-            ZipEntry loader = zip.getEntry("gcclient/loader/StandaloneLoader.class");
-            ZipEntry payload = zip.getEntry("gcclient/loader/MemoryPayload.class");
-            if (metadata == null || bootstrap == null || loader == null || payload == null) return false;
-            String json = new String(zip.getInputStream(metadata).readNBytes((int) MAX_FABRIC_METADATA_BYTES), StandardCharsets.UTF_8);
-            return "gamble-client-standalone-loader".equals(Json.string(Json.asObject(Json.parse(json)).get("id")));
+        if (file == null || !file.isFile() || file.length() <= 0 || file.length() > MAX_LOADER_BYTES) return false;
+        try {
+            verifyMemoryLoaderBytes(file, Files.readAllBytes(file.toPath()));
+            return true;
         } catch (Exception ignored) {
             return false;
         }
+    }
+
+    private void verifyMemoryLoaderBytes(File file, byte[] bytes) throws Exception {
+        Map<String, Object> metadata;
+        Map<String, Object> provenance;
+        try (ZipFile zip = new ZipFile(file)) {
+            for (String required : List.of(
+                "fabric.mod.json",
+                "gcclient/loader/StandaloneLoader.class",
+                "gcclient-memory-loader.txt",
+                LOADER_PROVENANCE_ENTRY
+            )) {
+                long count = zip.stream().filter(entry -> required.equals(entry.getName())).count();
+                if (count != 1) throw new IOException("Managed loader has invalid required entries.");
+            }
+            ZipEntry markerEntry = zip.getEntry("gcclient-memory-loader.txt");
+            String marker = new String(zip.getInputStream(markerEntry).readNBytes(64), StandardCharsets.US_ASCII).trim();
+            if (!"verified-memory-only-v1".equals(marker)) throw new IOException("Managed loader memory marker is invalid.");
+            metadata = readBoundedLoaderJson(zip, zip.getEntry("fabric.mod.json"));
+            provenance = readBoundedLoaderJson(zip, zip.getEntry(LOADER_PROVENANCE_ENTRY));
+        }
+        String metadataVersion = Json.string(metadata.get("version"));
+        if (!"gamble-client-standalone-loader".equals(Json.string(metadata.get("id"))) || metadataVersion.isBlank()) {
+            throw new IOException("Managed loader has invalid Fabric metadata.");
+        }
+        verifyLoaderProvenance(bytes, provenance, metadataVersion);
+    }
+
+    private Map<String, Object> readBoundedLoaderJson(ZipFile zip, ZipEntry entry) throws Exception {
+        if (entry == null || entry.getSize() < 0 || entry.getSize() > MAX_FABRIC_METADATA_BYTES) {
+            throw new IOException("Managed loader metadata size is invalid.");
+        }
+        byte[] data = zip.getInputStream(entry).readNBytes((int) MAX_FABRIC_METADATA_BYTES + 1);
+        if (data.length > MAX_FABRIC_METADATA_BYTES) throw new IOException("Managed loader metadata is too large.");
+        return Json.asObject(Json.parse(new String(data, StandardCharsets.UTF_8)));
+    }
+
+    private void verifyLoaderProvenance(byte[] bytes, Map<String, Object> proof, String metadataVersion) throws Exception {
+        long schemaVersion = jsonLong(proof.get("schemaVersion"));
+        String loaderVersion = Json.string(proof.get("loaderVersion"));
+        String platform = Json.string(proof.get("platform"));
+        String canonicalFileName = Json.string(proof.get("canonicalFileName"));
+        String canonicalSha256 = Json.string(proof.get("canonicalSha256"));
+        String coreSha256 = Json.string(proof.get("coreSha256"));
+        long canonicalSize = jsonLong(proof.get("canonicalSize"));
+        String sourceCommit = Json.string(proof.get("sourceCommit"));
+        String clientDelivery = Json.string(proof.get("clientDelivery"));
+        String signatureAlgorithm = Json.string(proof.get("signatureAlgorithm"));
+        String signatureKeyId = Json.string(proof.get("signatureKeyId"));
+        String signatureText = Json.string(proof.get("signature"));
+        if (schemaVersion != 1
+            || !loaderVersion.equals(metadataVersion)
+            || !platform.equals(standaloneLoaderPlatform())
+            || !canonicalFileName.toLowerCase(Locale.ROOT).endsWith(".jar")
+            || !canonicalSha256.matches("[0-9a-f]{64}")
+            || !coreSha256.matches("[0-9a-f]{64}")
+            || canonicalSize <= 0
+            || !sourceCommit.matches("[0-9a-fA-F]{7,}")
+            || !"verified-memory-only".equals(clientDelivery)
+            || !"Ed25519".equals(signatureAlgorithm)
+            || !LOADER_SIGNING_KEY_ID.equals(signatureKeyId)) {
+            throw new IOException("Managed loader provenance claims are invalid.");
+        }
+        if (!coreSha256.equals(loaderCoreSha256(bytes))) {
+            throw new IOException("Managed loader immutable core was modified.");
+        }
+        String canonical = String.join("\n",
+            "gc-standalone-loader-provenance-v1",
+            String.valueOf(schemaVersion),
+            loaderVersion,
+            platform,
+            canonicalFileName,
+            canonicalSha256,
+            coreSha256,
+            String.valueOf(canonicalSize),
+            sourceCommit,
+            clientDelivery,
+            signatureAlgorithm,
+            signatureKeyId
+        );
+        Signature verifier = Signature.getInstance("Ed25519");
+        verifier.initVerify(KeyFactory.getInstance("Ed25519").generatePublic(
+            new X509EncodedKeySpec(Base64.getDecoder().decode(LOADER_SIGNING_PUBLIC_KEY))
+        ));
+        verifier.update(canonical.getBytes(StandardCharsets.UTF_8));
+        if (!verifier.verify(Base64.getUrlDecoder().decode(signatureText))) {
+            throw new IOException("Managed loader provenance signature is invalid.");
+        }
+    }
+
+    private String loaderCoreSha256(byte[] bytes) throws Exception {
+        int eocd = findZipEnd(bytes);
+        int count = zipU16(bytes, eocd + 10);
+        long centralSize = zipU32(bytes, eocd + 12);
+        long centralOffset = zipU32(bytes, eocd + 16);
+        if (count == 0xffff || centralSize == 0xffffffffL || centralOffset == 0xffffffffL
+            || centralOffset + centralSize > bytes.length) {
+            throw new IOException("Managed loader ZIP directory is invalid.");
+        }
+        int centralEnd = Math.toIntExact(centralOffset + centralSize);
+        int offset = Math.toIntExact(centralOffset);
+        List<LoaderCoreEntry> entries = new ArrayList<>();
+        Set<String> allNames = new HashSet<>();
+        for (int index = 0; index < count; index++) {
+            if (offset + 46 > centralEnd || zipU32(bytes, offset) != 0x02014b50L) {
+                throw new IOException("Managed loader ZIP directory is corrupt.");
+            }
+            int flags = zipU16(bytes, offset + 8);
+            int method = zipU16(bytes, offset + 10);
+            long crc32 = zipU32(bytes, offset + 16);
+            long compressedSize = zipU32(bytes, offset + 20);
+            long uncompressedSize = zipU32(bytes, offset + 24);
+            int nameLength = zipU16(bytes, offset + 28);
+            int extraLength = zipU16(bytes, offset + 30);
+            int commentLength = zipU16(bytes, offset + 32);
+            long localOffset = zipU32(bytes, offset + 42);
+            int nameStart = offset + 46;
+            int nameEnd = Math.addExact(nameStart, nameLength);
+            int next = Math.addExact(Math.addExact(nameEnd, extraLength), commentLength);
+            if ((flags & 1) != 0 || nameEnd > centralEnd || next > centralEnd) {
+                throw new IOException("Managed loader ZIP entry is invalid.");
+            }
+            String name = StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes, nameStart, nameLength))
+                .toString();
+            if (!allNames.add(name)) throw new IOException("Managed loader contains duplicate entries.");
+            offset = next;
+            if (LOADER_MUTABLE_ENTRIES.contains(name)) continue;
+            int local = Math.toIntExact(localOffset);
+            if (local + 30 > bytes.length || zipU32(bytes, local) != 0x04034b50L) {
+                throw new IOException("Managed loader local ZIP entry is corrupt.");
+            }
+            int payloadOffset = Math.addExact(
+                Math.addExact(local + 30, zipU16(bytes, local + 26)),
+                zipU16(bytes, local + 28)
+            );
+            int payloadEnd = Math.addExact(payloadOffset, Math.toIntExact(compressedSize));
+            if (payloadEnd > bytes.length) throw new IOException("Managed loader entry is truncated.");
+            entries.add(new LoaderCoreEntry(name, method, compressedSize, uncompressedSize, crc32, payloadOffset));
+        }
+        if (offset != centralEnd || entries.isEmpty()) {
+            throw new IOException("Managed loader immutable core is empty or malformed.");
+        }
+        entries.sort(Comparator.comparing(entry -> entry.name));
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        digest.update("gc-loader-core-v1\0".getBytes(StandardCharsets.UTF_8));
+        for (LoaderCoreEntry entry : entries) {
+            byte[] name = entry.name.getBytes(StandardCharsets.UTF_8);
+            ByteBuffer frame = ByteBuffer.allocate(18);
+            frame.putInt(name.length);
+            frame.putShort((short) entry.method);
+            frame.putInt(Math.toIntExact(entry.compressedSize));
+            frame.putInt(Math.toIntExact(entry.uncompressedSize));
+            frame.putInt((int) entry.crc32);
+            digest.update(frame.array());
+            digest.update(name);
+            digest.update(bytes, entry.payloadOffset, Math.toIntExact(entry.compressedSize));
+        }
+        StringBuilder hex = new StringBuilder(64);
+        for (byte value : digest.digest()) hex.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+        return hex.toString();
+    }
+
+    private int findZipEnd(byte[] bytes) throws IOException {
+        if (bytes.length < 22) throw new IOException("Managed loader ZIP directory is missing.");
+        int minimum = Math.max(0, bytes.length - 65_557);
+        for (int offset = bytes.length - 22; offset >= minimum; offset--) {
+            if (zipU32(bytes, offset) == 0x06054b50L
+                && offset + 22 + zipU16(bytes, offset + 20) == bytes.length) return offset;
+        }
+        throw new IOException("Managed loader ZIP directory is missing.");
+    }
+
+    private int zipU16(byte[] bytes, int offset) throws IOException {
+        if (offset < 0 || offset + 2 > bytes.length) throw new IOException("Managed loader ZIP value is truncated.");
+        return (bytes[offset] & 0xff) | ((bytes[offset + 1] & 0xff) << 8);
+    }
+
+    private long zipU32(byte[] bytes, int offset) throws IOException {
+        if (offset < 0 || offset + 4 > bytes.length) throw new IOException("Managed loader ZIP value is truncated.");
+        return Integer.toUnsignedLong((bytes[offset] & 0xff)
+            | ((bytes[offset + 1] & 0xff) << 8)
+            | ((bytes[offset + 2] & 0xff) << 16)
+            | ((bytes[offset + 3] & 0xff) << 24));
     }
 
     private boolean isCurrentMemoryLoaderJar(File file) throws IOException {
@@ -5386,10 +5583,10 @@ public class Main {
                     String line;
                     while ((line = reader.readLine()) != null) {
                         observeMinecraftLine(line);
-                        log(prefix + " " + line);
+                        diagnosticLog(prefix + " " + line);
                     }
                 } catch (IOException e) {
-                    log(threadName + " stopped: " + e.getMessage());
+                    diagnosticLog(threadName + " stopped: " + e.getMessage());
                 } finally {
                     minecraftOutputThreadsRunning = Math.max(0, minecraftOutputThreadsRunning - 1);
                 }
@@ -5476,11 +5673,12 @@ public class Main {
             if (!diagnosis.detected.isEmpty()) log("Detected: " + diagnosis.detected);
             if (!diagnosis.probableCause.isEmpty()) log("Probable cause: " + diagnosis.probableCause);
             if (!diagnosis.recommendedFix.isEmpty()) log("Recommended fix: " + diagnosis.recommendedFix);
-            log("Last " + recentLaunchLines.size() + " launch log lines:");
-            for (String line : lastLaunchLines(100)) log("  " + line);
+            diagnosticLog("Last " + recentLaunchLines.size() + " launch log lines:");
+            for (String line : lastLaunchLines(100)) diagnosticLog("  " + line);
             try {
                 File crashLog = saveCrashLogSnapshot(exitCode);
-                log("Saved launch failure log: " + crashLog.getAbsolutePath());
+                diagnosticLog("Saved launch failure log: " + crashLog.getAbsolutePath());
+                log("Saved launch failure details for support.");
             } catch (IOException e) {
                 log("Could not save launch failure log: " + e.getMessage());
             }
@@ -5675,10 +5873,32 @@ public class Main {
             return;
         }
 
-        String stamped = "[" + new SimpleDateFormat("HH:mm:ss", Locale.ROOT).format(new Date()) + "] " + message;
+        String visible = sanitizeVisibleMessage(message);
+        String stamped = "[" + new SimpleDateFormat("HH:mm:ss", Locale.ROOT).format(new Date()) + "] " + visible;
         appendColoredLog(stamped);
         log.setCaretPosition(log.getDocument().getLength());
         recordLogLine(stamped);
+    }
+
+    private void diagnosticLog(String message) {
+        String stamped = "[" + new SimpleDateFormat("HH:mm:ss", Locale.ROOT).format(new Date()) + "] "
+            + (message == null ? "" : message);
+        recordLogLine(stamped);
+    }
+
+    private String sanitizeVisibleMessage(String message) {
+        String value = message == null ? "Launcher status updated." : message.replace('\0', ' ').trim();
+        value = value
+            .replaceAll("(?i)([?&](?:token|code|ticket|session|signature)=)[^&\\s]+", "$1[private]")
+            .replaceAll("(?i)https?://[^\\s]+\\?[^\\s]+", "[secure link]")
+            .replaceAll("[A-Za-z]:\\\\(?:[^\\r\\n:*?\"<>|]+\\\\)*[^\\r\\n:*?\"<>|]*", "[launcher files]")
+            .replaceAll("(^|\\s)/(?:[^\\s/]+/)+[^\\s]*", "$1[launcher files]")
+            .replaceAll("(?:[A-Za-z_$][\\w$]*\\.){2,}[A-Za-z_$][\\w$]*(?::\\d+)?", "launcher component")
+            .replaceAll("(?i)\\bpid\\s+\\d+\\b", "game process")
+            .replaceAll("\\s+", " ")
+            .trim();
+        if (value.isEmpty()) return "Launcher status updated.";
+        return value.length() > 320 ? value.substring(0, 317).trim() + "..." : value;
     }
 
     private void appendColoredLog(String line) {
@@ -6189,7 +6409,7 @@ public class Main {
     private String rootMessage(Throwable throwable) {
         Throwable current = throwable;
         while (current.getCause() != null) current = current.getCause();
-        return current.getMessage() == null ? current.toString() : current.getMessage();
+        return sanitizeVisibleMessage(current.getMessage() == null ? current.toString() : current.getMessage());
     }
 
     private String microsoftSignInMessage(Throwable throwable) {
@@ -6258,6 +6478,10 @@ public class Main {
         return configured;
     }
 
+    private static String launcherVersion() {
+        return LAUNCHER_VERSION;
+    }
+
     private static String launcherLogoutUrl() {
         return siteUrl() + "/api/auth/logout?next=" + URLEncoder.encode("/login.html", StandardCharsets.UTF_8);
     }
@@ -6274,7 +6498,7 @@ public class Main {
     }
 
     private static String defaultUsername() {
-        return "BaseToucher";
+        return "Player";
     }
 
     private void addDefaultCapeProviderProperties(List<String> command) {
@@ -6322,6 +6546,24 @@ public class Main {
 
     private boolean is64Bit() {
         return System.getProperty("os.arch", "").contains("64");
+    }
+
+    private static final class LoaderCoreEntry {
+        final String name;
+        final int method;
+        final long compressedSize;
+        final long uncompressedSize;
+        final long crc32;
+        final int payloadOffset;
+
+        LoaderCoreEntry(String name, int method, long compressedSize, long uncompressedSize, long crc32, int payloadOffset) {
+            this.name = name;
+            this.method = method;
+            this.compressedSize = compressedSize;
+            this.uncompressedSize = uncompressedSize;
+            this.crc32 = crc32;
+            this.payloadOffset = payloadOffset;
+        }
     }
 
     private static final class Build {
