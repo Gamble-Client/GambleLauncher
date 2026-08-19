@@ -11,7 +11,7 @@ plugins {
 }
 
 group = "com.gambleclient"
-version = "0.1.109"
+version = "0.1.110"
 
 val javafxVersion = "22.0.2"
 val javafxModuleNames = listOf("base", "graphics", "controls", "media", "web")
@@ -38,6 +38,12 @@ dependencies {
             runtimeOnly("org.openjfx:javafx-$moduleName:$javafxVersion:$platform")
         }
     }
+    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.test {
+    useJUnitPlatform()
 }
 
 val launcherClassesJar = tasks.register<Jar>("launcherClassesJar") {

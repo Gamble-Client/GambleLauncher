@@ -5122,7 +5122,7 @@ mod tests {
         let valid = json!({
             "schemaVersion": 1,
             "id": "gamble-client-standalone-loader",
-            "version": "1.4.14",
+            "version": "1.4.15",
             "name": "Custom Name",
             "icon": "assets/cg-mod/icon.png",
             "environment": "client",

@@ -28,6 +28,16 @@ jobs:
           node-version: "22"
           cache: "npm"
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Verify Windows file permissions
+        shell: pwsh
+        run: .\gradlew.bat test
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 

@@ -80,7 +80,6 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.PosixFilePermission;
 import java.awt.datatransfer.StringSelection;
 import java.security.KeyFactory;
 import java.security.MessageDigest;
@@ -133,7 +132,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.109";
+    private static final String LAUNCHER_VERSION = "0.1.110";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -6125,24 +6124,7 @@ public class Main {
     }
 
     private void hardenPrivateFile(File file) throws IOException {
-        if (file == null || !file.exists()) return;
-        try {
-            Files.setPosixFilePermissions(file.toPath(), Set.of(
-                PosixFilePermission.OWNER_READ,
-                PosixFilePermission.OWNER_WRITE
-            ));
-            return;
-        } catch (UnsupportedOperationException ignored) {
-            // Windows and non-POSIX filesystems use the owner-only File API fallback.
-        }
-        boolean hardened = file.setReadable(false, false);
-        hardened &= file.setWritable(false, false);
-        hardened &= file.setExecutable(false, false);
-        hardened &= file.setReadable(true, true);
-        hardened &= file.setWritable(true, true);
-        if (!hardened) {
-            throw new IOException("Could not restrict private file permissions: " + file);
-        }
+        if (file != null) PrivateFileSecurity.harden(file.toPath());
     }
 
     private File getLauncherLogFile() {
