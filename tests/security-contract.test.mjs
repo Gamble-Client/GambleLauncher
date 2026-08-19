@@ -55,6 +55,8 @@ test("both launcher implementations bind manifests to the requested tier and ins
     assert.match(java, /cg-mod:build_variant/);
     assert.match(java, /standaloneLoaderPlatform\(\)/);
     assert.match(java, /LOADER_PROVENANCE_ENTRY/);
+    assert.match(java, /isExpectedLoaderFabricMetadata\(metadata\)/);
+    assert.match(java, /gcclient\.loader\.StandaloneLoader/);
     assert.match(java, /verifyLoaderProvenance\(bytes, provenance, metadataVersion\)/);
     assert.match(java, /Managed loader immutable core was modified/);
     assert.doesNotMatch(java, /retaining the valid installed loader/);
@@ -70,6 +72,8 @@ test("both launcher implementations bind manifests to the requested tier and ins
     assert.match(rust, /"windows" => "windows"/);
     assert.match(rust, /"linux" => "linux"/);
     assert.match(rust, /LOADER_PROVENANCE_ENTRY/);
+    assert.match(rust, /is_expected_loader_fabric_metadata\(&metadata\)/);
+    assert.match(rust, /gcclient\.loader\.StandaloneLoader/);
     assert.match(rust, /verify_loader_provenance\(bytes, &provenance, metadata_version\)/);
     assert.match(rust, /Managed loader immutable core was modified/);
     assert.match(rust, /unwrap_or\(false\)/);
@@ -81,8 +85,8 @@ test("launch authorization stays in the standalone loader instead of launcher fi
     const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
     const rust = await source("src-tauri/src/main.rs");
 
-    assert.match(java, /Local license files cleared; launch tickets handle current client access/);
     assert.match(java, /Gamble Client will be authorized and loaded from memory by the standalone loader/);
+    assert.doesNotMatch(java, /license\.txt|paste-your-license-key-here|readLegacyLicenseKey|readLicenseKey/);
     assert.doesNotMatch(java, /-Dgamble\.launchTicketFile=/);
     assert.doesNotMatch(java, /fabric\.addMods/);
     assert.doesNotMatch(java, /\/api\/launcher\/license/);

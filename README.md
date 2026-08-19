@@ -27,10 +27,8 @@ Override with `GAMBLE_CLIENT_GAME_DIR` or `-Dgamble.gameDir=/path/to/minecraft`.
 
 Microsoft auth:
 
-The launcher includes the approved Gamble Client Microsoft app ID by default.
-Use the in-launcher Microsoft Sign In button to link an online account. For
-local testing against a different app registration, override the client ID with
-`GAMBLE_MICROSOFT_CLIENT_ID` or `-Dgamble.microsoftClientId=...`.
+The launcher uses its registered public Microsoft app ID. Use the in-launcher
+Microsoft Sign In button to link an online account.
 
 Build:
 

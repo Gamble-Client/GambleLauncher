@@ -4004,10 +4004,8 @@ fn verify_memory_loader_bytes(bytes: &[u8]) -> Result<(), String> {
         entry.read_to_end(&mut data).map_err(error_text)?;
         serde_json::from_slice::<serde_json::Value>(&data).map_err(error_text)?
     };
-    if metadata.get("id").and_then(|value| value.as_str())
-        != Some("gamble-client-standalone-loader")
-    {
-        return Err("Managed loader has the wrong Fabric identity.".to_string());
+    if !is_expected_loader_fabric_metadata(&metadata) {
+        return Err("Managed loader has invalid Fabric metadata.".to_string());
     }
     let metadata_version = metadata
         .get("version")
@@ -4027,6 +4025,42 @@ fn verify_memory_loader_bytes(bytes: &[u8]) -> Result<(), String> {
         serde_json::from_slice::<LoaderProvenance>(&data).map_err(error_text)?
     };
     verify_loader_provenance(bytes, &provenance, metadata_version)
+}
+
+fn is_expected_loader_fabric_metadata(metadata: &serde_json::Value) -> bool {
+    let Some(root) = metadata.as_object() else {
+        return false;
+    };
+    let expected_root = [
+        "schemaVersion", "id", "version", "name", "icon", "environment", "entrypoints", "depends",
+    ];
+    if root.len() != expected_root.len() || expected_root.iter().any(|key| !root.contains_key(*key)) {
+        return false;
+    }
+    let Some(entrypoints) = metadata.get("entrypoints").and_then(|value| value.as_object()) else {
+        return false;
+    };
+    let Some(depends) = metadata.get("depends").and_then(|value| value.as_object()) else {
+        return false;
+    };
+    let pre_launch = entrypoints.get("preLaunch").and_then(|value| value.as_array());
+    let minecraft = depends.get("minecraft").and_then(|value| value.as_array());
+    let name = metadata.get("name").and_then(|value| value.as_str()).unwrap_or("");
+    let version = metadata.get("version").and_then(|value| value.as_str()).unwrap_or("");
+    metadata.get("schemaVersion").and_then(|value| value.as_u64()) == Some(1)
+        && metadata.get("id").and_then(|value| value.as_str()) == Some("gamble-client-standalone-loader")
+        && !version.trim().is_empty()
+        && !name.trim().is_empty() && name.chars().count() <= 64
+        && metadata.get("icon").and_then(|value| value.as_str()) == Some("assets/cg-mod/icon.png")
+        && metadata.get("environment").and_then(|value| value.as_str()) == Some("client")
+        && entrypoints.len() == 1
+        && pre_launch.is_some_and(|items| {
+            items.len() == 1 && items[0].as_str() == Some("gcclient.loader.StandaloneLoader")
+        })
+        && depends.len() == 3
+        && depends.get("java").and_then(|value| value.as_str()) == Some(">=21")
+        && minecraft.is_some_and(|items| items.len() == 1 && items[0].as_str() == Some("1.21.11"))
+        && depends.get("fabricloader").and_then(|value| value.as_str()) == Some(">=0.18.2")
 }
 
 fn verify_loader_provenance(
@@ -5062,10 +5096,11 @@ fn open_external(target: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_browser_url, java_feature_from_text, loader_core_sha256, random_base64_url,
+        is_browser_url, is_expected_loader_fabric_metadata, java_feature_from_text, loader_core_sha256, random_base64_url,
         safe_file_name, verify_fabric_mod_id, verify_fabric_mod_identity, write_private_file,
         MANAGED_CLIENT_MOD_ID,
     };
+    use serde_json::json;
     use std::{env, fs, fs::File, io::Cursor, io::Write, path::PathBuf};
     use zip::{write::SimpleFileOptions, ZipWriter};
 
@@ -5080,6 +5115,24 @@ mod tests {
         ));
         assert!(!is_browser_url("/home/player/.gambleclient"));
         assert!(!is_browser_url("javascript:alert(1)"));
+    }
+
+    #[test]
+    fn managed_loader_metadata_keeps_the_verified_prelaunch_entrypoint() {
+        let valid = json!({
+            "schemaVersion": 1,
+            "id": "gamble-client-standalone-loader",
+            "version": "1.4.14",
+            "name": "Custom Name",
+            "icon": "assets/cg-mod/icon.png",
+            "environment": "client",
+            "entrypoints": { "preLaunch": ["gcclient.loader.StandaloneLoader"] },
+            "depends": { "java": ">=21", "minecraft": ["1.21.11"], "fabricloader": ">=0.18.2" }
+        });
+        assert!(is_expected_loader_fabric_metadata(&valid));
+        let mut altered = valid;
+        altered["entrypoints"]["preLaunch"] = json!(["gcclient.loader.Disabled"]);
+        assert!(!is_expected_loader_fabric_metadata(&altered));
     }
 
     #[test]

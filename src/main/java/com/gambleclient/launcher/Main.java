@@ -133,7 +133,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.108";
+    private static final String LAUNCHER_VERSION = "0.1.109";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -166,7 +166,6 @@ public class Main {
     private static final long MAX_MANAGED_CLIENT_BYTES = 64L * 1024L * 1024L;
     private static final long MAX_LOADER_BYTES = 16L * 1024L * 1024L;
     private static final long MAX_FABRIC_METADATA_BYTES = 1024L * 1024L;
-    private static final String LICENSE_PLACEHOLDER = "paste-your-license-key-here";
     private static final String FABRIC_PROFILE_URL = "https://meta.fabricmc.net/v2/versions/loader/"
         + MINECRAFT_VERSION + "/" + FABRIC_LOADER_VERSION + "/profile/json";
     private static final String FABRIC_API_MODRINTH_URL = "https://api.modrinth.com/v2/project/fabric-api/version?loaders=%5B%22fabric%22%5D&game_versions=%5B%22"
@@ -3218,7 +3217,6 @@ public class Main {
     private UpdateResult checkAndInstallBuild(Build build) throws IOException {
         ensureSignedIn();
         LauncherManifest manifest = fetchLauncherManifest(build);
-        clearLegacyLocalLicenseFiles();
         File loader = new File(getModsFolder(), LOADER_JAR_NAME);
         boolean alreadyReady = loader.isFile() && isCurrentMemoryLoaderJar(loader);
         removeManagedClientArtifactsForMemory();
@@ -3618,10 +3616,6 @@ public class Main {
             if (lower.endsWith(".jar") || (includeDisabled && lower.endsWith(".jar.disabled"))) return file;
         }
         return null;
-    }
-
-    private void clearLegacyLocalLicenseFiles() throws IOException {
-        writeLicenseKey("");
     }
 
     private LaunchIdentity resolveLaunchIdentity(String fallbackName) throws IOException {
@@ -5170,10 +5164,36 @@ public class Main {
             provenance = readBoundedLoaderJson(zip, zip.getEntry(LOADER_PROVENANCE_ENTRY));
         }
         String metadataVersion = Json.string(metadata.get("version"));
-        if (!"gamble-client-standalone-loader".equals(Json.string(metadata.get("id"))) || metadataVersion.isBlank()) {
+        if (!isExpectedLoaderFabricMetadata(metadata)) {
             throw new IOException("Managed loader has invalid Fabric metadata.");
         }
         verifyLoaderProvenance(bytes, provenance, metadataVersion);
+    }
+
+    private boolean isExpectedLoaderFabricMetadata(Map<String, Object> metadata) {
+        if (!metadata.keySet().equals(Set.of(
+            "schemaVersion", "id", "version", "name", "icon", "environment", "entrypoints", "depends"
+        ))) return false;
+        String name = Json.string(metadata.get("name"));
+        String version = Json.string(metadata.get("version"));
+        Map<String, Object> entrypoints = Json.asObject(metadata.get("entrypoints"));
+        Map<String, Object> depends = Json.asObject(metadata.get("depends"));
+        List<Object> preLaunch = Json.asArray(entrypoints.get("preLaunch"));
+        List<Object> minecraft = Json.asArray(depends.get("minecraft"));
+        return jsonLong(metadata.get("schemaVersion")) == 1
+            && "gamble-client-standalone-loader".equals(Json.string(metadata.get("id")))
+            && !version.isBlank()
+            && !name.isBlank() && name.length() <= 64
+            && "assets/cg-mod/icon.png".equals(Json.string(metadata.get("icon")))
+            && "client".equals(Json.string(metadata.get("environment")))
+            && entrypoints.keySet().equals(Set.of("preLaunch"))
+            && preLaunch.size() == 1
+            && "gcclient.loader.StandaloneLoader".equals(Json.string(preLaunch.get(0)))
+            && depends.keySet().equals(Set.of("java", "minecraft", "fabricloader"))
+            && ">=21".equals(Json.string(depends.get("java")))
+            && minecraft.size() == 1
+            && "1.21.11".equals(Json.string(minecraft.get(0)))
+            && ">=0.18.2".equals(Json.string(depends.get("fabricloader")));
     }
 
     private Map<String, Object> readBoundedLoaderJson(ZipFile zip, ZipEntry entry) throws Exception {
@@ -5391,13 +5411,6 @@ public class Main {
             Files.deleteIfExists(file.toPath());
             log("Removed old managed client artifact before memory launch: " + file.getName());
         }
-    }
-
-    private void writeLicenseKey(String key) throws IOException {
-        Files.deleteIfExists(getLicenseFile().toPath());
-        Files.deleteIfExists(new File(getProfileDataFolder(), "license.txt").toPath());
-        Files.deleteIfExists(new File(new File(getLegacyMinecraftFolder(), "cg-mod"), "license.txt").toPath());
-        log("Local license files cleared; launch tickets handle current client access.");
     }
 
     private void writeInstallMarker(String buildId, LauncherManifest manifest, File installed) throws IOException {
@@ -6166,10 +6179,6 @@ public class Main {
         return redacted;
     }
 
-    private File getLicenseFile() {
-        return new File(getLauncherDataFolder(), "license.txt");
-    }
-
     private File getLauncherSessionFile() {
         return new File(getLauncherDataFolder(), "launcher-session.txt");
     }
@@ -6231,34 +6240,6 @@ public class Main {
                 return new File(userHome, "Library/Application Support/minecraft");
             default:
                 return new File(userHome, ".minecraft");
-        }
-    }
-
-    private String readLegacyLicenseKey() {
-        String managedKey = readLicenseKey(new File(getLauncherDataFolder(), "license.txt"));
-        if (!managedKey.isEmpty()) return managedKey;
-
-        String profileKey = readLicenseKey(new File(getProfileDataFolder(), "license.txt"));
-        if (!profileKey.isEmpty()) return profileKey;
-
-        File legacy = new File(new File(getLegacyMinecraftFolder(), "cg-mod"), "license.txt");
-        return readLicenseKey(legacy);
-    }
-
-    private String readLicenseKey(File file) {
-        if (!file.isFile()) return "";
-        try {
-            String raw = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
-            return raw.lines()
-                .filter(line -> !line.trim().startsWith("#"))
-                .map(line -> line.startsWith("license=") ? line.substring("license=".length()) : line)
-                .map(String::trim)
-                .filter(line -> !line.isEmpty())
-                .filter(line -> !LICENSE_PLACEHOLDER.equals(line))
-                .findFirst()
-                .orElse("");
-        } catch (IOException e) {
-            return "";
         }
     }
 
@@ -6422,14 +6403,10 @@ public class Main {
             return message;
         }
         if (lower.contains("invalid app registration") || lower.contains("appreginfo")) {
-            return "Invalid Microsoft app registration. If this appeared before the browser login finished, check Azure: set Supported account types to include personal Microsoft accounts, add http://localhost:"
-                + MICROSOFT_REDIRECT_PORT
-                + "/ under Mobile and desktop applications, and enable public client flows. If it appeared after login, Minecraft Services may still need to approve this client ID at https://aka.ms/AppRegInfo.";
+            return "Microsoft sign-in is temporarily unavailable in this launcher build. Update the launcher and try again.";
         }
         if (lower.contains("client_secret")) {
-            return "Microsoft is treating this as a Web/confidential app. Move http://localhost:"
-                + MICROSOFT_REDIRECT_PORT
-                + "/ to Mobile and desktop applications and enable public client flows. Do not add a client secret to the launcher.";
+            return "Microsoft sign-in is temporarily unavailable in this launcher build. Update the launcher and try again.";
         }
         return message;
     }
@@ -6470,12 +6447,7 @@ public class Main {
     }
 
     private static String siteUrl() {
-        String configured = System.getProperty("gamble.siteUrl", "").trim();
-        if (configured.isEmpty()) configured = System.getenv("GAMBLE_CLIENT_SITE_URL");
-        if (configured == null || configured.trim().isEmpty()) configured = DEFAULT_SITE_URL;
-        configured = configured.trim();
-        while (configured.endsWith("/")) configured = configured.substring(0, configured.length() - 1);
-        return configured;
+        return DEFAULT_SITE_URL;
     }
 
     private static String launcherVersion() {
@@ -6487,10 +6459,7 @@ public class Main {
     }
 
     private static String microsoftClientId() {
-        String configured = System.getProperty("gamble.microsoftClientId", "").trim();
-        if (configured.isEmpty()) configured = System.getenv("GAMBLE_MICROSOFT_CLIENT_ID");
-        if (configured == null || configured.trim().isEmpty()) configured = DEFAULT_MICROSOFT_CLIENT_ID;
-        return configured == null ? "" : configured.trim();
+        return DEFAULT_MICROSOFT_CLIENT_ID;
     }
 
     private String cleanUsername(String value) {

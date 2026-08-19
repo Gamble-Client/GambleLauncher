@@ -2,7 +2,6 @@
 # JavaFX compatibility frontend. All unrelated implementation names remain free
 # to obfuscate, while source/debug tables are removed.
 -dontoptimize
--dontshrink
 -dontnote
 -dontwarn
 -ignorewarnings
