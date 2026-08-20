@@ -49,6 +49,8 @@ const MICROSOFT_SCOPE: &str = "XboxLive.signin offline_access";
 const MICROSOFT_CLIENT_ID: &str = "8eea0ae2-d0a9-4af1-88b9-f66bd96c94bd";
 const MICROSOFT_REDIRECT_PORT: u16 = 39062;
 const MICROSOFT_REDIRECT_URI: &str = "http://localhost:39062/";
+const MICROSOFT_REAUTH_REQUIRED: &str =
+    "Microsoft sign-in expired or was revoked. Reconnect Microsoft to continue.";
 const HTTP_CONNECT_TIMEOUT_SECONDS: u64 = 15;
 const HTTP_REQUEST_TIMEOUT_SECONDS: u64 = 300;
 const HTTP_DOWNLOAD_ATTEMPTS: usize = 3;
@@ -1750,16 +1752,32 @@ fn refresh_microsoft_token(refresh_token: &str) -> Result<MicrosoftToken, String
         ("refresh_token", refresh_token.to_string()),
         ("scope", MICROSOFT_SCOPE.to_string()),
     ];
-    let body = http_client()?
+    let response = http_client()?
         .post(MICROSOFT_TOKEN_URL)
         .form(&params)
         .send()
-        .map_err(error_text)?
-        .error_for_status()
-        .map_err(error_text)?
-        .json::<serde_json::Value>()
         .map_err(error_text)?;
+    let status = response.status();
+    let body = response.json::<serde_json::Value>().map_err(error_text)?;
+    if !status.is_success() {
+        return Err(microsoft_refresh_error(status.as_u16(), &body));
+    }
     parse_microsoft_token(&body)
+}
+
+fn microsoft_refresh_error(status: u16, body: &serde_json::Value) -> String {
+    let error = json_string(body, "error").to_ascii_lowercase();
+    if matches!(
+        error.as_str(),
+        "invalid_grant" | "interaction_required" | "login_required" | "consent_required"
+    ) {
+        return MICROSOFT_REAUTH_REQUIRED.to_string();
+    }
+    if status == 429 {
+        return "Microsoft auth is temporarily rate limited. Wait a minute, then try again."
+            .to_string();
+    }
+    format!("Microsoft auth could not refresh this account (HTTP {status}). Reconnect Microsoft and try again.")
 }
 
 fn exchange_microsoft_authorization_code(
@@ -5096,9 +5114,10 @@ fn open_external(target: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_browser_url, is_expected_loader_fabric_metadata, java_feature_from_text, loader_core_sha256, random_base64_url,
-        safe_file_name, verify_fabric_mod_id, verify_fabric_mod_identity, write_private_file,
-        MANAGED_CLIENT_MOD_ID,
+        is_browser_url, is_expected_loader_fabric_metadata, java_feature_from_text,
+        loader_core_sha256, microsoft_refresh_error, random_base64_url, safe_file_name,
+        verify_fabric_mod_id, verify_fabric_mod_identity, write_private_file,
+        MANAGED_CLIENT_MOD_ID, MICROSOFT_REAUTH_REQUIRED,
     };
     use serde_json::json;
     use std::{env, fs, fs::File, io::Cursor, io::Write, path::PathBuf};
@@ -5115,6 +5134,18 @@ mod tests {
         ));
         assert!(!is_browser_url("/home/player/.gambleclient"));
         assert!(!is_browser_url("javascript:alert(1)"));
+    }
+
+    #[test]
+    fn expired_microsoft_refresh_tokens_request_reauthentication_without_exposing_the_url() {
+        let body = json!({
+            "error": "invalid_grant",
+            "error_description": "AADSTS70000: The provided grant has expired."
+        });
+        let message = microsoft_refresh_error(400, &body);
+        assert_eq!(message, MICROSOFT_REAUTH_REQUIRED);
+        assert!(!message.contains("login.microsoftonline.com"));
+        assert!(!message.contains("AADSTS"));
     }
 
     #[test]

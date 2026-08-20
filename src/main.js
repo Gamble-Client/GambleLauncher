@@ -14,7 +14,7 @@ const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
-const LAUNCHER_VERSION = "0.1.110";
+const LAUNCHER_VERSION = "0.1.111";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 // Browser mocks are a development-only visual harness. Vite removes this branch
@@ -1940,11 +1940,13 @@ async function startMicrosoftSignIn() {
     await loadMicrosoftAccounts();
     log(`Microsoft account linked: ${state.microsoft.name}`);
     render();
+    return result.account;
   } catch (error) {
     state.microsoftError = String(error?.message || error);
     log(`Microsoft sign-in failed: ${state.microsoftError}`);
     showPopup("Microsoft sign-in failed", microsoftAuthMessage(state.microsoftError), "account");
     render();
+    return null;
   } finally {
     setBusy(false);
   }
@@ -2001,6 +2003,13 @@ function microsoftAuthMessage(message) {
     return "Microsoft rejected the old device-code sign-in page. This launcher now uses browser sign-in with a local callback; update the launcher and try Add Microsoft again.";
   }
   return text;
+}
+
+function microsoftReconnectRequired(error) {
+  const lower = String(error?.message || error || "").toLowerCase();
+  return lower.includes("microsoft sign-in expired")
+    || lower.includes("reconnect microsoft")
+    || lower.includes("invalid_grant");
 }
 
 async function refreshFiles() {
@@ -2277,6 +2286,21 @@ app.addEventListener("click", async (event) => {
     } catch (error) {
       state.launchProgress = null;
       log(`Launch failed: ${error.message || error}`);
+      if (microsoftReconnectRequired(error)) {
+        log("The saved Microsoft session expired. Opening Microsoft sign-in now.");
+        state.view = "accounts";
+        state.popup = null;
+        setBusy(false);
+        const account = await startMicrosoftSignIn();
+        if (account?.uuid) {
+          state.profileAccountOverrides[state.selectedProfile] = account.uuid;
+          saveProfileAccountOverrides();
+          state.view = "play";
+          showPopup("Microsoft reconnected", "Microsoft is connected again. Press Launch to start Minecraft.", "account");
+        }
+        await refreshMinecraftStatus({ render: false, logExit: false });
+        return;
+      }
       state.view = "play";
       showPopup("Launch failed", knownLaunchMessage(error), "launch");
       await refreshMinecraftStatus({ render: false, logExit: false });

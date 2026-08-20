@@ -132,7 +132,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.110";
+    private static final String LAUNCHER_VERSION = "0.1.111";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -196,6 +196,8 @@ public class Main {
     private static final String MICROSOFT_AUTHORIZE_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize";
     private static final String MICROSOFT_SCOPE = "XboxLive.signin offline_access";
     private static final String DEFAULT_MICROSOFT_CLIENT_ID = "8eea0ae2-d0a9-4af1-88b9-f66bd96c94bd";
+    private static final String MICROSOFT_REAUTH_REQUIRED =
+        "Microsoft sign-in expired or was revoked. Reconnect Microsoft to continue.";
     private static final int AD_REWARD_SECONDS_FALLBACK = 30;
     private static final int MICROSOFT_REDIRECT_PORT = 39062;
     private static final String MICROSOFT_REDIRECT_URI = "http://localhost:" + MICROSOFT_REDIRECT_PORT + "/";
@@ -3409,6 +3411,7 @@ public class Main {
             @Override
             protected void done() {
                 boolean started = false;
+                boolean reconnectingMicrosoft = false;
                 try {
                     Process process = get();
                     minecraftProcess = process;
@@ -3425,10 +3428,23 @@ public class Main {
                     setBusy(false);
                 } catch (Exception e) {
                     setProgressStatus("Failed");
-                    log("Launch failed: " + rootMessage(e));
-                    JOptionPane.showMessageDialog(frame, rootMessage(e), "Launch failed", JOptionPane.ERROR_MESSAGE);
+                    String message = rootMessage(e);
+                    log("Launch failed: " + message);
+                    if (microsoftReconnectRequired(message)) {
+                        reconnectingMicrosoft = true;
+                        JOptionPane.showMessageDialog(
+                            frame,
+                            "Your saved Microsoft session expired. Microsoft sign-in will open now.\n\nSign in, then press Launch again.",
+                            "Reconnect Microsoft",
+                            JOptionPane.INFORMATION_MESSAGE
+                        );
+                        setBusy(false);
+                        startMicrosoftSignIn(true);
+                    } else {
+                        JOptionPane.showMessageDialog(frame, message, "Launch failed", JOptionPane.ERROR_MESSAGE);
+                    }
                 } finally {
-                    if (!started) setBusy(false);
+                    if (!started && !reconnectingMicrosoft) setBusy(false);
                 }
             }
         }.execute();
@@ -4540,7 +4556,27 @@ public class Main {
         form.put("client_id", clientId);
         form.put("refresh_token", refreshToken);
         form.put("scope", MICROSOFT_SCOPE);
-        return parseMicrosoftToken(formRequest(MICROSOFT_TOKEN_URL, form, 200).body);
+        ApiResponse response = formRequest(MICROSOFT_TOKEN_URL, form, 200, 400, 401, 429);
+        if (response.status != 200) throw new IOException(microsoftRefreshError(response));
+        return parseMicrosoftToken(response.body);
+    }
+
+    private String microsoftRefreshError(ApiResponse response) {
+        String error = Json.string(response.body.get("error")).toLowerCase(Locale.ROOT);
+        if (List.of("invalid_grant", "interaction_required", "login_required", "consent_required").contains(error)) {
+            return MICROSOFT_REAUTH_REQUIRED;
+        }
+        if (response.status == 429) {
+            return "Microsoft auth is temporarily rate limited. Wait a minute, then try again.";
+        }
+        return "Microsoft auth could not refresh this account (HTTP " + response.status + "). Reconnect Microsoft and try again.";
+    }
+
+    private boolean microsoftReconnectRequired(String message) {
+        String lower = String.valueOf(message == null ? "" : message).toLowerCase(Locale.ROOT);
+        return lower.contains("microsoft sign-in expired")
+            || lower.contains("reconnect microsoft")
+            || lower.contains("invalid_grant");
     }
 
     private MicrosoftToken parseMicrosoftToken(Map<String, Object> body) throws IOException {

@@ -151,6 +151,19 @@ test("automatic update prompts never cover an active sign-in flow", async () => 
     assert.match(java, /if \(isLauncherSignInActive\(\)\) \{[\s\S]*Launcher update prompt deferred/);
 });
 
+test("expired Microsoft refresh tokens reopen sign-in instead of exposing an HTTP URL", async () => {
+    const frontend = await source("src/main.js");
+    const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
+    const rust = await source("src-tauri/src/main.rs");
+
+    assert.match(frontend, /microsoftReconnectRequired\(error\)[\s\S]*await startMicrosoftSignIn\(\)/);
+    assert.match(frontend, /Microsoft reconnected[\s\S]*Press Launch to start Minecraft/);
+    assert.match(java, /microsoftReconnectRequired\(message\)[\s\S]*startMicrosoftSignIn\(true\)/);
+    assert.match(java, /"invalid_grant"[\s\S]*MICROSOFT_REAUTH_REQUIRED/);
+    assert.match(rust, /fn microsoft_refresh_error\([\s\S]*"invalid_grant"[\s\S]*MICROSOFT_REAUTH_REQUIRED/);
+    assert.doesNotMatch(rust, /fn refresh_microsoft_token\([\s\S]{0,900}\.error_for_status\(\)/);
+});
+
 test("default-size launcher keeps account sign-in controls inside the visible content column", async () => {
     const css = await source("src/styles.css");
     const rust = await source("src-tauri/src/main.rs");
