@@ -120,8 +120,10 @@ jobs:
             $minimum = 255.0
             $maximum = 0.0
             $buckets = [System.Collections.Generic.HashSet[int]]::new()
-            for ($y = 0; $y -lt $height; $y += 8) {
-              for ($x = 0; $x -lt $width; $x += 8) {
+            # Sample only the WebView client area. Window chrome and the
+            # surrounding desktop must not make an empty page look healthy.
+            for ($y = 48; $y -lt ($height - 16); $y += 8) {
+              for ($x = 16; $x -lt ($width - 16); $x += 8) {
                 $pixel = $bitmap.GetPixel($x, $y)
                 $luma = 0.2126 * $pixel.R + 0.7152 * $pixel.G + 0.0722 * $pixel.B
                 $sum += $luma

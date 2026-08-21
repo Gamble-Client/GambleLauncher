@@ -136,6 +136,11 @@ test("production launcher UI omits owner-specific preview data and sanitizes vis
     assert.match(cargo, /panic = "abort"/);
 });
 
+test("native production assets use relative URLs inside the embedded WebView", async () => {
+    const packageJson = JSON.parse(await source("package.json"));
+    assert.equal(packageJson.scripts.build, "vite build --base ./");
+});
+
 test("Windows retries the embedded app navigation only while WebView2 is blank", async () => {
     const rust = await source("src-tauri/src/main.rs");
 
