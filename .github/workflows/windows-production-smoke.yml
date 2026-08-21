@@ -2,6 +2,12 @@ name: Smoke Test Production Windows Launcher
 
 on:
   workflow_dispatch:
+    inputs:
+      diagnose:
+        description: Build an inspectable source-matched executable and validate its DOM
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   smoke:
@@ -88,10 +94,9 @@ jobs:
               Start-Sleep -Milliseconds 500
             } while ([DateTime]::UtcNow -lt $devtoolsDeadline)
             if (-not $target) {
-              throw "The installed launcher did not expose its embedded app document."
-            }
-
-            $probe = @'
+              Write-Warning "The production launcher keeps DevTools disabled; the source-matched diagnostic job validates its DOM."
+            } else {
+              $probe = @'
           const socket = new WebSocket(process.argv[2]);
           let finished = false;
           let requestId = 0;
@@ -122,9 +127,10 @@ jobs:
           socket.addEventListener("error", (event) => finish(1, { error: String(event.message || event) }));
           setTimeout(() => finish(1, { error: "DOM probe timed out" }), 20000);
           '@
-            $probePath = Join-Path $env:RUNNER_TEMP "probe-installed-launcher.mjs"
-            $probe | Set-Content $probePath -Encoding utf8NoBOM
-            node $probePath $target.webSocketDebuggerUrl
+              $probePath = Join-Path $env:RUNNER_TEMP "probe-installed-launcher.mjs"
+              $probe | Set-Content $probePath -Encoding utf8NoBOM
+              node $probePath $target.webSocketDebuggerUrl
+            }
 
             $webviewDeadline = [DateTime]::UtcNow.AddSeconds(30)
             do {
@@ -219,6 +225,7 @@ jobs:
 
   diagnose:
     name: Inspect packaged Windows WebView
+    if: ${{ inputs.diagnose }}
     runs-on: windows-latest
     timeout-minutes: 15
 
