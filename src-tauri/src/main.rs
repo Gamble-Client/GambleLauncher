@@ -3904,13 +3904,6 @@ fn ensure_loader_jar(profile: &str, token: &str) -> Result<(), String> {
     fs::create_dir_all(&mods).map_err(error_text)?;
     let loader = mods.join(LOADER_JAR_NAME);
 
-    if is_memory_loader_jar(&loader) {
-        match current_memory_loader_is_current(&loader) {
-            Ok(true) => return Ok(()),
-            Ok(false) | Err(_) => {}
-        }
-    }
-
     if token.trim().is_empty() {
         return Err("Sign in before installing the standalone memory loader.".to_string());
     }
@@ -3924,7 +3917,8 @@ fn ensure_loader_jar(profile: &str, token: &str) -> Result<(), String> {
                 "windows" => "windows",
                 "linux" => "linux",
                 _ => "universal",
-            }
+            },
+            "launcherManaged": true
         });
         let response = http_client()?
             .post(format!("{SITE_URL}/api/standalone/loader"))
@@ -5153,7 +5147,7 @@ mod tests {
         let valid = json!({
             "schemaVersion": 1,
             "id": "gamble-client-standalone-loader",
-            "version": "1.4.15",
+            "version": "1.4.16",
             "name": "Custom Name",
             "icon": "assets/cg-mod/icon.png",
             "environment": "client",

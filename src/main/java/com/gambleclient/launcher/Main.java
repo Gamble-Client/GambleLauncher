@@ -132,7 +132,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.111";
+    private static final String LAUNCHER_VERSION = "0.1.112";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -5108,12 +5108,11 @@ public class Main {
         }
 
         File loader = new File(mods, LOADER_JAR_NAME);
-        if (loader.isFile() && isMemoryLoaderJar(loader)) {
-            try {
-                if (isCurrentMemoryLoaderJar(loader)) return;
-            } catch (IOException e) {
-                log("Could not verify the installed memory loader; downloading a fresh copy.");
-            }
+        // A launcher-authenticated launch always receives a fresh one-time enrollment.
+        // Reusing a current but already-consumed personalized jar can make the loader fall
+        // back to its standalone browser sign-in after its local device session is removed.
+        if (loader.isFile() && !isMemoryLoaderJar(loader)) {
+            log("Replacing an invalid managed loader with a fresh personalized copy.");
         }
 
         ensureSignedIn();
@@ -5131,7 +5130,7 @@ public class Main {
             connection.setRequestProperty("Authorization", "Bearer " + launcherToken.trim());
             byte[] request = ("{\"fileName\":\"" + jsonEscape(LOADER_JAR_NAME)
                 + "\",\"displayName\":\"Gamble Client Launcher\",\"platform\":\""
-                + standaloneLoaderPlatform() + "\"}")
+                + standaloneLoaderPlatform() + "\",\"launcherManaged\":true}")
                 .getBytes(StandardCharsets.UTF_8);
             connection.setFixedLengthStreamingMode(request.length);
             try (OutputStream output = connection.getOutputStream()) {

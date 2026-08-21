@@ -54,6 +54,8 @@ test("both launcher implementations bind manifests to the requested tier and ins
     assert.match(java, /removeManagedClientArtifactsForMemory\(\)/);
     assert.match(java, /cg-mod:build_variant/);
     assert.match(java, /standaloneLoaderPlatform\(\)/);
+    assert.match(java, /\\"launcherManaged\\":true/);
+    assert.match(java, /fresh one-time enrollment/);
     assert.match(java, /LOADER_PROVENANCE_ENTRY/);
     assert.match(java, /isExpectedLoaderFabricMetadata\(metadata\)/);
     assert.match(java, /gcclient\.loader\.StandaloneLoader/);
@@ -71,6 +73,7 @@ test("both launcher implementations bind manifests to the requested tier and ins
     assert.match(rust, /fetch_client_manifest\(&build, &token\)/);
     assert.match(rust, /"windows" => "windows"/);
     assert.match(rust, /"linux" => "linux"/);
+    assert.match(rust, /"launcherManaged": true/);
     assert.match(rust, /LOADER_PROVENANCE_ENTRY/);
     assert.match(rust, /is_expected_loader_fabric_metadata\(&metadata\)/);
     assert.match(rust, /gcclient\.loader\.StandaloneLoader/);
