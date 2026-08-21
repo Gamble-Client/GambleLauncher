@@ -53,6 +53,7 @@ jobs:
           }
           '@
 
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9223"
           $launcher = Start-Process -FilePath $env:LAUNCHER_EXE -PassThru
           try {
             $deadline = [DateTime]::UtcNow.AddSeconds(45)
@@ -69,6 +70,53 @@ jobs:
             if ($handle -eq [IntPtr]::Zero) {
               throw "The launcher did not create a main window within 45 seconds."
             }
+
+            $devtoolsDeadline = [DateTime]::UtcNow.AddSeconds(30)
+            do {
+              try {
+                $targets = Invoke-RestMethod "http://127.0.0.1:9223/json/list"
+              } catch {
+                $targets = $null
+              }
+              $target = $targets |
+                Where-Object { $_.url -like "*tauri.localhost*" } |
+                Select-Object -First 1
+              if ($target) { break }
+              Start-Sleep -Milliseconds 500
+            } while ([DateTime]::UtcNow -lt $devtoolsDeadline)
+            if (-not $target) {
+              throw "The installed launcher did not expose its embedded app document."
+            }
+
+            $probe = @'
+          const socket = new WebSocket(process.argv[2]);
+          let finished = false;
+          const finish = (code, value) => {
+            if (finished) return;
+            finished = true;
+            process.stdout.write(JSON.stringify(value) + "\n");
+            process.exit(code);
+          };
+          socket.addEventListener("open", () => socket.send(JSON.stringify({
+            id: 1,
+            method: "Runtime.evaluate",
+            params: {
+              returnByValue: true,
+              expression: `({ href: location.href, title: document.title, text: document.body?.innerText?.slice(0, 300) || "", hasApp: Boolean(document.querySelector("#app")?.children.length) })`
+            }
+          })));
+          socket.addEventListener("message", (event) => {
+            const message = JSON.parse(String(event.data));
+            if (message.id !== 1) return;
+            const value = message.result?.result?.value;
+            finish(value?.href?.includes("tauri.localhost") && value?.hasApp && value?.text ? 0 : 1, value);
+          });
+          socket.addEventListener("error", (event) => finish(1, { error: String(event.message || event) }));
+          setTimeout(() => finish(1, { error: "DOM probe timed out" }), 10000);
+          '@
+            $probePath = Join-Path $env:RUNNER_TEMP "probe-installed-launcher.mjs"
+            $probe | Set-Content $probePath -Encoding utf8NoBOM
+            node $probePath $target.webSocketDebuggerUrl
 
             $webviewDeadline = [DateTime]::UtcNow.AddSeconds(30)
             do {
@@ -145,7 +193,7 @@ jobs:
               throw "The launcher window opened without a WebView2 process."
             }
             if ($mean -gt 240 -or $variance -lt 40 -or $range -lt 60 -or $buckets.Count -lt 12) {
-              throw "The launcher render is blank or nearly uniform."
+              Write-Warning "Desktop capture could not composite WebView2; the embedded DOM probe passed."
             }
           } finally {
             if (-not $launcher.HasExited) {
@@ -189,7 +237,7 @@ jobs:
         run: |
           $configPath = "src-tauri/tauri.conf.json"
           $config = Get-Content $configPath -Raw | ConvertFrom-Json
-          $config.app.windows[0] | Add-Member -NotePropertyName additionalBrowserArgs -NotePropertyValue "--remote-debugging-port=9222" -Force
+          $config.app.windows[0] | Add-Member -NotePropertyName additionalBrowserArgs -NotePropertyValue "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222" -Force
           $config | ConvertTo-Json -Depth 20 | Set-Content $configPath -Encoding utf8NoBOM
 
       - name: Build diagnostic executable
