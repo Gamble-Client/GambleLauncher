@@ -147,7 +147,7 @@ test("the native window is created after Tauri setup to avoid the WebView2 start
     const config = JSON.parse(await source("src-tauri/tauri.conf.json"));
     assert.equal(config.app.windows[0].useHttpsScheme, true);
     assert.equal(config.app.windows[0].create, false);
-    assert.match(rust, /WebviewWindowBuilder::from_config\(app\.handle\(\), window_config\)\?\.build\(\)\?/);
+    assert.match(rust, /WebviewWindowBuilder::new\([\s\S]*WebviewUrl::App\("index\.html"\.into\(\)\)[\s\S]*\.use_https_scheme\(true\)[\s\S]*\.build\(\)\?/);
     assert.doesNotMatch(rust, /window\.navigate\(/);
 });
 
