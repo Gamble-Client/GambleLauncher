@@ -3486,9 +3486,6 @@ fn main() {
                 std::thread::spawn(move || {
                     for delay_ms in [250, 1_000, 2_500] {
                         std::thread::sleep(Duration::from_millis(delay_ms));
-                        if window.url().is_ok_and(|url| url.as_str() != "about:blank") {
-                            break;
-                        }
                         if let Err(error) = window.navigate(app_url.clone()) {
                             eprintln!("Windows WebView navigation retry failed: {error}");
                         }

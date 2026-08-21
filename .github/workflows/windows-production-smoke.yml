@@ -179,6 +179,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
       - name: Enable local DevTools inspection
         shell: pwsh
         run: |
@@ -218,9 +223,10 @@ jobs:
           const endpoint = process.argv[2];
           const socket = new WebSocket(endpoint);
           const messages = [];
+          let healthy = false;
           const finish = () => {
             for (const message of messages) process.stdout.write(JSON.stringify(message) + "\n");
-            process.exit(0);
+            process.exit(healthy ? 0 : 1);
           };
           socket.addEventListener("open", () => {
             socket.send(JSON.stringify({ id: 1, method: "Runtime.enable" }));
@@ -246,6 +252,10 @@ jobs:
           });
           socket.addEventListener("message", (event) => {
             const message = JSON.parse(String(event.data));
+            if (message.id === 3) {
+              const value = message.result?.result?.value;
+              healthy = Boolean(value && value.href !== "about:blank" && value.bodyText && value.scripts?.length && value.styles?.length);
+            }
             if (message.id === 3 || message.method === "Runtime.exceptionThrown" || message.method === "Log.entryAdded") messages.push(message);
           });
           socket.addEventListener("error", (event) => {

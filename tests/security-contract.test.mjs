@@ -141,13 +141,13 @@ test("native production assets use relative URLs inside the embedded WebView", a
     assert.equal(packageJson.scripts.build, "vite build --base ./");
 });
 
-test("Windows retries the embedded app navigation only while WebView2 is blank", async () => {
+test("Windows explicitly retries embedded app navigation through the WebView2 startup race", async () => {
     const rust = await source("src-tauri/src/main.rs");
 
     assert.match(rust, /tauri::Url::parse\("http:\/\/tauri\.localhost\/"\)/);
     assert.match(rust, /window\.navigate\(app_url\.clone\(\)\)\?;/);
     assert.match(rust, /\[250, 1_000, 2_500\]/);
-    assert.match(rust, /url\.as_str\(\) != "about:blank"/);
+    assert.doesNotMatch(rust, /url\.as_str\(\) != "about:blank"/);
     assert.match(rust, /window\.navigate\(app_url\.clone\(\)\)/);
 });
 
