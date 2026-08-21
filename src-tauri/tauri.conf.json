@@ -12,7 +12,6 @@
   "app": {
     "windows": [
       {
-        "create": false,
         "title": "Gamble Client Launcher",
         "width": 1120,
         "height": 720,

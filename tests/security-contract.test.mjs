@@ -141,14 +141,14 @@ test("native production assets use relative URLs inside the embedded WebView", a
     assert.equal(packageJson.scripts.build, "vite build --base ./");
 });
 
-test("the native window is created after Tauri setup to avoid the WebView2 startup race", async () => {
+test("the native window retries embedded navigation only after the Windows event loop is ready", async () => {
     const rust = await source("src-tauri/src/main.rs");
 
     const config = JSON.parse(await source("src-tauri/tauri.conf.json"));
     assert.equal(config.app.windows[0].useHttpsScheme, true);
-    assert.equal(config.app.windows[0].create, false);
-    assert.match(rust, /WebviewWindowBuilder::new\([\s\S]*WebviewUrl::App\("index\.html"\.into\(\)\)[\s\S]*\.use_https_scheme\(true\)[\s\S]*\.build\(\)\?/);
-    assert.match(rust, /window\.navigate\(app_url\.clone\(\)\)\?/);
+    assert.notEqual(config.app.windows[0].create, false);
+    assert.match(rust, /matches!\(event, tauri::RunEvent::Ready\)/);
+    assert.match(rust, /window\.navigate\(app_url\.clone\(\)\)/);
     assert.match(rust, /https:\/\/tauri\.localhost\/index\.html/);
 });
 

@@ -23,6 +23,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter};
+#[cfg(target_os = "windows")]
+use tauri::Manager;
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
@@ -3469,48 +3471,8 @@ fn open_url(url: String) -> Result<(), String> {
 }
 
 fn main() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
-            let window_config = app
-                .config()
-                .app
-                .windows
-                .first()
-                .ok_or_else(|| "Launcher window configuration is missing.".to_string())?;
-            let mut window = tauri::WebviewWindowBuilder::new(
-                app.handle(),
-                "main",
-                tauri::WebviewUrl::App("index.html".into()),
-            )
-            .title("Gamble Client Launcher")
-            .inner_size(1120.0, 720.0)
-            .min_inner_size(820.0, 560.0)
-            .resizable(true)
-            .use_https_scheme(true);
-            if let Some(browser_args) = window_config.additional_browser_args.as_deref() {
-                window = window.additional_browser_args(browser_args);
-            }
-            let window = window.build()?;
-            #[cfg(target_os = "windows")]
-            {
-                let app_url = tauri::Url::parse("https://tauri.localhost/index.html")
-                    .expect("the embedded Windows app URL is valid");
-                window.navigate(app_url.clone())?;
-                std::thread::spawn(move || {
-                    for delay_ms in [250, 1_000, 2_500] {
-                        std::thread::sleep(Duration::from_millis(delay_ms));
-                        if window.url().is_ok_and(|url| url.as_str() != "about:blank") {
-                            break;
-                        }
-                        if let Err(error) = window.navigate(app_url.clone()) {
-                            eprintln!("Windows app navigation retry failed: {error}");
-                        }
-                    }
-                });
-            }
-            Ok(())
-        })
         .invoke_handler(tauri::generate_handler![
             launcher_info,
             launcher_api,
@@ -3547,8 +3509,28 @@ fn main() {
             minecraft_status,
             open_url
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Gamble Client Launcher");
+        .build(tauri::generate_context!())
+        .expect("error while building Gamble Client Launcher");
+    app.run(|app_handle, event| {
+        #[cfg(target_os = "windows")]
+        if matches!(event, tauri::RunEvent::Ready) {
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let app_url = tauri::Url::parse("https://tauri.localhost/index.html")
+                    .expect("the embedded Windows app URL is valid");
+                std::thread::spawn(move || {
+                    for delay_ms in [0, 250, 1_000, 2_500] {
+                        std::thread::sleep(Duration::from_millis(delay_ms));
+                        if window.url().is_ok_and(|url| url.as_str() != "about:blank") {
+                            break;
+                        }
+                        if let Err(error) = window.navigate(app_url.clone()) {
+                            eprintln!("Windows app navigation retry failed: {error}");
+                        }
+                    }
+                });
+            }
+        }
+    });
 }
 
 fn profile_id(value: &str) -> String {
