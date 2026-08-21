@@ -148,7 +148,8 @@ test("the native window is created after Tauri setup to avoid the WebView2 start
     assert.equal(config.app.windows[0].useHttpsScheme, true);
     assert.equal(config.app.windows[0].create, false);
     assert.match(rust, /WebviewWindowBuilder::new\([\s\S]*WebviewUrl::App\("index\.html"\.into\(\)\)[\s\S]*\.use_https_scheme\(true\)[\s\S]*\.build\(\)\?/);
-    assert.doesNotMatch(rust, /window\.navigate\(/);
+    assert.match(rust, /window\.navigate\(app_url\.clone\(\)\)\?/);
+    assert.match(rust, /https:\/\/tauri\.localhost\/index\.html/);
 });
 
 test("automatic update prompts never cover an active sign-in flow", async () => {

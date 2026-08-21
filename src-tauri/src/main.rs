@@ -3491,7 +3491,24 @@ fn main() {
             if let Some(browser_args) = window_config.additional_browser_args.as_deref() {
                 window = window.additional_browser_args(browser_args);
             }
-            window.build()?;
+            let window = window.build()?;
+            #[cfg(target_os = "windows")]
+            {
+                let app_url = tauri::Url::parse("https://tauri.localhost/index.html")
+                    .expect("the embedded Windows app URL is valid");
+                window.navigate(app_url.clone())?;
+                std::thread::spawn(move || {
+                    for delay_ms in [250, 1_000, 2_500] {
+                        std::thread::sleep(Duration::from_millis(delay_ms));
+                        if window.url().is_ok_and(|url| url.as_str() != "about:blank") {
+                            break;
+                        }
+                        if let Err(error) = window.navigate(app_url.clone()) {
+                            eprintln!("Windows app navigation retry failed: {error}");
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
