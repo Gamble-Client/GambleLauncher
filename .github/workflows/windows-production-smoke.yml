@@ -81,6 +81,9 @@ jobs:
               $target = $targets |
                 Where-Object { $_.url -like "*tauri.localhost*" } |
                 Select-Object -First 1
+              if (-not $target) {
+                $target = $targets | Select-Object -First 1
+              }
               if ($target) { break }
               Start-Sleep -Milliseconds 500
             } while ([DateTime]::UtcNow -lt $devtoolsDeadline)
@@ -91,28 +94,33 @@ jobs:
             $probe = @'
           const socket = new WebSocket(process.argv[2]);
           let finished = false;
+          let requestId = 0;
           const finish = (code, value) => {
             if (finished) return;
             finished = true;
             process.stdout.write(JSON.stringify(value) + "\n");
             process.exit(code);
           };
-          socket.addEventListener("open", () => socket.send(JSON.stringify({
-            id: 1,
-            method: "Runtime.evaluate",
-            params: {
-              returnByValue: true,
-              expression: `({ href: location.href, title: document.title, text: document.body?.innerText?.slice(0, 300) || "", hasApp: Boolean(document.querySelector("#app")?.children.length) })`
-            }
-          })));
+          const inspect = () => socket.send(JSON.stringify({
+              id: ++requestId,
+              method: "Runtime.evaluate",
+              params: {
+                returnByValue: true,
+                expression: `({ href: location.href, title: document.title, text: document.body?.innerText?.slice(0, 300) || "", hasApp: Boolean(document.querySelector("#app")?.children.length) })`
+              }
+            }));
+          socket.addEventListener("open", () => {
+            inspect();
+            setInterval(inspect, 500);
+          });
           socket.addEventListener("message", (event) => {
             const message = JSON.parse(String(event.data));
-            if (message.id !== 1) return;
+            if (!message.id) return;
             const value = message.result?.result?.value;
-            finish(value?.href?.includes("tauri.localhost") && value?.hasApp && value?.text ? 0 : 1, value);
+            if (value?.href?.includes("tauri.localhost") && value?.hasApp && value?.text) finish(0, value);
           });
           socket.addEventListener("error", (event) => finish(1, { error: String(event.message || event) }));
-          setTimeout(() => finish(1, { error: "DOM probe timed out" }), 10000);
+          setTimeout(() => finish(1, { error: "DOM probe timed out" }), 20000);
           '@
             $probePath = Join-Path $env:RUNNER_TEMP "probe-installed-launcher.mjs"
             $probe | Set-Content $probePath -Encoding utf8NoBOM
@@ -286,6 +294,7 @@ jobs:
           const socket = new WebSocket(endpoint);
           const messages = [];
           let healthy = false;
+          let requestId = 2;
           const finish = () => {
             for (const message of messages) process.stdout.write(JSON.stringify(message) + "\n");
             process.exit(healthy ? 0 : 1);
@@ -293,8 +302,8 @@ jobs:
           socket.addEventListener("open", () => {
             socket.send(JSON.stringify({ id: 1, method: "Runtime.enable" }));
             socket.send(JSON.stringify({ id: 2, method: "Log.enable" }));
-            socket.send(JSON.stringify({
-              id: 3,
+            const inspect = () => socket.send(JSON.stringify({
+              id: ++requestId,
               method: "Runtime.evaluate",
               params: {
                 returnByValue: true,
@@ -310,15 +319,18 @@ jobs:
                 })`
               }
             }));
-            setTimeout(finish, 5000);
+            inspect();
+            setInterval(inspect, 500);
+            setTimeout(finish, 20000);
           });
           socket.addEventListener("message", (event) => {
             const message = JSON.parse(String(event.data));
-            if (message.id === 3) {
+            if (message.id >= 3) {
               const value = message.result?.result?.value;
               healthy = Boolean(value && value.href !== "about:blank" && value.bodyText && value.scripts?.length && value.styles?.length);
+              if (healthy) finish();
             }
-            if (message.id === 3 || message.method === "Runtime.exceptionThrown" || message.method === "Log.entryAdded") messages.push(message);
+            if (message.id >= 3 || message.method === "Runtime.exceptionThrown" || message.method === "Log.entryAdded") messages.push(message);
           });
           socket.addEventListener("error", (event) => {
             process.stderr.write(String(event.message || event) + "\n");
