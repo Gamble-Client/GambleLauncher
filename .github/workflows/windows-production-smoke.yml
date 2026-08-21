@@ -91,12 +91,17 @@ jobs:
             $bitmap = [System.Drawing.Bitmap]::new($width, $height)
             $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
             try {
-              $hdc = $graphics.GetHdc()
-              try {
-                $captured = [GambleWindowCapture]::PrintWindow($handle, $hdc, 2)
-              } finally {
-                $graphics.ReleaseHdc($hdc)
-              }
+              # WebView2 can move fully composited content onto a GPU surface,
+              # which PrintWindow returns as white even while the user-visible
+              # window is healthy. Capture the visible desktop pixels instead.
+              $graphics.CopyFromScreen(
+                $rect.Left,
+                $rect.Top,
+                0,
+                0,
+                [System.Drawing.Size]::new($width, $height)
+              )
+              $captured = $true
             } finally {
               $graphics.Dispose()
             }
