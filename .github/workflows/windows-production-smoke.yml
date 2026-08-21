@@ -144,7 +144,7 @@ jobs:
             if (-not $webviews) {
               throw "The launcher window opened without a WebView2 process."
             }
-            if ($variance -lt 40 -or $range -lt 60 -or $buckets.Count -lt 12) {
+            if ($mean -gt 240 -or $variance -lt 40 -or $range -lt 60 -or $buckets.Count -lt 12) {
               throw "The launcher render is blank or nearly uniform."
             }
           } finally {

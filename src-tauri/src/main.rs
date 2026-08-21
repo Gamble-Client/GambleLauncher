@@ -3478,6 +3478,11 @@ fn main() {
             if let Some(window) = _app.get_webview_window("main") {
                 let app_url = tauri::Url::parse("http://tauri.localhost/")
                     .expect("the embedded Windows app URL is valid");
+                // WebView2 occasionally leaves the configured app navigation at
+                // about:blank during cold startup. Start the embedded navigation
+                // explicitly instead of trusting a transient non-blank URL that
+                // may still fail before the first document is committed.
+                window.navigate(app_url.clone())?;
                 std::thread::spawn(move || {
                     for delay_ms in [250, 1_000, 2_500] {
                         std::thread::sleep(Duration::from_millis(delay_ms));

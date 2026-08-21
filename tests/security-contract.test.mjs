@@ -145,6 +145,7 @@ test("Windows retries the embedded app navigation only while WebView2 is blank",
     const rust = await source("src-tauri/src/main.rs");
 
     assert.match(rust, /tauri::Url::parse\("http:\/\/tauri\.localhost\/"\)/);
+    assert.match(rust, /window\.navigate\(app_url\.clone\(\)\)\?;/);
     assert.match(rust, /\[250, 1_000, 2_500\]/);
     assert.match(rust, /url\.as_str\(\) != "about:blank"/);
     assert.match(rust, /window\.navigate\(app_url\.clone\(\)\)/);
