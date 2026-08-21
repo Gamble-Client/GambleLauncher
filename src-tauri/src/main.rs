@@ -3472,7 +3472,13 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            tauri::WebviewWindowBuilder::new(
+            let window_config = app
+                .config()
+                .app
+                .windows
+                .first()
+                .ok_or_else(|| "Launcher window configuration is missing.".to_string())?;
+            let mut window = tauri::WebviewWindowBuilder::new(
                 app.handle(),
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
@@ -3481,8 +3487,11 @@ fn main() {
             .inner_size(1120.0, 720.0)
             .min_inner_size(820.0, 560.0)
             .resizable(true)
-            .use_https_scheme(true)
-            .build()?;
+            .use_https_scheme(true);
+            if let Some(browser_args) = window_config.additional_browser_args.as_deref() {
+                window = window.additional_browser_args(browser_args);
+            }
+            window.build()?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
