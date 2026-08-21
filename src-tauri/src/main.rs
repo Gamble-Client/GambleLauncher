@@ -3476,7 +3476,7 @@ fn main() {
         .setup(|_app| {
             #[cfg(target_os = "windows")]
             if let Some(window) = _app.get_webview_window("main") {
-                let app_url = tauri::Url::parse("http://tauri.localhost/")
+                let app_url = tauri::Url::parse("https://tauri.localhost/")
                     .expect("the embedded Windows app URL is valid");
                 // WebView2 occasionally leaves the configured app navigation at
                 // about:blank during cold startup. Start the embedded navigation
