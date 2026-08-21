@@ -1851,3 +1851,188 @@ input,
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }
+
+/* Neomorphic minimal concept — visual-only and isolated for review. */
+:root {
+  --bg: #11151a;
+  --rail: #13181e;
+  --panel: #171c22;
+  --panel-2: #1b2128;
+  --surface: #161b21;
+  --surface-strong: #1a2027;
+  --line: rgba(255, 255, 255, .055);
+  --line-strong: rgba(255, 176, 0, .22);
+  --muted: #9ca5ae;
+  --neo-raised: 13px 13px 27px rgba(2, 5, 8, .72), -9px -9px 22px rgba(47, 56, 66, .38);
+  --neo-small: 7px 7px 15px rgba(2, 5, 8, .68), -6px -6px 14px rgba(47, 56, 66, .34);
+  --neo-inset: inset 6px 6px 13px rgba(2, 5, 8, .7), inset -5px -5px 11px rgba(47, 56, 66, .3);
+}
+
+body {
+  background: radial-gradient(circle at 82% 4%, rgba(245, 158, 11, .055), transparent 29%), linear-gradient(145deg, #14191f, var(--bg) 58%, #0f1317);
+}
+
+.shell { gap: 20px; padding: 18px; }
+
+.rail {
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: linear-gradient(145deg, #181e24, #101419);
+  box-shadow: var(--neo-raised);
+}
+
+.content { padding: 8px 10px 16px 0; }
+.brand { border-color: var(--line); }
+
+.brand-mark,
+.avatar,
+.mini-avatar {
+  border-color: var(--line);
+  border-radius: 13px;
+  background: var(--surface-strong);
+  box-shadow: var(--neo-small);
+}
+
+.nav-item {
+  border: 1px solid transparent;
+  border-radius: 12px;
+}
+
+.nav-item:hover {
+  border-color: var(--line);
+  background: var(--surface-strong);
+  box-shadow: var(--neo-small);
+}
+
+.nav-item.active {
+  border-color: rgba(245, 158, 11, .16);
+  background: var(--surface-strong);
+  color: #fff;
+  box-shadow: var(--neo-inset);
+}
+
+.nav-item.active::before { border-radius: 999px; }
+
+.topbar,
+.screen-band {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 16px 18px;
+  background: linear-gradient(145deg, #191f26, #12171c);
+  box-shadow: var(--neo-small);
+}
+
+.topbar::before,
+.screen-band::before,
+.launch-panel::before,
+.launch-panel::after { content: none; }
+
+.launch-panel,
+.account-panel,
+.action-tile,
+.log-card,
+.friends-panel,
+.sponsor-panel,
+.signin-panel,
+.account-card,
+.update-card,
+.profile-card,
+.profile-editor,
+.loader-card,
+.settings-grid,
+.privacy-panel,
+.diagnostic-row,
+.file-row,
+.update-modal {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(145deg, #1a2027, #12171c);
+  box-shadow: var(--neo-small);
+}
+
+.launch-panel {
+  border-radius: 24px;
+  background: radial-gradient(circle at 88% 12%, rgba(245, 158, 11, .08), transparent 28%), linear-gradient(145deg, #1b2128, #12171c);
+  box-shadow: var(--neo-raised);
+}
+
+.rail-card,
+.version-strip,
+.launch-facts div,
+.account-row,
+.friend-row,
+.tune-strip,
+.checkbox-setting,
+.empty {
+  border-color: var(--line);
+  border-radius: 13px;
+  background: #151a20;
+  box-shadow: var(--neo-inset);
+}
+
+.ghost,
+.primary-small,
+.icon-button,
+.subtle-button,
+.action-tile button,
+.log-head button,
+.file-row button,
+.launch-button {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(145deg, #1d232a, #14191f);
+  color: #f5f7fb;
+  box-shadow: var(--neo-small);
+}
+
+.ghost:hover,
+.primary-small:hover,
+.icon-button:hover,
+.subtle-button:hover,
+.action-tile button:hover,
+.log-head button:hover,
+.file-row button:hover,
+.launch-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(245, 158, 11, .2);
+  background: #1c232a;
+  color: #fbbf24;
+}
+
+.ghost:active,
+.primary-small:active,
+.icon-button:active,
+.subtle-button:active,
+.action-tile button:active,
+.log-head button:active,
+.file-row button:active,
+.launch-button:active {
+  transform: none;
+  box-shadow: var(--neo-inset);
+}
+
+.launch-button,
+.primary-small {
+  border-color: rgba(245, 158, 11, .2);
+  color: #fbbf24;
+}
+
+select,
+input,
+.inline-input,
+.toggle-button {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #151a20;
+  box-shadow: var(--neo-inset);
+}
+
+.log-card { overflow: hidden; }
+.log-head { background: rgba(21, 26, 32, .84); }
+.log-lines { background: #101419; }
+
+@media (max-width: 760px) {
+  .shell { gap: 14px; padding: 12px; }
+  .content { padding: 0; }
+  .rail, .launch-panel { border-radius: 18px; }
+}

@@ -579,3 +579,147 @@
     -fx-border-color: rgba(104, 141, 187, 0.84);
     -fx-effect: dropshadow(gaussian, rgba(104, 141, 187, 0.26), 8, 0.2, 0, 0);
 }
+
+/* Neomorphic minimal concept — visual-only and isolated for review. */
+.app {
+    -fx-background-color: linear-gradient(to bottom right, #14191f, #11151a 58%, #0e1216);
+    -fx-font-family: "Segoe UI", "Arial Narrow", sans-serif;
+}
+
+.sidebar {
+    -fx-padding: 22;
+    -fx-spacing: 12;
+    -fx-background-color: linear-gradient(to bottom right, #1a2027, #101419);
+    -fx-background-radius: 0 22 22 0;
+    -fx-border-color: rgba(255, 255, 255, 0.055);
+    -fx-border-width: 0 1 1 0;
+    -fx-border-radius: 0 22 22 0;
+    -fx-effect: dropshadow(gaussian, rgba(1, 4, 7, 0.74), 28, 0.18, 11, 10);
+}
+
+.content,
+.content-host,
+.content-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+.title { -fx-font-size: 27px; }
+.heading { -fx-font-size: 25px; }
+.muted, .chip-name, .field-label { -fx-text-fill: #9ca5ae; }
+
+.card,
+.log-card,
+.modal,
+.ad-modal {
+    -fx-background-color: linear-gradient(to bottom right, #1b2128, #12171c);
+    -fx-background-radius: 18;
+    -fx-border-color: rgba(255, 255, 255, 0.055);
+    -fx-border-radius: 18;
+    -fx-padding: 18;
+    -fx-effect: dropshadow(gaussian, rgba(1, 4, 7, 0.7), 24, 0.18, 9, 9);
+}
+
+.chip,
+.version-chip,
+.slot-card,
+.ad-card,
+.selected-build-label,
+.notice,
+.mod-row,
+.account-row,
+.module-tile {
+    -fx-background-color: linear-gradient(to bottom right, #1b2128, #14191f);
+    -fx-background-radius: 13;
+    -fx-border-color: rgba(255, 255, 255, 0.05);
+    -fx-border-radius: 13;
+    -fx-effect: dropshadow(gaussian, rgba(1, 4, 7, 0.62), 12, 0.14, 5, 5);
+}
+
+.version-chip,
+.selected-build-label,
+.module-tile.active {
+    -fx-border-color: rgba(255, 176, 0, 0.18);
+}
+
+.button,
+.primary,
+.secondary,
+.state-toggle,
+.folder-tab {
+    -fx-background-color: linear-gradient(to bottom right, #1d242b, #14191f);
+    -fx-background-radius: 12;
+    -fx-border-color: rgba(255, 255, 255, 0.055);
+    -fx-border-radius: 12;
+    -fx-text-fill: white;
+    -fx-effect: dropshadow(gaussian, rgba(1, 4, 7, 0.68), 13, 0.16, 5, 5);
+}
+
+.primary {
+    -fx-border-color: rgba(255, 176, 0, 0.2);
+    -fx-text-fill: #ffbd32;
+}
+
+.button:hover,
+.primary:hover,
+.secondary:hover,
+.state-toggle:hover,
+.folder-tab:hover {
+    -fx-background-color: #1d242b;
+    -fx-border-color: rgba(255, 176, 0, 0.24);
+    -fx-text-fill: #ffbd32;
+}
+
+.button:pressed,
+.primary:pressed,
+.secondary:pressed,
+.state-toggle:pressed,
+.folder-tab:pressed {
+    -fx-background-color: #12171c;
+    -fx-effect: innershadow(gaussian, rgba(1, 4, 7, 0.86), 12, 0.24, 4, 4);
+}
+
+.combo-box,
+.text-field,
+.text-area,
+.list-view {
+    -fx-background-color: #151a20;
+    -fx-background-radius: 12;
+    -fx-border-color: rgba(255, 255, 255, 0.05);
+    -fx-border-radius: 12;
+    -fx-effect: innershadow(gaussian, rgba(1, 4, 7, 0.75), 10, 0.18, 4, 4);
+}
+
+.combo-box .list-cell,
+.combo-box-popup .list-view .list-cell,
+.text-area .content {
+    -fx-background-color: #151a20;
+}
+
+.combo-box-popup .list-view .list-cell:hover,
+.list-cell:filled:selected .mod-row {
+    -fx-background-color: #1d242b;
+}
+
+.folder-tab.selected,
+.state-toggle:selected,
+.state-toggle.selected {
+    -fx-background-color: #161b21;
+    -fx-border-color: rgba(255, 176, 0, 0.28);
+    -fx-text-fill: #ffbd32;
+    -fx-effect: innershadow(gaussian, rgba(1, 4, 7, 0.84), 10, 0.2, 4, 4);
+}
+
+.log-card { -fx-padding: 0; }
+.log-scroll,
+.log-scroll:focused,
+.log-scroll > .viewport,
+.log-lines { -fx-background-color: #101419; -fx-background: #101419; }
+
+.progress-bar .track {
+    -fx-background-color: #151a20;
+    -fx-effect: innershadow(gaussian, rgba(1, 4, 7, 0.75), 8, 0.18, 3, 3);
+}
+
+.progress-bar .bar {
+    -fx-background-color: linear-gradient(to right, #f0a62b, #ffcf69);
+}
