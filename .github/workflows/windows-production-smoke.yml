@@ -217,7 +217,20 @@ jobs:
               throw "The diagnostic WebView did not expose its DevTools target."
             }
 
-            $target = $targets | Select-Object -First 1
+            foreach ($candidate in $targets) {
+              Write-Host "DevTools candidate: title='$($candidate.title)' url='$($candidate.url)'"
+            }
+            $target = $targets |
+              Where-Object { $_.url -like "*tauri.localhost*" } |
+              Select-Object -First 1
+            if (-not $target) {
+              $target = $targets |
+                Where-Object { $_.url -ne "about:blank" } |
+                Select-Object -First 1
+            }
+            if (-not $target) {
+              $target = $targets | Select-Object -First 1
+            }
             Write-Host "DevTools target: title='$($target.title)' url='$($target.url)'"
             $script = @'
           const endpoint = process.argv[2];
