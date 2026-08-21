@@ -249,6 +249,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222"
           $executable = "src-tauri/target/release/gamble-client-launcher.exe"
           $launcher = Start-Process -FilePath $executable -PassThru
           try {
