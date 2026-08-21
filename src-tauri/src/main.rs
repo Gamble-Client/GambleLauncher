@@ -22,8 +22,6 @@ use std::{
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-#[cfg(target_os = "windows")]
-use tauri::Manager;
 use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
 use zip::ZipArchive;
@@ -3473,25 +3471,14 @@ fn open_url(url: String) -> Result<(), String> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .setup(|_app| {
-            #[cfg(target_os = "windows")]
-            if let Some(window) = _app.get_webview_window("main") {
-                let app_url = tauri::Url::parse("https://tauri.localhost/")
-                    .expect("the embedded Windows app URL is valid");
-                // WebView2 occasionally leaves the configured app navigation at
-                // about:blank during cold startup. Start the embedded navigation
-                // explicitly instead of trusting a transient non-blank URL that
-                // may still fail before the first document is committed.
-                window.navigate(app_url.clone())?;
-                std::thread::spawn(move || {
-                    for delay_ms in [250, 1_000, 2_500] {
-                        std::thread::sleep(Duration::from_millis(delay_ms));
-                        if let Err(error) = window.navigate(app_url.clone()) {
-                            eprintln!("Windows WebView navigation retry failed: {error}");
-                        }
-                    }
-                });
-            }
+        .setup(|app| {
+            let window_config = app
+                .config()
+                .app
+                .windows
+                .first()
+                .ok_or_else(|| "Launcher window configuration is missing.".to_string())?;
+            tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?.build()?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
