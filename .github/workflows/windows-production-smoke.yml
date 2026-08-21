@@ -160,3 +160,104 @@ jobs:
           name: gamble-client-windows-production-smoke
           path: ${{ runner.temp }}/gamble-client-launcher-production.png
           if-no-files-found: warn
+
+  diagnose:
+    name: Inspect packaged Windows WebView
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Enable local DevTools inspection
+        shell: pwsh
+        run: |
+          $configPath = "src-tauri/tauri.conf.json"
+          $config = Get-Content $configPath -Raw | ConvertFrom-Json
+          $config.app.windows[0] | Add-Member -NotePropertyName additionalBrowserArgs -NotePropertyValue "--remote-debugging-port=9222" -Force
+          $config | ConvertTo-Json -Depth 20 | Set-Content $configPath -Encoding utf8NoBOM
+
+      - name: Build diagnostic executable
+        run: |
+          npm ci
+          npm run tauri -- build --no-bundle
+
+      - name: Inspect the packaged page
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $executable = "src-tauri/target/release/gamble-client-launcher.exe"
+          $launcher = Start-Process -FilePath $executable -PassThru
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(45)
+            do {
+              Start-Sleep -Milliseconds 500
+              try {
+                $targets = Invoke-RestMethod "http://127.0.0.1:9222/json/list"
+              } catch {
+                $targets = $null
+              }
+            } while (-not $targets -and [DateTime]::UtcNow -lt $deadline)
+            if (-not $targets) {
+              throw "The diagnostic WebView did not expose its DevTools target."
+            }
+
+            $target = $targets | Select-Object -First 1
+            Write-Host "DevTools target: title='$($target.title)' url='$($target.url)'"
+            $script = @'
+          const endpoint = process.argv[2];
+          const socket = new WebSocket(endpoint);
+          const messages = [];
+          const finish = () => {
+            for (const message of messages) process.stdout.write(JSON.stringify(message) + "\n");
+            process.exit(0);
+          };
+          socket.addEventListener("open", () => {
+            socket.send(JSON.stringify({ id: 1, method: "Runtime.enable" }));
+            socket.send(JSON.stringify({ id: 2, method: "Log.enable" }));
+            socket.send(JSON.stringify({
+              id: 3,
+              method: "Runtime.evaluate",
+              params: {
+                returnByValue: true,
+                expression: `({
+                  href: location.href,
+                  readyState: document.readyState,
+                  title: document.title,
+                  bodyText: document.body?.innerText?.slice(0, 1000) || "",
+                  bodyHtml: document.body?.innerHTML?.slice(0, 1000) || "",
+                  scripts: [...document.scripts].map((script) => script.src),
+                  styles: [...document.styleSheets].map((sheet) => sheet.href),
+                  resources: performance.getEntriesByType("resource").map((entry) => ({ name: entry.name, duration: entry.duration, size: entry.transferSize }))
+                })`
+              }
+            }));
+            setTimeout(finish, 5000);
+          });
+          socket.addEventListener("message", (event) => {
+            const message = JSON.parse(String(event.data));
+            if (message.id === 3 || message.method === "Runtime.exceptionThrown" || message.method === "Log.entryAdded") messages.push(message);
+          });
+          socket.addEventListener("error", (event) => {
+            process.stderr.write(String(event.message || event) + "\n");
+            process.exit(1);
+          });
+          '@
+            $scriptPath = Join-Path $env:RUNNER_TEMP "inspect-launcher.mjs"
+            $script | Set-Content $scriptPath -Encoding utf8NoBOM
+            node $scriptPath $target.webSocketDebuggerUrl
+          } finally {
+            if (-not $launcher.HasExited) {
+              Stop-Process -Id $launcher.Id -Force
+            }
+          }
