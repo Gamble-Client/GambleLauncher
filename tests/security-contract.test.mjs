@@ -204,3 +204,29 @@ test("native and universal launchers expose the role-gated Dev build", async () 
     assert.match(java, /new Build\("Dev", "dev"\)/);
     assert.match(java, /if \("dev"\.equals\(buildId\)\) return user\.devAccess \|\| hasOwnerAccess\(user\);/);
 });
+
+test("custom launcher chrome exposes explicit drag and resize paths", async () => {
+    const frontend = await source("src/main.js");
+    const css = await source("src/styles.css");
+
+    assert.match(frontend, /data-window-drag/);
+    assert.match(frontend, /data-window-resize="NorthEast"/);
+    assert.match(frontend, /startDragging\(\)/);
+    assert.match(frontend, /startResizeDragging\(resizeHandle\.dataset\.windowResize\)/);
+    assert.match(css, /\.window-resize-n[\s\S]*cursor: ns-resize/);
+    assert.match(css, /\.window-resize-se[\s\S]*cursor: nwse-resize/);
+});
+
+test("profiles use a plus menu and keep account/build controls per profile", async () => {
+    const frontend = await source("src/main.js");
+    const css = await source("src/styles.css");
+
+    assert.match(frontend, /data-action="toggle-profile-create"/);
+    assert.match(frontend, /data-profile-create-menu/);
+    assert.match(frontend, /data-field="profileAccount"/);
+    assert.match(frontend, /data-field="selectedBuild"/);
+    assert.match(frontend, /state\.profileCreateOpen = false/);
+    assert.match(css, /\.profile-add-button/);
+    assert.match(css, /\.profile-control-grid/);
+    assert.match(css, /\.settings-button \{[\s\S]*font-weight: inherit;/);
+});

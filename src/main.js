@@ -15,7 +15,7 @@ const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
-const LAUNCHER_VERSION = "0.1.115";
+const LAUNCHER_VERSION = "0.1.117";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 // Browser mocks are a development-only visual harness. Vite removes this branch
@@ -62,6 +62,7 @@ const state = {
   profileLoaderStatus: null,
   newProfileName: "",
   newProfileType: "fabric",
+  profileCreateOpen: false,
   memory: defaultMemory(),
   username: defaultUsername(),
   javaArgs: defaultJavaArgs(),
@@ -396,7 +397,7 @@ function render() {
   const canInstall = signedIn && profile.client;
   app.innerHTML = `
     <div class="app-frame">
-      <header class="window-bar" data-tauri-drag-region>
+      <header class="window-bar" data-window-drag data-tauri-drag-region>
         <span class="window-title">Gamble Client Launcher</span>
         <div class="window-actions" aria-label="Window controls">
           <button type="button" data-window-action="minimize" aria-label="Minimize">−</button>
@@ -404,6 +405,14 @@ function render() {
           <button type="button" class="window-close" data-window-action="close" aria-label="Close">×</button>
         </div>
       </header>
+      <div class="window-resize window-resize-n" data-window-resize="North" aria-hidden="true"></div>
+      <div class="window-resize window-resize-e" data-window-resize="East" aria-hidden="true"></div>
+      <div class="window-resize window-resize-s" data-window-resize="South" aria-hidden="true"></div>
+      <div class="window-resize window-resize-w" data-window-resize="West" aria-hidden="true"></div>
+      <div class="window-resize window-resize-ne" data-window-resize="NorthEast" aria-hidden="true"></div>
+      <div class="window-resize window-resize-se" data-window-resize="SouthEast" aria-hidden="true"></div>
+      <div class="window-resize window-resize-sw" data-window-resize="SouthWest" aria-hidden="true"></div>
+      <div class="window-resize window-resize-nw" data-window-resize="NorthWest" aria-hidden="true"></div>
       <section class="shell ${state.animationsEnabled ? "" : "animations-off"}">
       <aside class="rail">
         <div class="brand">
@@ -763,79 +772,92 @@ function updatesView(profile, selectedBuild, canInstall, signedIn) {
 
 function profilesView(profile, selectedBuild) {
   const profilesList = allProfiles();
-  const custom = Boolean(profile.custom);
   const managedRoot = state.info?.managed_root || "Managed Gamble Client game folder";
   const profileModsPath = `${managedRoot}/profiles/${profile.id}/mods`;
+  const activeAccount = profileAccount(profile);
+  const selectedAccountUuid = String(state.profileAccountOverrides?.[profile.id] || "").replaceAll("-", "").toLowerCase();
   return `
-    <section class="screen-band profile-heading">
+    <section class="screen-band profile-heading profile-heading-redesign">
       <div>
         <span class="eyebrow">Launch folders</span>
         <h2>Profiles</h2>
-        <p>Create another Fabric profile for separate mods, resource packs, and settings.</p>
+        <p>Keep accounts, builds, mods, and resource packs organized per launch profile.</p>
       </div>
-      <div class="profile-create">
-        <label>
-          <span>New profile</span>
-          <input class="inline-input" data-field="newProfileName" value="${escapeAttr(state.newProfileName)}" placeholder="Name">
-        </label>
-        <label>
-          <span>Type</span>
-          <select class="inline-input profile-type-select" data-field="newProfileType">
-          <option value="fabric" ${state.newProfileType === "fabric" ? "selected" : ""}>Fabric</option>
-          <option value="client" ${state.newProfileType === "client" ? "selected" : ""}>Gamble Client</option>
-          <option value="vanilla" ${state.newProfileType === "vanilla" ? "selected" : ""}>Vanilla</option>
-          </select>
-        </label>
-        <button class="primary-small" type="button" data-action="create-profile" ${state.busy ? "disabled" : ""}>Create</button>
+      <div class="profile-heading-actions">
+        <span class="profile-count">${profilesList.length} profile${profilesList.length === 1 ? "" : "s"}</span>
+        <button class="profile-add-button" type="button" data-action="toggle-profile-create" aria-label="Create profile" title="Create profile" ${state.busy ? "disabled" : ""}>+</button>
+        ${state.profileCreateOpen ? `
+          <div class="profile-create-menu" data-profile-create-menu role="dialog" aria-label="Create profile">
+            <div class="profile-create-menu-head">
+              <div><span class="eyebrow">New launch folder</span><strong>Create profile</strong></div>
+              <button class="profile-menu-close" type="button" data-action="close-profile-create" aria-label="Close">×</button>
+            </div>
+            <label>
+              <span>Profile name</span>
+              <input data-field="newProfileName" value="${escapeAttr(state.newProfileName)}" placeholder="e.g. PvP, content, testing" autofocus>
+            </label>
+            <label>
+              <span>Runtime</span>
+              <select data-field="newProfileType">
+                <option value="fabric" ${state.newProfileType === "fabric" ? "selected" : ""}>Fabric</option>
+                <option value="client" ${state.newProfileType === "client" ? "selected" : ""}>Gamble Client</option>
+                <option value="vanilla" ${state.newProfileType === "vanilla" ? "selected" : ""}>Vanilla</option>
+              </select>
+            </label>
+            <div class="profile-create-actions">
+              <button class="ghost" type="button" data-action="close-profile-create">Cancel</button>
+              <button class="primary-small" type="button" data-action="create-profile" ${state.busy ? "disabled" : ""}>Create profile</button>
+            </div>
+          </div>
+        ` : ""}
       </div>
     </section>
     <section class="profiles-layout">
-      <div class="profile-list">
-        ${profilesList.map((item) => `
-          <article class="profile-card ${item.id === profile.id ? "active" : ""}">
-            <div>
-              <span>${escapeHtml(profileTypeLabel(item))}</span>
-              <strong>${escapeHtml(item.label)}</strong>
-              <small>${escapeHtml(profileAccountLabel(item))}</small>
-            </div>
-            <div class="profile-card-actions">
-              <button class="ghost" type="button" data-action="select-profile" data-profile="${escapeAttr(item.id)}" ${item.id === profile.id ? "disabled" : ""}>Use</button>
-              ${item.custom ? `<button class="ghost danger" type="button" data-action="request-delete-profile" data-profile="${escapeAttr(item.id)}" ${state.busy || state.minecraftRunning ? "disabled" : ""}>Delete</button>` : ""}
-            </div>
-          </article>
-        `).join("")}
-      </div>
-      <div class="profile-editor">
-        <section class="settings-grid compact-grid">
-          ${custom ? `
+      <aside class="profile-list-panel">
+        <div class="profile-list-head"><div><span class="eyebrow">Your launch folders</span><strong>Choose a profile</strong></div><span class="profile-list-count">${profilesList.length}</span></div>
+        <div class="profile-list">
+          ${profilesList.map((item) => `
+            <article class="profile-card ${item.id === profile.id ? "active" : ""}">
+              <button class="profile-card-main" type="button" data-action="select-profile" data-profile="${escapeAttr(item.id)}" ${item.id === profile.id ? "aria-current=\"true\"" : ""}>
+                <span class="profile-card-icon">${item.client ? "G" : item.loader === "fabric" ? "F" : "V"}</span>
+                <span class="profile-card-copy"><span>${escapeHtml(profileTypeLabel(item))}</span><strong>${escapeHtml(item.label)}</strong><small>${escapeHtml(profileAccountLabel(item))}</small></span>
+                <span class="profile-card-chevron">›</span>
+              </button>
+              ${item.custom ? `<button class="profile-delete-button" type="button" data-action="request-delete-profile" data-profile="${escapeAttr(item.id)}" aria-label="Delete ${escapeAttr(item.label)}" title="Delete profile" ${state.busy || state.minecraftRunning ? "disabled" : ""}>×</button>` : ""}
+            </article>
+          `).join("")}
+        </div>
+        <p class="profile-list-hint">Each profile gets its own mods, resource packs, settings, and selected account.</p>
+      </aside>
+      <div class="profile-editor profile-editor-redesign">
+        <section class="profile-identity-card">
+          <div class="profile-identity-mark">${profile.client ? "G" : profile.loader === "fabric" ? "F" : "V"}</div>
+          <div class="profile-identity-copy"><span class="eyebrow">Selected profile</span><h3>${escapeHtml(profile.label)}</h3><p>${escapeHtml(profileTypeLabel(profile))} runtime · ${profile.custom ? "Custom profile" : "Built-in profile"}</p></div>
+          <span class="profile-live-pill">${profile.id === state.selectedProfile ? "Active" : "Ready"}</span>
+        </section>
+        <section class="profile-control-card">
+          <div class="profile-control-head"><div><span class="eyebrow">Launch identity</span><h3>Account &amp; build</h3></div><span class="profile-control-summary">${escapeHtml(activeAccount?.name || "No account")}</span></div>
+          <div class="profile-control-grid">
             <label>
-              <span>Profile name</span>
-              <input data-field="selectedProfileLabel" value="${escapeAttr(profile.label)}" placeholder="Profile name">
+              <span>Microsoft account</span>
+              <select data-field="profileAccount">
+                <option value="" ${selectedAccountUuid ? "" : "selected"}>Default${state.microsoft?.name ? ` (${escapeHtml(state.microsoft.name)})` : ""}</option>
+                ${state.microsoftAccounts.map((account) => {
+                  const uuid = String(account.uuid || "").replaceAll("-", "").toLowerCase();
+                  const selected = selectedAccountUuid === uuid;
+                  return `<option value="${escapeAttr(uuid)}" ${selected ? "selected" : ""}>${escapeHtml(account.name || "Microsoft")}</option>`;
+                }).join("")}
+              </select>
+              <small>Used only when this profile launches Minecraft.</small>
             </label>
-          ` : `
-            <div class="setting-note">
-              <span>Profile name</span>
-              <strong>${escapeHtml(profile.label)}</strong>
-              <small>Built-in</small>
-            </div>
-          `}
-          <label>
-            <span>Microsoft account</span>
-            <select data-field="profileAccount">
-              <option value="" ${state.profileAccountOverrides?.[profile.id] ? "" : "selected"}>Default${state.microsoft?.name ? ` (${escapeHtml(state.microsoft.name)})` : ""}</option>
-              ${state.microsoftAccounts.map((account) => {
-                const uuid = String(account.uuid || "").replaceAll("-", "").toLowerCase();
-                const selected = String(state.profileAccountOverrides?.[profile.id] || "").replaceAll("-", "").toLowerCase() === uuid;
-                return `<option value="${escapeAttr(uuid)}" ${selected ? "selected" : ""}>${escapeHtml(account.name || "Microsoft")}</option>`;
-              }).join("")}
-            </select>
-          </label>
-          <label>
-            <span>Build</span>
-            <select data-field="selectedBuild" ${!profile.client || adTierOnly() ? "disabled" : ""}>
-              ${builds.map((item) => `<option value="${item.id}" ${item.id === selectedBuild.id ? "selected" : ""}>${item.label}</option>`).join("")}
-            </select>
-          </label>
+            <label>
+              <span>Client build</span>
+              <select data-field="selectedBuild" ${!profile.client || adTierOnly() ? "disabled" : ""}>
+                ${builds.map((item) => `<option value="${item.id}" ${item.id === selectedBuild.id ? "selected" : ""}>${item.label}</option>`).join("")}
+              </select>
+              <small>${profile.client ? "The build is stored with the launcher and applies to this client profile." : "Only Gamble Client profiles choose a client build."}</small>
+            </label>
+          </div>
         </section>
         ${profile.loader === "fabric" ? `
           <section class="loader-card">
@@ -1576,7 +1598,7 @@ function createProfile() {
   const label = String(state.newProfileName || "").trim();
   if (!label) {
     showPopup("Profile name needed", "Enter a profile name before creating it.", "profile");
-    return;
+    return false;
   }
 
   const type = ["client", "fabric", "vanilla"].includes(state.newProfileType) ? state.newProfileType : "fabric";
@@ -1593,6 +1615,7 @@ function createProfile() {
   state.newProfileName = "";
   saveCustomProfiles();
   log(`Created profile: ${label}`);
+  return true;
 }
 
 function uniqueProfileId(label, type = "fabric") {
@@ -2167,7 +2190,39 @@ function setBusy(value, message) {
   render();
 }
 
+app.addEventListener("pointerdown", async (event) => {
+  const resizeHandle = event.target.closest("[data-window-resize]");
+  if (resizeHandle) {
+    event.preventDefault();
+    event.stopPropagation();
+    const win = currentNativeWindow();
+    if (!win) return;
+    try {
+      await win.startResizeDragging(resizeHandle.dataset.windowResize);
+    } catch (error) {
+      log(`Window resize failed: ${error.message || error}`);
+    }
+    return;
+  }
+
+  const dragRegion = event.target.closest("[data-window-drag]");
+  if (!dragRegion || event.target.closest("button, a, input, select, textarea")) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const win = currentNativeWindow();
+  if (!win) return;
+  try {
+    await win.startDragging();
+  } catch (error) {
+    log(`Window drag failed: ${error.message || error}`);
+  }
+});
+
 app.addEventListener("click", async (event) => {
+  if (state.profileCreateOpen && !event.target.closest("[data-profile-create-menu], [data-action=toggle-profile-create]")) {
+    state.profileCreateOpen = false;
+  }
+
   const view = event.target.closest("[data-view]")?.dataset.view;
   if (view) {
     state.view = view;
@@ -2451,6 +2506,15 @@ app.addEventListener("click", async (event) => {
     state.showAdvancedSettings = !state.showAdvancedSettings;
     localStorage.setItem(ADVANCED_SETTINGS_KEY, String(state.showAdvancedSettings));
     render();
+  } else if (action === "toggle-profile-create") {
+    state.profileCreateOpen = !state.profileCreateOpen;
+    render();
+    if (state.profileCreateOpen) {
+      requestAnimationFrame(() => app.querySelector('[data-field="newProfileName"]')?.focus());
+    }
+  } else if (action === "close-profile-create") {
+    state.profileCreateOpen = false;
+    render();
   } else if (action === "select-profile") {
     state.selectedProfile = actionEl.dataset.profile || "gamble-client";
     state.clientStatus = null;
@@ -2496,7 +2560,8 @@ app.addEventListener("click", async (event) => {
       setBusy(false);
     }
   } else if (action === "create-profile") {
-    createProfile();
+    if (!createProfile()) return;
+    state.profileCreateOpen = false;
     await refreshFiles();
     await refreshProfileLoaderStatus();
     await refreshAntiScreenshareStatus();
