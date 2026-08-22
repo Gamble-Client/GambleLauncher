@@ -163,6 +163,27 @@ public class Main {
     private static final String MANAGED_CLIENT_MOD_ID = "cg-mod";
     private static final long MAX_DOWNLOAD_BYTES = 512L * 1024L * 1024L;
     private static final long MAX_MANAGED_CLIENT_BYTES = 64L * 1024L * 1024L;
+    private static final long MAX_TEXT_RESPONSE_BYTES = 4L * 1024L * 1024L;
+    private static final int MAX_DOWNLOAD_REDIRECTS = 4;
+    private static final Set<String> TRUSTED_NETWORK_HOSTS = Set.of(
+        "gamble-client.store",
+        "dash.gamble-client.store",
+        "login.microsoftonline.com",
+        "user.auth.xboxlive.com",
+        "xsts.auth.xboxlive.com",
+        "api.minecraftservices.com",
+        "api.modrinth.com",
+        "cdn.modrinth.com",
+        "meta.fabricmc.net",
+        "maven.fabricmc.net",
+        "launchermeta.mojang.com",
+        "piston-meta.mojang.com",
+        "piston-data.mojang.com",
+        "libraries.minecraft.net",
+        "resources.download.minecraft.net",
+        "repo1.maven.org",
+        "repo.maven.apache.org"
+    );
     private static final long MAX_LOADER_BYTES = 16L * 1024L * 1024L;
     private static final long MAX_FABRIC_METADATA_BYTES = 1024L * 1024L;
     private static final String FABRIC_PROFILE_URL = "https://meta.fabricmc.net/v2/versions/loader/"
@@ -253,8 +274,8 @@ public class Main {
     private final JCheckBox autoCheckUpdates = new JCheckBox("Check for launcher and client updates on launch");
     private final JButton accountManagerButton = new JButton("Accounts");
     private final JButton editProfileButton = new JButton("Edit Profile");
-    private final JButton launchButton = new JButton("Launch");
-    private final JButton settingsButton = new JButton();
+    private final JButton launchButton = new JButton("Play");
+    private final JButton settingsButton = new JButton("Settings");
     private final JButton settingsBackButton = new JButton("Back");
     private final JButton settingsGameFolderButton = new JButton("Game Folder");
     private final JButton settingsModsButton = new JButton("Manage Mods");
@@ -330,7 +351,7 @@ public class Main {
 
         styleControls();
 
-        log("Ready. Sign in, then press Launch.");
+        log("Ready. Sign in, then press Play.");
         diagnosticLog("Managed game folder: " + getManagedMinecraftRoot().getAbsolutePath());
         diagnosticLog("Active profile folder: " + getMinecraftFolder().getAbsolutePath());
         refreshStoredLauncherSession();
@@ -392,7 +413,7 @@ public class Main {
         header.add(label("Launch Setup", 24, Font.BOLD, TEXT), BorderLayout.WEST);
         JPanel headerRight = transparentPanel(new BorderLayout(8, 0));
         headerRight.add(createAccountPanel(), BorderLayout.CENTER);
-        headerRight.add(iconButton(settingsButton), BorderLayout.EAST);
+        headerRight.add(secondaryButton(settingsButton), BorderLayout.EAST);
         header.add(headerRight, BorderLayout.EAST);
 
         JPanel top = transparentPanel(new BorderLayout(0, 12));
@@ -946,6 +967,9 @@ public class Main {
 
         JPanel header = transparentPanel(new BorderLayout(0, 4));
         header.add(label("Mods", 18, Font.BOLD, TEXT), BorderLayout.NORTH);
+        JLabel location = htmlLabel("<div style='width:470px'>Folder: " + htmlEscape(mods.getAbsolutePath()) + "</div>", 11, MUTED);
+        location.setToolTipText(mods.getAbsolutePath());
+        header.add(location, BorderLayout.CENTER);
 
         JPanel actions = transparentPanel();
         JButton toggle = secondaryButton(new JButton("Toggle"));
@@ -1030,6 +1054,9 @@ public class Main {
 
         JPanel header = transparentPanel(new BorderLayout(0, 4));
         header.add(label("Resource Packs", 18, Font.BOLD, TEXT), BorderLayout.NORTH);
+        JLabel location = htmlLabel("<div style='width:470px'>Folder: " + htmlEscape(packs.getAbsolutePath()) + "</div>", 11, MUTED);
+        location.setToolTipText(packs.getAbsolutePath());
+        header.add(location, BorderLayout.CENTER);
 
         JPanel actions = transparentPanel();
         JButton toggle = secondaryButton(new JButton("Toggle"));
@@ -1727,7 +1754,7 @@ public class Main {
     }
 
     private String readAntiScreenshareBridge(String path, String method) throws IOException {
-        HttpURLConnection connection = (HttpURLConnection) URI.create("http://127.0.0.1:18765" + path).toURL().openConnection();
+        HttpURLConnection connection = openTrustedHttpConnection("http://127.0.0.1:18765" + path, true);
         connection.setRequestMethod(method);
         connection.setConnectTimeout(1500);
         connection.setReadTimeout(2200);
@@ -1737,7 +1764,7 @@ public class Main {
         InputStream stream = code >= 400 ? connection.getErrorStream() : connection.getInputStream();
         if (stream == null) throw new IOException("empty AntiScreenshare response");
         try (InputStream in = stream) {
-            String body = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            String body = readAll(in);
             if (code >= 400) throw new IOException(body);
             return body;
         } finally {
@@ -3200,7 +3227,7 @@ public class Main {
                     log("Memory loader: " + result.file.getAbsolutePath());
                     refreshVersionPanel();
                     if (launchAfterInstall) launch();
-                    else if (result.updated) log("Press Launch to start Minecraft.");
+                    else if (result.updated) log("Press Play to start Minecraft.");
                 } catch (Exception e) {
                     setProgressStatus("Failed");
                     setUpdateStatus("Could not get update: " + rootMessage(e));
@@ -3434,7 +3461,7 @@ public class Main {
                         reconnectingMicrosoft = true;
                         JOptionPane.showMessageDialog(
                             frame,
-                            "Your saved Microsoft session expired. Microsoft sign-in will open now.\n\nSign in, then press Launch again.",
+                            "Your saved Microsoft session expired. Microsoft sign-in will open now.\n\nSign in, then press Play again.",
                             "Reconnect Microsoft",
                             JOptionPane.INFORMATION_MESSAGE
                         );
@@ -4672,8 +4699,7 @@ public class Main {
 
     private ApiResponse formRequest(String urlText, Map<String, String> values, int... acceptedStatuses) throws IOException {
         byte[] bytes = formEncode(values).getBytes(StandardCharsets.UTF_8);
-        HttpURLConnection connection = (HttpURLConnection) URI.create(urlText).toURL().openConnection();
-        connection.setInstanceFollowRedirects(true);
+        HttpURLConnection connection = openTrustedHttpConnection(urlText, false);
         connection.setConnectTimeout(15000);
         connection.setReadTimeout(30000);
         connection.setRequestMethod("POST");
@@ -4689,8 +4715,7 @@ public class Main {
     }
 
     private ApiResponse jsonRequest(String method, String urlText, String body, String bearerToken, int... acceptedStatuses) throws IOException {
-        HttpURLConnection connection = (HttpURLConnection) URI.create(urlText).toURL().openConnection();
-        connection.setInstanceFollowRedirects(true);
+        HttpURLConnection connection = openTrustedHttpConnection(urlText, false);
         connection.setConnectTimeout(15000);
         connection.setReadTimeout(30000);
         connection.setRequestMethod(method);
@@ -4767,8 +4792,7 @@ public class Main {
 
     private ApiResponse apiRequest(String method, String path, String body, String bearerToken, int... acceptedStatuses) throws IOException {
         String urlText = path.startsWith("http://") || path.startsWith("https://") ? path : siteUrl() + path;
-        HttpURLConnection connection = (HttpURLConnection) URI.create(urlText).toURL().openConnection();
-        connection.setInstanceFollowRedirects(true);
+        HttpURLConnection connection = openTrustedHttpConnection(urlText, false);
         connection.setConnectTimeout(15000);
         connection.setReadTimeout(30000);
         connection.setRequestMethod(method);
@@ -5039,6 +5063,56 @@ public class Main {
         return out.toString();
     }
 
+    private HttpURLConnection openTrustedHttpConnection(String urlText, boolean allowLocalBridge) throws IOException {
+        URI uri;
+        try {
+            uri = URI.create(urlText == null ? "" : urlText.trim());
+        } catch (Exception e) {
+            throw new IOException("Invalid network URL.", e);
+        }
+
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+        String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
+        boolean localBridge = allowLocalBridge
+            && "http".equals(scheme)
+            && ("127.0.0.1".equals(host) || "localhost".equals(host))
+            && (uri.getPort() == -1 || uri.getPort() == 18765);
+        boolean trustedHttps = "https".equals(scheme)
+            && uri.getPort() == -1
+            && (TRUSTED_NETWORK_HOSTS.contains(host) || host.endsWith(".gamble-client.store"));
+        if (uri.getUserInfo() != null || host.isEmpty() || (!localBridge && !trustedHttps)) {
+            throw new IOException("Blocked untrusted network origin: " + host);
+        }
+
+        HttpURLConnection connection = (HttpURLConnection) uri.toURL().openConnection();
+        connection.setInstanceFollowRedirects(false);
+        return connection;
+    }
+
+    private HttpURLConnection openTrustedDownloadConnection(String urlText) throws IOException {
+        String current = urlText;
+        for (int redirect = 0; redirect <= MAX_DOWNLOAD_REDIRECTS; redirect++) {
+            HttpURLConnection connection = openTrustedHttpConnection(current, false);
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(30000);
+            connection.setRequestProperty("User-Agent", "GambleClientLauncher/" + LAUNCHER_VERSION);
+            int status = connection.getResponseCode();
+            if (status < 300 || status >= 400) return connection;
+
+            String location = connection.getHeaderField("Location");
+            connection.disconnect();
+            if (location == null || location.isBlank()) {
+                throw new IOException("Download redirect did not provide a destination.");
+            }
+            try {
+                current = URI.create(current).resolve(location).toString();
+            } catch (Exception e) {
+                throw new IOException("Download redirect was invalid.", e);
+            }
+        }
+        throw new IOException("Download followed too many redirects.");
+    }
+
     private void downloadFile(String urlText, File output, String label, boolean updateProgress) throws IOException {
         File parent = output.getParentFile();
         if (parent != null) {
@@ -5051,13 +5125,12 @@ public class Main {
 
         File temp = new File(output.getAbsolutePath() + ".part");
         Files.deleteIfExists(temp.toPath());
-        HttpURLConnection connection = (HttpURLConnection) URI.create(urlText).toURL().openConnection();
+        HttpURLConnection connection = openTrustedDownloadConnection(urlText);
         boolean completed = false;
         try {
-            connection.setInstanceFollowRedirects(true);
             connection.setConnectTimeout(15000);
             connection.setReadTimeout(30000);
-            connection.setRequestProperty("User-Agent", "GambleClientLauncher/0.1");
+            connection.setRequestProperty("User-Agent", "GambleClientLauncher/" + LAUNCHER_VERSION);
 
             int status = connection.getResponseCode();
             if (status < 200 || status >= 300) {
@@ -5118,9 +5191,9 @@ public class Main {
         ensureSignedIn();
         File temporary = new File(loader.getAbsolutePath() + ".part");
         Files.deleteIfExists(temporary.toPath());
-        HttpURLConnection connection = (HttpURLConnection) URI.create(siteUrl() + "/api/standalone/loader").toURL().openConnection();
+        HttpURLConnection connection = openTrustedHttpConnection(siteUrl() + "/api/standalone/loader", false);
         try {
-            connection.setInstanceFollowRedirects(true);
+            connection.setInstanceFollowRedirects(false);
             connection.setConnectTimeout(15000);
             connection.setReadTimeout(30000);
             connection.setRequestMethod("POST");
@@ -5881,7 +5954,7 @@ public class Main {
         boolean sponsoredAccess = sponsoredAccessActiveFor(selectedBuild);
         installButton.setEnabled(!busy && !running && gambleProfile && signedIn && sponsoredAccess);
         accountManagerButton.setEnabled(!busy && !running);
-        launchButton.setText(running ? "Kill" : sponsoredAccess ? "Launch" : "Watch Sponsor First");
+        launchButton.setText(running ? "Kill" : sponsoredAccess ? "Play" : "Watch Sponsor First");
         launchButton.setEnabled(running || (!busy && signedIn && sponsoredAccess));
         signInButton.setText(signingIn ? "Cancel" : "Sign In");
         promptSignInButton.setText(signingIn ? "Cancel" : "Sign In");
@@ -6364,15 +6437,19 @@ public class Main {
     }
 
     private String readUrl(String urlText) throws IOException {
-        HttpURLConnection connection = (HttpURLConnection) URI.create(urlText).toURL().openConnection();
-        connection.setConnectTimeout(15000);
-        connection.setReadTimeout(30000);
-        connection.setRequestProperty("User-Agent", "GambleClientLauncher/0.1");
-        int status = connection.getResponseCode();
-        if (status < 200 || status >= 300) {
-            throw new IOException("HTTP " + status + " reading " + urlText);
+        HttpURLConnection connection = openTrustedHttpConnection(urlText, false);
+        try {
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(30000);
+            connection.setRequestProperty("User-Agent", "GambleClientLauncher/" + LAUNCHER_VERSION);
+            int status = connection.getResponseCode();
+            if (status < 200 || status >= 300) {
+                throw new IOException("HTTP " + status + " reading " + urlText);
+            }
+            return readAll(connection.getInputStream());
+        } finally {
+            connection.disconnect();
         }
-        return readAll(connection.getInputStream());
     }
 
     private String readFile(File file) throws IOException {
@@ -6396,8 +6473,13 @@ public class Main {
         if (in == null) return "";
         try (InputStream stream = in; ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
+            long total = 0;
             int read;
             while ((read = stream.read(buffer)) != -1) {
+                total += read;
+                if (total > MAX_TEXT_RESPONSE_BYTES) {
+                    throw new IOException("Network response exceeds the text safety limit.");
+                }
                 out.write(buffer, 0, read);
             }
             return new String(out.toByteArray(), StandardCharsets.UTF_8);

@@ -1,8 +1,12 @@
 package com.gambleclient.launcher;
 
-import javafx.animation.Timeline;
+import javafx.animation.FadeTransition;
 import javafx.animation.KeyFrame;
+import javafx.animation.ParallelTransition;
 import javafx.animation.PauseTransition;
+import javafx.animation.ScaleTransition;
+import javafx.animation.Timeline;
+import javafx.animation.TranslateTransition;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
@@ -25,6 +29,7 @@ import javafx.scene.input.Dragboard;
 import javafx.scene.input.MouseButton;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -51,7 +56,7 @@ import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.URI;
-import java.net.URLConnection;
+import java.net.HttpURLConnection;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import javax.sound.sampled.AudioFormat;
@@ -63,6 +68,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.List;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.io.IOException;
@@ -157,7 +163,7 @@ public class FxMain extends Application {
         Label title = new Label("Gamble Client");
         title.getStyleClass().add("title");
 
-        launcherInstalled = chipLine("Installed: 0.1.56");
+        launcherInstalled = chipLine("Installed: " + backendString("launcherVersion"));
         launcherReleased = chipLine("Released: checking...");
         clientInstalled = chipLine("Installed: none");
         clientReleased = chipLine("Released: sign in to check");
@@ -236,7 +242,7 @@ public class FxMain extends Application {
         updateButton.setOnAction(e -> runBackend("installSelectedBuild", false));
         Button accounts = secondary("Accounts");
         accounts.setOnAction(e -> openAccountManager());
-        launchButton = primary("Launch");
+        launchButton = primary("Play");
         launchButton.setOnAction(e -> {
             syncToBackend();
             runBackend("launch");
@@ -346,6 +352,12 @@ public class FxMain extends Application {
     private void setStateToggle(Button button, boolean selected) {
         button.getStyleClass().removeAll("selected");
         if (selected) button.getStyleClass().add("selected");
+        ScaleTransition pulse = new ScaleTransition(Duration.millis(150), button);
+        pulse.setFromX(.97);
+        pulse.setFromY(.97);
+        pulse.setToX(1);
+        pulse.setToY(1);
+        pulse.playFromStart();
     }
 
     private void openAntiScreenshare() {
@@ -511,6 +523,8 @@ public class FxMain extends Application {
         HBox header = screenHeader(profileBox.getValue() + " Mods");
         Label summary = new Label();
         summary.getStyleClass().add("muted");
+        summary.setWrapText(true);
+        summary.setMaxWidth(Double.MAX_VALUE);
 
         ListView<ModFile> list = new ListView<>();
         list.getStyleClass().add("mod-list");
@@ -521,9 +535,10 @@ public class FxMain extends Application {
             list.getItems().setAll(mods);
             long enabled = mods.stream().filter(mod -> mod.enabled).count();
             long locked = mods.stream().filter(mod -> mod.locked).count();
-            summary.setText(mods.isEmpty()
+            summary.setText((mods.isEmpty()
                 ? "No jar files are in this profile yet."
-                : enabled + " enabled, " + (mods.size() - enabled) + " disabled, " + locked + " required.");
+                : enabled + " enabled, " + (mods.size() - enabled) + " disabled, " + locked + " required.")
+                + "  Folder: " + modsFolder().getAbsolutePath());
         };
         reloadMods.run();
         list.setOnMouseClicked(e -> {
@@ -578,6 +593,8 @@ public class FxMain extends Application {
         HBox header = screenHeader(profileBox.getValue() + " Resource Packs");
         Label summary = new Label();
         summary.getStyleClass().add("muted");
+        summary.setWrapText(true);
+        summary.setMaxWidth(Double.MAX_VALUE);
 
         ListView<ModFile> list = new ListView<>();
         list.getStyleClass().add("mod-list");
@@ -587,9 +604,10 @@ public class FxMain extends Application {
             List<ModFile> packs = readResourcePacks();
             list.getItems().setAll(packs);
             long enabled = packs.stream().filter(pack -> pack.enabled).count();
-            summary.setText(packs.isEmpty()
+            summary.setText((packs.isEmpty()
                 ? "Drop zip resource packs here to add them to this profile."
-                : enabled + " enabled, " + (packs.size() - enabled) + " disabled.");
+                : enabled + " enabled, " + (packs.size() - enabled) + " disabled.")
+                + "  Folder: " + packsFolder.getAbsolutePath());
         };
         reloadPacks.run();
         list.setOnMouseClicked(e -> {
@@ -838,6 +856,15 @@ public class FxMain extends Application {
     private void showScreen(Region screen) {
         stopHudInfoRefresh();
         contentHost.getChildren().setAll(screen);
+        screen.setOpacity(0);
+        screen.setTranslateY(8);
+        FadeTransition fade = new FadeTransition(Duration.millis(220), screen);
+        fade.setFromValue(0);
+        fade.setToValue(1);
+        TranslateTransition slide = new TranslateTransition(Duration.millis(220), screen);
+        slide.setFromY(8);
+        slide.setToY(0);
+        new ParallelTransition(fade, slide).play();
     }
 
     private void stopHudInfoRefresh() {
@@ -863,6 +890,8 @@ public class FxMain extends Application {
         back.setOnAction(e -> showLaunchScreen());
         Label heading = new Label(title);
         heading.getStyleClass().add("heading");
+        heading.setWrapText(true);
+        HBox.setHgrow(heading, Priority.ALWAYS);
         header.getChildren().addAll(back, heading);
         return header;
     }
@@ -874,6 +903,8 @@ public class FxMain extends Application {
         back.setOnAction(e -> backAction.run());
         Label heading = new Label(title);
         heading.getStyleClass().add("heading");
+        heading.setWrapText(true);
+        HBox.setHgrow(heading, Priority.ALWAYS);
         header.getChildren().addAll(back, heading);
         return header;
     }
@@ -886,9 +917,10 @@ public class FxMain extends Application {
         return section;
     }
 
-    private HBox buttonRow(Button... buttons) {
-        HBox row = new HBox(10);
+    private FlowPane buttonRow(Button... buttons) {
+        FlowPane row = new FlowPane(10, 10);
         row.setAlignment(Pos.CENTER_LEFT);
+        row.setMaxWidth(Double.MAX_VALUE);
         row.getChildren().addAll(buttons);
         return row;
     }
@@ -1084,7 +1116,7 @@ public class FxMain extends Application {
         bar.setMaxWidth(Double.MAX_VALUE);
         Label countdown = label(seconds + "s left", "ad-copy");
         Button leave = secondary("Leave");
-        HBox controls = buttonRow(leave);
+        FlowPane controls = buttonRow(leave);
         HBox confirmLeave = new HBox(10);
         confirmLeave.setAlignment(Pos.CENTER_LEFT);
         confirmLeave.getStyleClass().add("ad-leave-confirm");
@@ -1192,21 +1224,28 @@ public class FxMain extends Application {
         String extension = sponsorMediaExtension(adUrl);
         java.nio.file.Path temp = Files.createTempFile("gamble-sponsor-", extension);
         temp.toFile().deleteOnExit();
-        URLConnection connection = URI.create(adUrl).toURL().openConnection();
-        connection.setConnectTimeout(8000);
-        connection.setReadTimeout(20000);
-        connection.setRequestProperty("User-Agent", "GambleClientLauncher/" + backendString("launcherVersion"));
-        long declaredSize = connection.getContentLengthLong();
-        long maxBytes = 64L * 1024L * 1024L;
-        if (declaredSize > maxBytes) throw new IOException("Sponsor media exceeds the 64 MiB limit.");
-        try (InputStream input = connection.getInputStream(); java.io.OutputStream output = Files.newOutputStream(temp)) {
-            byte[] buffer = new byte[16384];
-            long total = 0;
-            for (int read; (read = input.read(buffer)) >= 0; ) {
-                total += read;
-                if (total > maxBytes) throw new IOException("Sponsor media exceeds the 64 MiB limit.");
-                output.write(buffer, 0, read);
+        HttpURLConnection connection = (HttpURLConnection) URI.create(adUrl).toURL().openConnection();
+        try {
+            connection.setInstanceFollowRedirects(false);
+            connection.setConnectTimeout(8000);
+            connection.setReadTimeout(20000);
+            connection.setRequestProperty("User-Agent", "GambleClientLauncher/" + backendString("launcherVersion"));
+            int status = connection.getResponseCode();
+            if (status < 200 || status >= 300) throw new IOException("Sponsor media returned HTTP " + status + ".");
+            long declaredSize = connection.getContentLengthLong();
+            long maxBytes = 64L * 1024L * 1024L;
+            if (declaredSize > maxBytes) throw new IOException("Sponsor media exceeds the 64 MiB limit.");
+            try (InputStream input = connection.getInputStream(); java.io.OutputStream output = Files.newOutputStream(temp)) {
+                byte[] buffer = new byte[16384];
+                long total = 0;
+                for (int read; (read = input.read(buffer)) >= 0; ) {
+                    total += read;
+                    if (total > maxBytes) throw new IOException("Sponsor media exceeds the 64 MiB limit.");
+                    output.write(buffer, 0, read);
+                }
             }
+        } finally {
+            connection.disconnect();
         }
         if (Files.size(temp) <= 0) throw new IOException("Sponsor media download was empty.");
         return temp.toUri().toString();
@@ -2091,12 +2130,18 @@ public class FxMain extends Application {
     private Button primary(String text) {
         Button button = new Button(text);
         button.getStyleClass().add("primary");
+        button.setMnemonicParsing(false);
+        button.setWrapText(true);
+        button.setMinHeight(40);
         return button;
     }
 
     private Button secondary(String text) {
         Button button = new Button(text);
         button.getStyleClass().add("secondary");
+        button.setMnemonicParsing(false);
+        button.setWrapText(true);
+        button.setMinHeight(40);
         return button;
     }
 
@@ -2110,6 +2155,8 @@ public class FxMain extends Application {
     private Label label(String text, String style) {
         Label label = new Label(text);
         label.getStyleClass().add(style);
+        label.setWrapText(true);
+        label.setMaxWidth(Double.MAX_VALUE);
         return label;
     }
 
@@ -2385,6 +2432,10 @@ public class FxMain extends Application {
     private void openUrl(String url) {
         Thread thread = new Thread(() -> {
             try {
+                if (!allowedBrowserUrl(url)) {
+                    appendLog("Blocked an untrusted browser URL.");
+                    return;
+                }
                 if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
                     Desktop.getDesktop().browse(URI.create(url));
                     return;
@@ -2396,6 +2447,27 @@ public class FxMain extends Application {
         }, "open-url");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    private boolean allowedBrowserUrl(String value) {
+        try {
+            URI uri = URI.create(value == null ? "" : value.trim());
+            String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+            String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
+            if (!"https".equals(scheme) || uri.getUserInfo() != null || host.isEmpty() || uri.getPort() != -1) return false;
+            return Set.of(
+                "gamble-client.store",
+                "dash.gamble-client.store",
+                "admin.gamble-client.store",
+                "profile.gamble-client.store",
+                "login.microsoftonline.com",
+                "microsoft.com",
+                "www.microsoft.com",
+                "discord.gg"
+            ).contains(host);
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private void appendLog(String message) {

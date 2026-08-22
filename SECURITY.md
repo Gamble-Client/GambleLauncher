@@ -8,11 +8,14 @@ Do not publish a launcher vulnerability or a token from a local diagnostics file
 
 - The native launcher accepts API calls only under the Gamble Client launcher, Spotify status, and friends routes.
 - Browser links are restricted to HTTPS and an explicit host allowlist.
+- Native API and metadata requests use an explicit HTTPS origin allowlist; bearer-token requests do not follow redirects.
+- Runtime downloads validate every redirect destination against the same allowlist and cap text responses before parsing them.
 - Client and launcher update artifacts require a server-provided byte length and SHA-256 match before use.
 - Downloads have compressed and expanded size limits, and archive paths are checked before extraction.
 - Launcher and Microsoft session files use owner-only permissions on Unix.
 - The Tauri webview uses a restrictive Content Security Policy; remote scripts, objects, frames, and forms are disabled.
 - Gamble Client launch tickets and downloaded artifacts are validated before use; the launcher has no remote-command feature.
+- The launcher does not hide module flags or implement scanner-evasion behavior. False-positive reports should be handled with provenance, reproducible source, and signed release artifacts.
 
 ## Remaining hardening work
 

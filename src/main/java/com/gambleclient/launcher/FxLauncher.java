@@ -12,10 +12,18 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public final class FxLauncher {
+    private static final Set<String> SELF_TEST_HOSTS = Set.of(
+        "gamble-client.store",
+        "launchermeta.mojang.com",
+        "meta.fabricmc.net",
+        "resources.download.minecraft.net"
+    );
+
     private FxLauncher() {
     }
 
@@ -120,7 +128,16 @@ public final class FxLauncher {
 
     private static void http(String label, String url, boolean hostReachabilityOnly) {
         try {
-            HttpURLConnection connection = (HttpURLConnection) URI.create(url).toURL().openConnection();
+            URI uri = URI.create(url);
+            String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(java.util.Locale.ROOT);
+            if (!"https".equalsIgnoreCase(uri.getScheme())
+                || uri.getPort() != -1
+                || uri.getUserInfo() != null
+                || (!SELF_TEST_HOSTS.contains(host) && !host.endsWith(".gamble-client.store"))) {
+                throw new IOException("Self-test URL is not trusted.");
+            }
+            HttpURLConnection connection = (HttpURLConnection) uri.toURL().openConnection();
+            connection.setInstanceFollowRedirects(false);
             connection.setRequestMethod("GET");
             connection.setConnectTimeout(10000);
             connection.setReadTimeout(15000);

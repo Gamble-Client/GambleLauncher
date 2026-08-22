@@ -4,6 +4,8 @@ The open-source desktop launcher for Gamble Client. The launcher source is
 licensed under the [MIT License](LICENSE); protected Gamble Client mod code and
 server-side services are separate projects and are not included here.
 
+Source and issue tracker: [Gamble-Client/GambleLauncher](https://github.com/Gamble-Client/GambleLauncher).
+
 Current flow:
 
 - Opens the Gamble Client site sign-in from the top bar.
@@ -24,6 +26,12 @@ Managed game folder:
 - macOS: `~/Library/Application Support/Gamble Client/minecraft`
 
 Override with `GAMBLE_CLIENT_GAME_DIR` or `-Dgamble.gameDir=/path/to/minecraft`.
+
+Profile files are kept below the managed game folder in `profiles/<profile>/`.
+For Fabric profiles, add extra `.jar` files to that profile's `mods/` folder;
+resource packs use the matching `resourcepacks/` folder. The launcher exposes
+an **Open Folder** action in both managers so the exact path is visible without
+guessing which package installed it.
 
 Microsoft auth:
 

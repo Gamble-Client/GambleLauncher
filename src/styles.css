@@ -2036,3 +2036,235 @@ input,
   .content { padding: 0; }
   .rail, .launch-panel { border-radius: 18px; }
 }
+
+/* Launcher shell polish: the native packages use this compact title bar so
+   the RPM/DEB/EXE builds share the same proportions and controls. */
+#app,
+.app-frame {
+  height: 100vh;
+}
+
+.app-frame {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  background: transparent;
+}
+
+.window-bar {
+  display: flex;
+  flex: 0 0 36px;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding-left: 16px;
+  background: rgba(12, 15, 18, .96);
+  border-bottom: 1px solid rgba(255, 255, 255, .06);
+  color: #aab3bc;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.window-title {
+  overflow: hidden;
+  color: #cbd2d9;
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.window-actions {
+  display: flex;
+  align-self: stretch;
+  -webkit-app-region: no-drag;
+}
+
+.window-actions button {
+  display: grid;
+  width: 44px;
+  height: 36px;
+  place-items: center;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #aab3bc;
+  font-size: 1rem;
+  line-height: 1;
+  transition: background .18s ease, color .18s ease;
+}
+
+.window-actions button:hover {
+  background: rgba(255, 255, 255, .08);
+  color: #fff;
+}
+
+.window-actions .window-close:hover {
+  background: #b33c32;
+  color: #fff;
+}
+
+.shell {
+  flex: 1 1 auto;
+  height: auto;
+  max-height: none;
+  min-height: 0;
+}
+
+.content {
+  height: 100%;
+  max-height: none;
+}
+
+.view-frame {
+  display: block;
+  min-width: 0;
+  padding-bottom: 12px;
+}
+
+.shell:not(.animations-off) .view-frame {
+  animation: launcherViewIn .28s cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.nav-item,
+.top-actions button,
+.launch-button,
+.toggle-button,
+.checkbox-setting input,
+select,
+input {
+  transition: background .2s ease, border-color .2s ease, color .2s ease,
+    box-shadow .2s ease, transform .2s ease, opacity .2s ease;
+}
+
+.nav-item.active {
+  animation: launcherTabPop .24s ease both;
+}
+
+.settings-button {
+  min-width: 94px;
+  justify-content: center;
+  font-weight: 800;
+}
+
+.profile-location-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(145deg, #1a2027, #12171c);
+  box-shadow: var(--neo-small);
+}
+
+.profile-location-card > div {
+  min-width: 0;
+}
+
+.profile-location-card strong,
+.profile-location-card small,
+.profile-location-card code {
+  display: block;
+}
+
+.profile-location-card strong {
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+
+.profile-location-card small {
+  margin-top: 5px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.profile-location-card code {
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+  color: #fbbf24;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: .75rem;
+}
+
+.avatar,
+.mini-avatar {
+  background-repeat: no-repeat;
+}
+
+.avatar { background-size: cover; }
+.mini-avatar { background-size: cover; }
+
+@keyframes launcherViewIn {
+  from { opacity: 0; transform: translate3d(0, 8px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes launcherTabPop {
+  from { transform: translateX(-3px); }
+  to { transform: translateX(0); }
+}
+
+@media (max-width: 840px) {
+  .topbar,
+  .screen-band {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .topbar .top-actions,
+  .screen-band .top-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .profile-location-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (min-width: 841px) {
+  .topbar,
+  .screen-band {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .topbar .top-actions,
+  .screen-band .top-actions {
+    width: auto;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 760px) {
+  #app,
+  .app-frame {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  body { overflow: auto; }
+
+  .shell {
+    height: auto;
+    max-height: none;
+    min-height: calc(100vh - 36px);
+    grid-template-columns: 1fr;
+  }
+
+  .rail {
+    max-height: none;
+  }
+
+  .content {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+}

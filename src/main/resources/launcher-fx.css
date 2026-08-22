@@ -723,3 +723,31 @@
 .progress-bar .bar {
     -fx-background-color: linear-gradient(to right, #f0a62b, #ffcf69);
 }
+
+/* Compact controls keep the fallback JAR readable at narrow widths. */
+.button,
+.primary,
+.secondary,
+.state-toggle,
+.folder-tab {
+    -fx-wrap-text: true;
+    -fx-text-alignment: center;
+    -fx-padding: 9 13;
+}
+
+.heading,
+.section-title,
+.muted,
+.chip-value,
+.field-label {
+    -fx-wrap-text: true;
+}
+
+.flow-pane {
+    -fx-hgap: 10;
+    -fx-vgap: 10;
+}
+
+.mod-list .list-cell {
+    -fx-padding: 7 8;
+}

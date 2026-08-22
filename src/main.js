@@ -1,5 +1,6 @@
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as tauriOpenDialog } from "@tauri-apps/plugin-dialog";
 import "./styles.css";
 import logoUrl from "./assets/cg-mod-icon.png";
@@ -20,6 +21,9 @@ const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 // Browser mocks are a development-only visual harness. Vite removes this branch
 // and its sample data from production launcher bundles.
 const PREVIEW = import.meta.env.DEV && !("__TAURI_INTERNALS__" in window);
+const PREVIEW_MODE = PREVIEW
+  ? new URLSearchParams(globalThis.location?.search || "").get("preview") || ""
+  : "";
 
 const app = document.querySelector("#app");
 
@@ -156,6 +160,17 @@ async function openDialog(options) {
 }
 
 let previewClientInstalled = false;
+let nativeWindow;
+
+function currentNativeWindow() {
+  if (PREVIEW) return null;
+  try {
+    nativeWindow ||= getCurrentWindow();
+    return nativeWindow;
+  } catch {
+    return null;
+  }
+}
 
 async function mockInvoke(command, args = {}) {
   await sleep(35);
@@ -200,9 +215,23 @@ async function mockInvoke(command, args = {}) {
       };
     }
     if (path === "/api/launcher/session" || path === "/api/launcher/account") {
+      const adTier = PREVIEW_MODE === "ad-tier";
       return {
-        user: { displayName: "DemoPlayer", selectedPlan: "owner", accessStatus: "owner", ownerAccess: true },
-        ads: { required: false, canWatch: false, remainingSeconds: 0 }
+        user: adTier
+          ? { displayName: "DemoPlayer", selectedPlan: "ad_tier", accessStatus: "ad_tier", ownerAccess: false }
+          : { displayName: "DemoPlayer", selectedPlan: "owner", accessStatus: "owner", ownerAccess: true },
+        ads: adTier
+          ? { required: true, canWatch: true, active: false, remainingSeconds: 0, message: "Watch a sponsor break before playing." }
+          : { required: false, canWatch: false, active: false, remainingSeconds: 0 }
+      };
+    }
+    if (path === "/api/launcher/ad-reward/start") {
+      return { adSeconds: 1, adUrl: "/assets/placeholder-ad.mp4", challenge: "preview", message: "Preview sponsor break started." };
+    }
+    if (path === "/api/launcher/ad-reward/complete") {
+      return {
+        user: { displayName: "DemoPlayer", selectedPlan: "ad_tier", accessStatus: "ad_tier", ownerAccess: false },
+        ads: { required: true, canWatch: true, active: true, remainingSeconds: 900, message: "Sponsored access active." }
       };
     }
     if (path === "/api/launcher/start") {
@@ -366,7 +395,16 @@ function render() {
   const selectedBuild = buildForAccount();
   const canInstall = signedIn && profile.client;
   app.innerHTML = `
-    <section class="shell ${state.animationsEnabled ? "" : "animations-off"}">
+    <div class="app-frame">
+      <header class="window-bar" data-tauri-drag-region>
+        <span class="window-title">Gamble Client Launcher</span>
+        <div class="window-actions" aria-label="Window controls">
+          <button type="button" data-window-action="minimize" aria-label="Minimize">−</button>
+          <button type="button" data-window-action="maximize" aria-label="Maximize">□</button>
+          <button type="button" class="window-close" data-window-action="close" aria-label="Close">×</button>
+        </div>
+      </header>
+      <section class="shell ${state.animationsEnabled ? "" : "animations-off"}">
       <aside class="rail">
         <div class="brand">
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
@@ -395,17 +433,20 @@ function render() {
 
       <section class="content" data-scroll-key="content">
         ${topbar(signedIn)}
-        ${state.view === "play" ? playView(profile, selectedBuild, canInstall, signedIn) : ""}
-        ${state.view === "accounts" ? accountsView(signedIn) : ""}
-        ${state.view === "social" ? socialView() : ""}
-        ${state.view === "updates" ? updatesView(profile, selectedBuild, canInstall, signedIn) : ""}
-        ${state.view === "profiles" ? profilesView(profile, selectedBuild) : ""}
-        ${state.view === "settings" ? settingsView(profile, selectedBuild) : ""}
-        ${state.signIn ? signInPanel() : ""}
-        ${state.microsoftSignIn ? microsoftPanel() : ""}
+        <main class="view-frame" data-view-frame="${escapeAttr(state.view)}">
+          ${state.view === "play" ? playView(profile, selectedBuild, canInstall, signedIn) : ""}
+          ${state.view === "accounts" ? accountsView(signedIn) : ""}
+          ${state.view === "social" ? socialView() : ""}
+          ${state.view === "updates" ? updatesView(profile, selectedBuild, canInstall, signedIn) : ""}
+          ${state.view === "profiles" ? profilesView(profile, selectedBuild) : ""}
+          ${state.view === "settings" ? settingsView(profile, selectedBuild) : ""}
+          ${state.signIn ? signInPanel() : ""}
+          ${state.microsoftSignIn ? microsoftPanel() : ""}
+        </main>
       </section>
       ${updatePopup()}
-    </section>
+      </section>
+    </div>
   `;
 
   renderedView = state.view;
@@ -469,7 +510,7 @@ function topbar(signedIn) {
       </div>
       <div class="top-actions">
         <button class="ghost" type="button" data-action="refresh" ${state.busy ? "disabled" : ""}>Refresh</button>
-        <button class="icon-button ${state.view === "settings" ? "active" : ""}" type="button" data-view="settings" aria-label="Settings" title="Settings"><span class="settings-glyph" aria-hidden="true">⚙</span></button>
+        <button class="ghost settings-button ${state.view === "settings" ? "active" : ""}" type="button" data-view="settings" aria-label="Open settings">Settings</button>
         <button class="${signedIn ? "ghost" : "primary-small"}" type="button" data-action="${signedIn ? "signout" : "signin"}" ${state.busy ? "disabled" : ""}>${signedIn ? "Sign out" : "Sign in"}</button>
       </div>
     </header>
@@ -478,7 +519,7 @@ function topbar(signedIn) {
 
 function playView(profile, selectedBuild, canInstall, signedIn) {
   const sponsorBlocked = !state.minecraftRunning && selectedBuild.id === "ad_tier" && !state.ads?.active;
-  const launchLabel = state.minecraftRunning ? "Stop Minecraft" : sponsorBlocked ? "Watch sponsor first" : "Launch";
+  const launchLabel = state.minecraftRunning ? "Stop Minecraft" : sponsorBlocked ? "Watch sponsor first" : "Play";
   const clientStatus = clientStatusLabel();
   const enabledMods = state.mods.filter((item) => item.enabled).length;
   const enabledPacks = state.packs.filter((item) => item.enabled).length;
@@ -723,6 +764,8 @@ function updatesView(profile, selectedBuild, canInstall, signedIn) {
 function profilesView(profile, selectedBuild) {
   const profilesList = allProfiles();
   const custom = Boolean(profile.custom);
+  const managedRoot = state.info?.managed_root || "Managed Gamble Client game folder";
+  const profileModsPath = `${managedRoot}/profiles/${profile.id}/mods`;
   return `
     <section class="screen-band profile-heading">
       <div>
@@ -804,6 +847,15 @@ function profilesView(profile, selectedBuild) {
             <button class="ghost" type="button" data-action="update-loader" ${state.busy ? "disabled" : ""}>${state.profileLoaderStatus?.updateAvailable ? "Update loader" : "Check loader"}</button>
           </section>
         ` : ""}
+        <section class="profile-location-card">
+          <div>
+            <span class="eyebrow">Where files live</span>
+            <strong>Mods stay inside this profile.</strong>
+            <small>Use this folder for extra Fabric mods. The managed Gamble loader is installed here too.</small>
+            <code>${escapeHtml(profileModsPath)}</code>
+          </div>
+          <button class="ghost" type="button" data-action="open-mods">Open mods folder</button>
+        </section>
         ${fileSection("mods", profile, state.mods)}
         ${fileSection("packs", profile, state.packs)}
       </div>
@@ -1014,9 +1066,9 @@ function accountRow(label, title, meta, badge, imageStyle = "", initials = "") {
 
 function avatarStyle(account = state.microsoft) {
   const uuid = String(account?.uuid || "").replaceAll("-", "").trim();
-  if (/^[a-f0-9]{32}$/i.test(uuid)) return remoteAvatarStyle(`https://mc-heads.net/avatar/${uuid}/128`);
+  if (/^[a-f0-9]{32}$/i.test(uuid)) return remoteAvatarStyle(`https://mc-heads.net/body/${uuid}/128`, "contain");
   const name = String(account?.name || "").trim();
-  if (name) return remoteAvatarStyle(`https://mc-heads.net/avatar/${encodeURIComponent(name)}/128`);
+  if (name) return remoteAvatarStyle(`https://mc-heads.net/body/${encodeURIComponent(name)}/128`, "contain");
   return "";
 }
 
@@ -1029,18 +1081,18 @@ function friendAvatarStyle(friend = {}) {
   const direct = String(friend.avatarUrl || friend.avatar || friend.discordAvatar || "").trim();
   if (/^https?:\/\//i.test(direct)) return remoteAvatarStyle(direct);
   const uuid = String(friend.minecraftUuid || friend.minecraftUUID || friend.uuid || "").replaceAll("-", "").trim();
-  if (/^[a-f0-9]{32}$/i.test(uuid)) return remoteAvatarStyle(`https://mc-heads.net/avatar/${uuid}/128`);
+  if (/^[a-f0-9]{32}$/i.test(uuid)) return remoteAvatarStyle(`https://mc-heads.net/body/${uuid}/128`, "contain");
   const minecraftName = String(friend.minecraftName || friend.mcName || "").trim();
-  if (minecraftName) return remoteAvatarStyle(`https://mc-heads.net/avatar/${encodeURIComponent(minecraftName)}/128`);
+  if (minecraftName) return remoteAvatarStyle(`https://mc-heads.net/body/${encodeURIComponent(minecraftName)}/128`, "contain");
   const username = String(friend.username || "").trim();
-  if (/^[a-z0-9_]{3,16}$/i.test(username)) return remoteAvatarStyle(`https://mc-heads.net/avatar/${encodeURIComponent(username)}/128`);
+  if (/^[a-z0-9_]{3,16}$/i.test(username)) return remoteAvatarStyle(`https://mc-heads.net/body/${encodeURIComponent(username)}/128`, "contain");
   return "";
 }
 
-function remoteAvatarStyle(url) {
+function remoteAvatarStyle(url, sizing = "cover") {
   const clean = String(url || "").trim();
   if (!/^https?:\/\//i.test(clean)) return "";
-  return `background-image:linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(90, 170, 255, 0.08)), url("${cssUrl(clean)}");`;
+  return `background-image:linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(90, 170, 255, 0.08)), url("${cssUrl(clean)}");background-size:${sizing};background-position:center;background-repeat:no-repeat;`;
 }
 
 function cssUrl(value) {
@@ -2128,6 +2180,22 @@ app.addEventListener("click", async (event) => {
     if (view === "accounts") await loadMicrosoftAccounts();
     if (view === "updates") await refreshUpdatesIfStale();
     render();
+    return;
+  }
+
+  const windowAction = event.target.closest("[data-window-action]")?.dataset.windowAction;
+  if (windowAction) {
+    event.preventDefault();
+    event.stopPropagation();
+    const win = currentNativeWindow();
+    if (!win) return;
+    try {
+      if (windowAction === "minimize") await win.minimize();
+      else if (windowAction === "maximize") await win.toggleMaximize();
+      else if (windowAction === "close") await win.close();
+    } catch (error) {
+      log(`Window action failed: ${error.message || error}`);
+    }
     return;
   }
 
