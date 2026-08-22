@@ -208,6 +208,8 @@ test("native and universal launchers expose the role-gated Dev build", async () 
 test("custom launcher chrome exposes explicit drag and resize paths", async () => {
     const frontend = await source("src/main.js");
     const css = await source("src/styles.css");
+    const config = JSON.parse(await source("src-tauri/tauri.conf.json"));
+    const capability = JSON.parse(await source("src-tauri/capabilities/main-window.json"));
 
     assert.match(frontend, /data-window-drag/);
     assert.match(frontend, /data-window-resize="NorthEast"/);
@@ -215,18 +217,35 @@ test("custom launcher chrome exposes explicit drag and resize paths", async () =
     assert.match(frontend, /startResizeDragging\(resizeHandle\.dataset\.windowResize\)/);
     assert.match(css, /\.window-resize-n[\s\S]*cursor: ns-resize/);
     assert.match(css, /\.window-resize-se[\s\S]*cursor: nwse-resize/);
+    assert.deepEqual(config.app.security.capabilities, ["main-window"]);
+    assert.deepEqual(capability.windows, ["main"]);
+    for (const permission of [
+        "core:window:allow-start-dragging",
+        "core:window:allow-start-resize-dragging",
+        "core:window:allow-minimize",
+        "core:window:allow-toggle-maximize",
+        "core:window:allow-close"
+    ]) {
+        assert.ok(capability.permissions.includes(permission), `missing Tauri capability: ${permission}`);
+    }
 });
 
-test("profiles use a plus menu and keep account/build controls per profile", async () => {
+test("profiles use a compact switcher with clear account, build, and folder controls", async () => {
     const frontend = await source("src/main.js");
     const css = await source("src/styles.css");
 
     assert.match(frontend, /data-action="toggle-profile-create"/);
     assert.match(frontend, /data-profile-create-menu/);
+    assert.match(frontend, /data-action="select-new-profile-type"/);
     assert.match(frontend, /data-field="profileAccount"/);
-    assert.match(frontend, /data-field="selectedBuild"/);
+    assert.match(frontend, /data-action="select-profile-build"/);
+    assert.match(frontend, /data-view="mods"/);
+    assert.match(frontend, /data-view="packs"/);
+    assert.match(frontend, /id === "profiles" && \["mods", "packs"\]\.includes\(state\.view\)/);
     assert.match(frontend, /state\.profileCreateOpen = false/);
     assert.match(css, /\.profile-add-button/);
-    assert.match(css, /\.profile-control-grid/);
+    assert.match(css, /\.profile-switcher/);
+    assert.match(css, /\.profile-workspace-grid/);
+    assert.match(css, /\.profile-folder-row/);
     assert.match(css, /\.settings-button \{[\s\S]*font-weight: inherit;/);
 });

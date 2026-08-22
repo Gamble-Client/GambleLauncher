@@ -1510,6 +1510,511 @@ pre {
   }
 }
 
+/* Profiles: compact launch workspace -------------------------------------- */
+.profile-page-head {
+  position: relative;
+  overflow: visible;
+}
+
+.profile-page-head p {
+  max-width: 56ch;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: .84rem;
+}
+
+.profile-create-anchor {
+  position: relative;
+  align-self: center;
+}
+
+.profile-create-anchor .profile-create-menu {
+  top: calc(100% + 10px);
+}
+
+.profile-create-runtime {
+  display: grid;
+  gap: 7px;
+}
+
+.profile-create-runtime > span,
+.profile-account-control label > span,
+.profile-build-control > span {
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.profile-type-options,
+.profile-build-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.profile-type-choice,
+.profile-build-choice {
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: linear-gradient(145deg, #1b2229, #12171c);
+  box-shadow: 4px 4px 9px rgba(2, 5, 8, .5), -3px -3px 8px rgba(45, 54, 63, .16);
+  color: var(--muted);
+  font-size: .73rem;
+  transition: border-color .18s ease, color .18s ease, background .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+.profile-type-choice {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+}
+
+.profile-type-choice span {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 7px;
+  background: #11161b;
+  color: var(--amber);
+  font-family: "JetBrains Mono", monospace;
+  font-size: .65rem;
+  font-weight: 800;
+}
+
+.profile-type-choice:hover,
+.profile-build-choice:hover {
+  transform: translateY(-1px);
+  border-color: rgba(245, 158, 11, .28);
+  color: var(--text);
+}
+
+.profile-type-choice.active,
+.profile-build-choice.active {
+  border-color: rgba(245, 158, 11, .36);
+  background: #151b20;
+  box-shadow: var(--neo-inset);
+  color: var(--amber);
+}
+
+.profile-switcher-shell {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(145deg, #181e24, #11161b);
+  box-shadow: var(--neo-small);
+}
+
+.profile-switcher {
+  display: flex;
+  min-width: 0;
+  gap: 7px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scroll-snap-type: x proximity;
+}
+
+.profile-switch {
+  display: grid;
+  grid-template-columns: 32px minmax(108px, 1fr);
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 9px;
+  min-height: 50px;
+  padding: 8px 11px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  scroll-snap-align: start;
+  transition: border-color .18s ease, background .18s ease, color .18s ease, box-shadow .18s ease;
+}
+
+.profile-switch:hover {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, .025);
+  color: var(--text);
+}
+
+.profile-switch.active {
+  border-color: rgba(245, 158, 11, .25);
+  background: #171d23;
+  box-shadow: var(--neo-inset);
+  color: var(--text);
+}
+
+.profile-switch-mark,
+.profile-current-mark,
+.profile-account-mark,
+.profile-folder-mark {
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(245, 158, 11, .22);
+  background: linear-gradient(145deg, #242c34, #141a20);
+  color: var(--amber);
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 800;
+}
+
+.profile-switch-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  font-size: .72rem;
+}
+
+.profile-switch > span {
+  min-width: 0;
+}
+
+.profile-switch strong,
+.profile-switch small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-switch strong {
+  color: inherit;
+  font-size: .78rem;
+}
+
+.profile-switch small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: .63rem;
+}
+
+.profile-switcher-count,
+.profile-built-in {
+  color: var(--muted);
+  font-family: "JetBrains Mono", monospace;
+  font-size: .64rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.profile-switcher-count {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #12171c;
+}
+
+.profile-workspace {
+  margin-top: 14px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: radial-gradient(circle at 92% 5%, rgba(245, 158, 11, .06), transparent 24%), linear-gradient(145deg, #1a2027, #11161b);
+  box-shadow: var(--neo-raised);
+}
+
+.profile-workspace-head,
+.profile-loader-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+.profile-workspace-head {
+  border-bottom: 1px solid var(--line);
+}
+
+.profile-workspace-title,
+.profile-loader-strip > div {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 12px;
+}
+
+.profile-current-mark {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  border-radius: 13px;
+  font-size: .92rem;
+}
+
+.profile-workspace-title > div {
+  min-width: 0;
+}
+
+.profile-workspace-title h3 {
+  margin-top: 5px;
+  overflow: hidden;
+  font-size: 1.08rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-workspace-title p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: .72rem;
+}
+
+.profile-delete-action {
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 81, 72, .2);
+  border-radius: 10px;
+  background: transparent;
+  color: #b9a2a1;
+  font-size: .68rem;
+}
+
+.profile-delete-action:hover {
+  border-color: rgba(255, 81, 72, .45);
+  background: rgba(255, 81, 72, .08);
+  color: #ff8e88;
+}
+
+.profile-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, .88fr) minmax(0, 1.12fr);
+  gap: 1px;
+  background: var(--line);
+}
+
+.profile-setup-panel,
+.profile-folders-panel {
+  min-width: 0;
+  padding: 18px;
+  background: #141a20;
+}
+
+.profile-panel-title h3 {
+  margin-top: 5px;
+  font-size: .98rem;
+}
+
+.profile-account-control {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.profile-account-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  font-size: .84rem;
+}
+
+.profile-account-control label {
+  min-width: 0;
+}
+
+.profile-account-control select {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.profile-build-control {
+  display: grid;
+  gap: 7px;
+  margin-top: 15px;
+}
+
+.profile-build-options {
+  grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
+}
+
+.profile-build-choice {
+  min-height: 36px;
+  padding: 7px 9px;
+}
+
+.profile-runtime-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 15px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #11161b;
+  box-shadow: var(--neo-inset);
+}
+
+.profile-runtime-note > span {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 9px;
+  background: #1b2229;
+  color: var(--amber);
+  font-family: "JetBrains Mono", monospace;
+  font-size: .72rem;
+}
+
+.profile-runtime-note strong,
+.profile-runtime-note small {
+  display: block;
+}
+
+.profile-runtime-note small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: .7rem;
+}
+
+.profile-folder-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  margin-top: 8px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #11161b;
+  box-shadow: var(--neo-inset);
+}
+
+.profile-folders-panel .profile-panel-title + .profile-folder-row {
+  margin-top: 16px;
+}
+
+.profile-folder-row.disabled {
+  opacity: .55;
+}
+
+.profile-folder-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  font-size: .7rem;
+}
+
+.profile-folder-row strong,
+.profile-folder-row small {
+  display: block;
+}
+
+.profile-folder-row strong {
+  font-size: .78rem;
+}
+
+.profile-folder-row small {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: .65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-folder-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.profile-folder-actions button {
+  min-height: 31px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #1a2027;
+  color: var(--muted);
+  font-size: .64rem;
+}
+
+.profile-folder-actions button:hover {
+  border-color: rgba(245, 158, 11, .25);
+  color: var(--amber);
+}
+
+.profile-root-path {
+  display: block;
+  margin-top: 10px;
+  overflow: hidden;
+  color: #858f99;
+  font-size: .62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-loader-strip {
+  border-top: 1px solid var(--line);
+  background: #13191f;
+}
+
+.profile-loader-strip strong,
+.profile-loader-strip small {
+  display: block;
+}
+
+.profile-loader-strip strong {
+  font-size: .78rem;
+}
+
+.profile-loader-strip small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: .66rem;
+}
+
+@media (max-width: 900px) {
+  .profile-workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-setup-panel {
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 620px) {
+  .profile-create-menu {
+    right: -8px;
+    width: min(350px, calc(100vw - 28px));
+  }
+
+  .profile-switch {
+    grid-template-columns: 30px minmax(96px, 1fr);
+  }
+
+  .profile-workspace-head,
+  .profile-loader-strip {
+    align-items: flex-start;
+  }
+
+  .profile-folder-row {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .profile-folder-actions {
+    grid-column: 2;
+  }
+}
+
 /* 2026 control-room visual system ------------------------------------------------ */
 :root {
   --bg: #07090a;
@@ -2775,4 +3280,65 @@ input {
     grid-column: 2;
     justify-self: start;
   }
+}
+
+/* Keep profile setup usable in the launcher's default-height native window. */
+.profile-page-head {
+  min-height: 0;
+  padding: 13px 18px;
+}
+
+.profile-page-head > div:first-child {
+  align-self: center;
+}
+
+.profile-page-head p {
+  margin-top: 3px;
+}
+
+.profile-switcher-shell,
+.profile-workspace {
+  margin-top: 10px;
+}
+
+.profile-workspace-head {
+  padding: 12px 16px;
+}
+
+.profile-setup-panel,
+.profile-folders-panel {
+  padding: 14px 16px;
+}
+
+.profile-account-control,
+.profile-folders-panel .profile-panel-title + .profile-folder-row {
+  margin-top: 12px;
+}
+
+.profile-build-control {
+  margin-top: 12px;
+}
+
+* {
+  scrollbar-color: #343c44 #0d1115;
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #0d1115;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid #0d1115;
+  border-radius: 999px;
+  background: #343c44;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #4b5661;
 }

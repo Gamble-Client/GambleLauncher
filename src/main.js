@@ -15,7 +15,7 @@ const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
-const LAUNCHER_VERSION = "0.1.117";
+const LAUNCHER_VERSION = "0.1.118";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 // Browser mocks are a development-only visual harness. Vite removes this branch
@@ -448,6 +448,8 @@ function render() {
           ${state.view === "social" ? socialView() : ""}
           ${state.view === "updates" ? updatesView(profile, selectedBuild, canInstall, signedIn) : ""}
           ${state.view === "profiles" ? profilesView(profile, selectedBuild) : ""}
+          ${state.view === "mods" ? fileView("mods", profile, state.mods) : ""}
+          ${state.view === "packs" ? fileView("packs", profile, state.packs) : ""}
           ${state.view === "settings" ? settingsView(profile, selectedBuild) : ""}
           ${state.signIn ? signInPanel() : ""}
           ${state.microsoftSignIn ? microsoftPanel() : ""}
@@ -463,7 +465,8 @@ function render() {
 }
 
 function navButton(id, label, index) {
-  return `<button class="nav-item ${state.view === id ? "active" : ""}" type="button" data-view="${id}"><span>${escapeHtml(index)}</span><strong>${escapeHtml(label)}</strong></button>`;
+  const active = state.view === id || (id === "profiles" && ["mods", "packs"].includes(state.view));
+  return `<button class="nav-item ${active ? "active" : ""}" type="button" data-view="${id}"><span>${escapeHtml(index)}</span><strong>${escapeHtml(label)}</strong></button>`;
 }
 
 function allProfiles() {
@@ -773,114 +776,114 @@ function updatesView(profile, selectedBuild, canInstall, signedIn) {
 function profilesView(profile, selectedBuild) {
   const profilesList = allProfiles();
   const managedRoot = state.info?.managed_root || "Managed Gamble Client game folder";
-  const profileModsPath = `${managedRoot}/profiles/${profile.id}/mods`;
+  const profileRootPath = `${managedRoot}/profiles/${profile.id}`;
   const activeAccount = profileAccount(profile);
   const selectedAccountUuid = String(state.profileAccountOverrides?.[profile.id] || "").replaceAll("-", "").toLowerCase();
+  const allowedBuilds = builds.filter((item) => canUseBuild(item.id));
+  const profileMark = profile.client ? "G" : profile.loader === "fabric" ? "F" : "V";
+  const accountMark = String(activeAccount?.name || "?").trim().slice(0, 1).toUpperCase() || "?";
   return `
-    <section class="screen-band profile-heading profile-heading-redesign">
+    <section class="screen-band profile-page-head">
       <div>
-        <span class="eyebrow">Launch folders</span>
-        <h2>Profiles</h2>
-        <p>Keep accounts, builds, mods, and resource packs organized per launch profile.</p>
+        <span class="eyebrow">Launch setup</span>
+        <p>Pick a folder, choose its account and build, then play.</p>
       </div>
-      <div class="profile-heading-actions">
-        <span class="profile-count">${profilesList.length} profile${profilesList.length === 1 ? "" : "s"}</span>
+      <div class="profile-create-anchor">
         <button class="profile-add-button" type="button" data-action="toggle-profile-create" aria-label="Create profile" title="Create profile" ${state.busy ? "disabled" : ""}>+</button>
         ${state.profileCreateOpen ? `
           <div class="profile-create-menu" data-profile-create-menu role="dialog" aria-label="Create profile">
             <div class="profile-create-menu-head">
-              <div><span class="eyebrow">New launch folder</span><strong>Create profile</strong></div>
+              <div><span class="eyebrow">New folder</span><strong>Create profile</strong></div>
               <button class="profile-menu-close" type="button" data-action="close-profile-create" aria-label="Close">×</button>
             </div>
             <label>
-              <span>Profile name</span>
-              <input data-field="newProfileName" value="${escapeAttr(state.newProfileName)}" placeholder="e.g. PvP, content, testing" autofocus>
+              <span>Name</span>
+              <input data-field="newProfileName" value="${escapeAttr(state.newProfileName)}" placeholder="PvP, recording, testing…" autofocus>
             </label>
-            <label>
-              <span>Runtime</span>
-              <select data-field="newProfileType">
-                <option value="fabric" ${state.newProfileType === "fabric" ? "selected" : ""}>Fabric</option>
-                <option value="client" ${state.newProfileType === "client" ? "selected" : ""}>Gamble Client</option>
-                <option value="vanilla" ${state.newProfileType === "vanilla" ? "selected" : ""}>Vanilla</option>
-              </select>
-            </label>
+            <div class="profile-create-runtime">
+              <span>Type</span>
+              <div class="profile-type-options" role="radiogroup" aria-label="Profile type">
+                ${[
+                  ["client", "G", "Gamble"],
+                  ["fabric", "F", "Fabric"],
+                  ["vanilla", "V", "Vanilla"]
+                ].map(([type, mark, label]) => `<button class="profile-type-choice ${state.newProfileType === type ? "active" : ""}" type="button" data-action="select-new-profile-type" data-profile-type="${type}" role="radio" aria-checked="${state.newProfileType === type}"><span>${mark}</span>${label}</button>`).join("")}
+              </div>
+            </div>
             <div class="profile-create-actions">
               <button class="ghost" type="button" data-action="close-profile-create">Cancel</button>
-              <button class="primary-small" type="button" data-action="create-profile" ${state.busy ? "disabled" : ""}>Create profile</button>
+              <button class="primary-small" type="button" data-action="create-profile" ${state.busy ? "disabled" : ""}>Create</button>
             </div>
           </div>
         ` : ""}
       </div>
     </section>
-    <section class="profiles-layout">
-      <aside class="profile-list-panel">
-        <div class="profile-list-head"><div><span class="eyebrow">Your launch folders</span><strong>Choose a profile</strong></div><span class="profile-list-count">${profilesList.length}</span></div>
-        <div class="profile-list">
-          ${profilesList.map((item) => `
-            <article class="profile-card ${item.id === profile.id ? "active" : ""}">
-              <button class="profile-card-main" type="button" data-action="select-profile" data-profile="${escapeAttr(item.id)}" ${item.id === profile.id ? "aria-current=\"true\"" : ""}>
-                <span class="profile-card-icon">${item.client ? "G" : item.loader === "fabric" ? "F" : "V"}</span>
-                <span class="profile-card-copy"><span>${escapeHtml(profileTypeLabel(item))}</span><strong>${escapeHtml(item.label)}</strong><small>${escapeHtml(profileAccountLabel(item))}</small></span>
-                <span class="profile-card-chevron">›</span>
-              </button>
-              ${item.custom ? `<button class="profile-delete-button" type="button" data-action="request-delete-profile" data-profile="${escapeAttr(item.id)}" aria-label="Delete ${escapeAttr(item.label)}" title="Delete profile" ${state.busy || state.minecraftRunning ? "disabled" : ""}>×</button>` : ""}
-            </article>
-          `).join("")}
+    <section class="profile-switcher-shell" aria-label="Launch profiles">
+      <div class="profile-switcher" data-scroll-key="profile-switcher">
+        ${profilesList.map((item) => {
+          const mark = item.client ? "G" : item.loader === "fabric" ? "F" : "V";
+          return `<button class="profile-switch ${item.id === profile.id ? "active" : ""}" type="button" data-action="select-profile" data-profile="${escapeAttr(item.id)}" aria-pressed="${item.id === profile.id}"><span class="profile-switch-mark">${mark}</span><span><strong>${escapeHtml(item.label)}</strong><small>${escapeHtml(profileTypeLabel(item))}</small></span></button>`;
+        }).join("")}
+      </div>
+      <span class="profile-switcher-count">${profilesList.length}</span>
+    </section>
+    <section class="profile-workspace">
+      <header class="profile-workspace-head">
+        <div class="profile-workspace-title">
+          <span class="profile-current-mark">${profileMark}</span>
+          <div><span class="eyebrow">Selected folder</span><h3>${escapeHtml(profile.label)}</h3><p>${escapeHtml(profileTypeLabel(profile))} · ${escapeHtml(profileAccountLabel(profile))}</p></div>
         </div>
-        <p class="profile-list-hint">Each profile gets its own mods, resource packs, settings, and selected account.</p>
-      </aside>
-      <div class="profile-editor profile-editor-redesign">
-        <section class="profile-identity-card">
-          <div class="profile-identity-mark">${profile.client ? "G" : profile.loader === "fabric" ? "F" : "V"}</div>
-          <div class="profile-identity-copy"><span class="eyebrow">Selected profile</span><h3>${escapeHtml(profile.label)}</h3><p>${escapeHtml(profileTypeLabel(profile))} runtime · ${profile.custom ? "Custom profile" : "Built-in profile"}</p></div>
-          <span class="profile-live-pill">${profile.id === state.selectedProfile ? "Active" : "Ready"}</span>
-        </section>
-        <section class="profile-control-card">
-          <div class="profile-control-head"><div><span class="eyebrow">Launch identity</span><h3>Account &amp; build</h3></div><span class="profile-control-summary">${escapeHtml(activeAccount?.name || "No account")}</span></div>
-          <div class="profile-control-grid">
+        ${profile.custom ? `<button class="profile-delete-action" type="button" data-action="request-delete-profile" data-profile="${escapeAttr(profile.id)}" ${state.busy || state.minecraftRunning ? "disabled" : ""}>Delete</button>` : `<span class="profile-built-in">Built in</span>`}
+      </header>
+      <div class="profile-workspace-grid">
+        <section class="profile-setup-panel">
+          <div class="profile-panel-title"><div><span class="eyebrow">Launch as</span><h3>Account &amp; build</h3></div></div>
+          <div class="profile-account-control">
+            <span class="profile-account-mark">${escapeHtml(accountMark)}</span>
             <label>
               <span>Microsoft account</span>
               <select data-field="profileAccount">
-                <option value="" ${selectedAccountUuid ? "" : "selected"}>Default${state.microsoft?.name ? ` (${escapeHtml(state.microsoft.name)})` : ""}</option>
+                <option value="" ${selectedAccountUuid ? "" : "selected"}>Default${state.microsoft?.name ? ` — ${escapeHtml(state.microsoft.name)}` : ""}</option>
                 ${state.microsoftAccounts.map((account) => {
                   const uuid = String(account.uuid || "").replaceAll("-", "").toLowerCase();
                   const selected = selectedAccountUuid === uuid;
                   return `<option value="${escapeAttr(uuid)}" ${selected ? "selected" : ""}>${escapeHtml(account.name || "Microsoft")}</option>`;
                 }).join("")}
               </select>
-              <small>Used only when this profile launches Minecraft.</small>
             </label>
-            <label>
+          </div>
+          ${profile.client ? `
+            <div class="profile-build-control">
               <span>Client build</span>
-              <select data-field="selectedBuild" ${!profile.client || adTierOnly() ? "disabled" : ""}>
-                ${builds.map((item) => `<option value="${item.id}" ${item.id === selectedBuild.id ? "selected" : ""}>${item.label}</option>`).join("")}
-              </select>
-              <small>${profile.client ? "The build is stored with the launcher and applies to this client profile." : "Only Gamble Client profiles choose a client build."}</small>
-            </label>
-          </div>
-        </section>
-        ${profile.loader === "fabric" ? `
-          <section class="loader-card">
-            <div>
-              <span class="eyebrow">Fabric loader</span>
-              <strong>${escapeHtml(state.profileLoaderStatus?.version ? `Loader ${state.profileLoaderStatus.version}` : "Not installed")}</strong>
-              <small>${escapeHtml(state.profileLoaderStatus?.updateAvailable ? `Latest ${state.profileLoaderStatus.latestVersion}` : "This profile keeps its own loader version.")}</small>
+              <div class="profile-build-options" role="radiogroup" aria-label="Client build">
+                ${allowedBuilds.map((item) => `<button class="profile-build-choice ${item.id === selectedBuild.id ? "active" : ""}" type="button" data-action="select-profile-build" data-build="${escapeAttr(item.id)}" role="radio" aria-checked="${item.id === selectedBuild.id}" ${state.busy ? "disabled" : ""}>${escapeHtml(item.label)}</button>`).join("")}
+              </div>
             </div>
-            <button class="ghost" type="button" data-action="update-loader" ${state.busy ? "disabled" : ""}>${state.profileLoaderStatus?.updateAvailable ? "Update loader" : "Check loader"}</button>
-          </section>
-        ` : ""}
-        <section class="profile-location-card">
-          <div>
-            <span class="eyebrow">Where files live</span>
-            <strong>Mods stay inside this profile.</strong>
-            <small>Use this folder for extra Fabric mods. The managed Gamble loader is installed here too.</small>
-            <code>${escapeHtml(profileModsPath)}</code>
-          </div>
-          <button class="ghost" type="button" data-action="open-mods">Open mods folder</button>
+          ` : `<div class="profile-runtime-note"><span>${profileMark}</span><div><strong>${escapeHtml(profileTypeLabel(profile))}</strong><small>This profile launches without the Gamble Client payload.</small></div></div>`}
         </section>
-        ${fileSection("mods", profile, state.mods)}
-        ${fileSection("packs", profile, state.packs)}
+        <section class="profile-folders-panel">
+          <div class="profile-panel-title"><div><span class="eyebrow">On this computer</span><h3>Profile folders</h3></div></div>
+          <article class="profile-folder-row ${profileHasMods(profile) ? "" : "disabled"}">
+            <span class="profile-folder-mark">M</span>
+            <div><strong>Mods</strong><small>${profileHasMods(profile) ? `${state.mods.length} file${state.mods.length === 1 ? "" : "s"}` : "Unavailable for Vanilla"}</small></div>
+            <div class="profile-folder-actions"><button type="button" data-view="mods" ${profileHasMods(profile) ? "" : "disabled"}>Manage</button><button type="button" data-action="open-mods" ${profileHasMods(profile) ? "" : "disabled"}>Open</button></div>
+          </article>
+          <article class="profile-folder-row">
+            <span class="profile-folder-mark">R</span>
+            <div><strong>Resource packs</strong><small>${state.packs.length} file${state.packs.length === 1 ? "" : "s"}</small></div>
+            <div class="profile-folder-actions"><button type="button" data-view="packs">Manage</button><button type="button" data-action="open-packs">Open</button></div>
+          </article>
+          <article class="profile-folder-row">
+            <span class="profile-folder-mark">D</span>
+            <div><strong>Profile data</strong><small>Settings, saves, screenshots, and logs</small></div>
+            <div class="profile-folder-actions"><button type="button" data-action="open-data">Open</button></div>
+          </article>
+          <code class="profile-root-path">${escapeHtml(profileRootPath)}</code>
+        </section>
       </div>
+        ${profile.loader === "fabric" ? `
+          <footer class="profile-loader-strip"><div><span class="profile-folder-mark">F</span><div><strong>${escapeHtml(state.profileLoaderStatus?.version ? `Fabric Loader ${state.profileLoaderStatus.version}` : "Fabric Loader")}</strong><small>${escapeHtml(state.profileLoaderStatus?.updateAvailable ? `Update ${state.profileLoaderStatus.latestVersion} available` : "Used only by this profile")}</small></div></div><button class="ghost" type="button" data-action="update-loader" ${state.busy ? "disabled" : ""}>${state.profileLoaderStatus?.updateAvailable ? "Update" : "Check"}</button></footer>
+        ` : ""}
     </section>
   `;
 }
@@ -1299,6 +1302,8 @@ function viewTitle() {
   if (state.view === "social") return "Social";
   if (state.view === "updates") return "Update Center";
   if (state.view === "profiles") return "Profiles";
+  if (state.view === "mods") return "Mods";
+  if (state.view === "packs") return "Resource Packs";
   if (state.view === "settings") return "Launcher Settings";
   return "Launch Gamble Client";
 }
@@ -2231,7 +2236,7 @@ app.addEventListener("click", async (event) => {
       refreshSocialIfStale().then(render).catch((error) => log(`Social refresh failed: ${error.message || error}`));
       return;
     }
-    if (view === "profiles" || view === "play") await refreshFiles();
+    if (["profiles", "play", "mods", "packs"].includes(view)) await refreshFiles();
     if (view === "accounts") await loadMicrosoftAccounts();
     if (view === "updates") await refreshUpdatesIfStale();
     render();
@@ -2514,6 +2519,20 @@ app.addEventListener("click", async (event) => {
     }
   } else if (action === "close-profile-create") {
     state.profileCreateOpen = false;
+    render();
+  } else if (action === "select-new-profile-type") {
+    const type = actionEl.dataset.profileType;
+    if (["client", "fabric", "vanilla"].includes(type)) state.newProfileType = type;
+    render();
+  } else if (action === "select-profile-build") {
+    const buildId = actionEl.dataset.build;
+    if (!currentProfile().client || !canUseBuild(buildId)) return;
+    state.selectedBuild = buildId;
+    state.selectedBuildExplicit = true;
+    localStorage.setItem(SELECTED_BUILD_KEY, buildId);
+    state.clientStatus = null;
+    state.manifest = null;
+    await refreshManifest().catch(() => {});
     render();
   } else if (action === "select-profile") {
     state.selectedProfile = actionEl.dataset.profile || "gamble-client";
