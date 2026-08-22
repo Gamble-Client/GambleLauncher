@@ -15,7 +15,7 @@ const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
-const LAUNCHER_VERSION = "0.1.118";
+const LAUNCHER_VERSION = "0.1.119";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 // Browser mocks are a development-only visual harness. Vite removes this branch
@@ -843,7 +843,7 @@ function profilesView(profile, selectedBuild) {
             <label>
               <span>Microsoft account</span>
               <select data-field="profileAccount">
-                <option value="" ${selectedAccountUuid ? "" : "selected"}>Default${state.microsoft?.name ? ` — ${escapeHtml(state.microsoft.name)}` : ""}</option>
+                <option value="" ${selectedAccountUuid ? "" : "selected"}>Default (follows Accounts)${state.microsoft?.name ? ` — ${escapeHtml(state.microsoft.name)}` : ""}</option>
                 ${state.microsoftAccounts.map((account) => {
                   const uuid = String(account.uuid || "").replaceAll("-", "").toLowerCase();
                   const selected = selectedAccountUuid === uuid;
@@ -2379,24 +2379,13 @@ app.addEventListener("click", async (event) => {
       }
       setBusy(true, "Preparing Minecraft");
       const selectedBuild = buildForAccount();
-      if (selectedAccount?.uuid && state.microsoft?.uuid !== selectedAccount.uuid) {
-        state.launchProgress = normalizeLaunchProgress({
-          phase: "Account",
-          message: "Switching Microsoft account",
-          current: 14,
-          total: 100,
-          indeterminate: true
-        });
-        render();
-        state.microsoft = await invoke("select_microsoft_account", { uuid: selectedAccount.uuid });
-        await loadMicrosoftAccounts();
-      }
       const message = await invoke("launch_game", {
         input: {
           profile: state.selectedProfile,
           build: selectedBuild.id,
           token: state.token,
           username: state.username,
+          accountUuid: selectedAccount?.uuid || "",
           memory: Number(state.memory) || 4,
           javaArgs: state.javaArgs,
           antiScreenshare: state.antiScreenshare
@@ -2416,6 +2405,7 @@ app.addEventListener("click", async (event) => {
       log(`Launch failed: ${error.message || error}`);
       if (microsoftReconnectRequired(error)) {
         log("The saved Microsoft session expired. Opening Microsoft sign-in now.");
+        const defaultAccountUuid = state.microsoft?.uuid || "";
         state.view = "accounts";
         state.popup = null;
         setBusy(false);
@@ -2423,6 +2413,10 @@ app.addEventListener("click", async (event) => {
         if (account?.uuid) {
           state.profileAccountOverrides[state.selectedProfile] = account.uuid;
           saveProfileAccountOverrides();
+          if (defaultAccountUuid && defaultAccountUuid !== account.uuid) {
+            state.microsoft = await invoke("select_microsoft_account", { uuid: defaultAccountUuid });
+            await loadMicrosoftAccounts();
+          }
           state.view = "play";
           showPopup("Microsoft reconnected", "Microsoft is connected again. Press Launch to start Minecraft.", "account");
         }

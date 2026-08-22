@@ -249,3 +249,22 @@ test("profiles use a compact switcher with clear account, build, and folder cont
     assert.match(css, /\.profile-folder-row/);
     assert.match(css, /\.settings-button \{[\s\S]*font-weight: inherit;/);
 });
+
+test("profile launches use their account without rewriting the launcher default", async () => {
+    const frontend = await source("src/main.js");
+    const rust = await source("src-tauri/src/main.rs");
+    const launchBranch = frontend.slice(frontend.indexOf('action === "launch"'), frontend.indexOf('action === "microsoft"'));
+
+    assert.match(launchBranch, /accountUuid: selectedAccount\?\.uuid \|\| ""/);
+    assert.match(launchBranch, /const selectedBuild = buildForAccount\(\);\s*const message = await invoke\("launch_game"/);
+    assert.doesNotMatch(launchBranch, /message: "Switching Microsoft account"/);
+    assert.match(rust, /microsoft_account_for_launch\(&input\.account_uuid\)/);
+    assert.match(rust, /fn microsoft_account_for_launch\(requested_uuid: &str\)/);
+});
+
+test("plain Fabric profiles do not lock the Gamble loader", async () => {
+    const rust = await source("src-tauri/src/main.rs");
+
+    assert.match(rust, /is_required_mod_for_profile\(&profile, &lower\)/);
+    assert.match(rust, /kind == ProfileKind::Client && base == LOADER_JAR_NAME/);
+});

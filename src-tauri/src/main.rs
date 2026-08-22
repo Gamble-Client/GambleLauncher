@@ -407,6 +407,8 @@ struct LaunchRequest {
     build: String,
     token: String,
     username: String,
+    #[serde(default, rename = "accountUuid")]
+    account_uuid: String,
     memory: u8,
     #[serde(rename = "javaArgs")]
     java_args: String,
@@ -909,7 +911,7 @@ fn list_local_files(profile: String, kind: String) -> Result<Vec<LocalFile>, Str
         if !include {
             continue;
         }
-        let locked = kind != "resourcepacks" && is_required_mod_name(&lower);
+        let locked = kind != "resourcepacks" && is_required_mod_for_profile(&profile, &lower);
         let enabled = if kind == "resourcepacks" {
             !lower.ends_with(".disabled")
         } else {
@@ -994,7 +996,7 @@ fn toggle_local_file(profile: String, kind: String, path: String) -> Result<(), 
             .and_then(|v| v.to_str())
             .unwrap_or("")
             .to_lowercase();
-        if is_required_mod_name(&lower) {
+        if is_required_mod_for_profile(&profile, &lower) {
             return Err("This required Fabric mod is managed by the launcher.".to_string());
         }
     }
@@ -1518,7 +1520,7 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
     let java = ensure_java_runtime(Some(&app))?;
 
     emit_launch_progress(&app, "Account", "Refreshing Microsoft session", 2, 13);
-    let account = selected_microsoft_account()?.ok_or_else(|| {
+    let account = microsoft_account_for_launch(&input.account_uuid)?.ok_or_else(|| {
         "Microsoft is linked on the site, but this launcher does not have a local Minecraft token yet. Connect Microsoft in the launcher first.".to_string()
     })?;
     let mut identity = refresh_minecraft_identity(account)?;
@@ -4386,9 +4388,12 @@ fn find_managed_mod_jar(
     Ok(None)
 }
 
-fn is_required_mod_name(lower_name: &str) -> bool {
+fn is_required_mod_for_profile(profile: &str, lower_name: &str) -> bool {
     let base = lower_name.trim_end_matches(".disabled");
-    base == LOADER_JAR_NAME || base == "fabric-api.jar" || base.starts_with("fabric-api-")
+    let kind = profile_kind(profile);
+    (kind == ProfileKind::Client && base == LOADER_JAR_NAME)
+        || (kind != ProfileKind::Vanilla
+            && (base == "fabric-api.jar" || base.starts_with("fabric-api-")))
 }
 
 fn modrinth_versions_url(slug: &str) -> String {
@@ -4441,6 +4446,21 @@ fn selected_microsoft_account() -> Result<Option<MicrosoftAccount>, String> {
         }
     }
     Ok(accounts.first().cloned())
+}
+
+fn microsoft_account_for_launch(requested_uuid: &str) -> Result<Option<MicrosoftAccount>, String> {
+    let requested_uuid = requested_uuid.trim().replace('-', "");
+    if requested_uuid.is_empty() {
+        return selected_microsoft_account();
+    }
+
+    read_microsoft_account_list()?
+        .into_iter()
+        .find(|account| account.uuid.eq_ignore_ascii_case(&requested_uuid))
+        .map(Some)
+        .ok_or_else(|| {
+            "That profile's Microsoft account is no longer saved in this launcher.".to_string()
+        })
 }
 
 fn read_microsoft_account_list() -> Result<Vec<MicrosoftAccount>, String> {
@@ -5109,9 +5129,9 @@ fn open_external(target: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_browser_url, is_expected_loader_fabric_metadata, java_feature_from_text,
-        loader_core_sha256, microsoft_refresh_error, random_base64_url, safe_file_name,
-        verify_fabric_mod_id, verify_fabric_mod_identity, write_private_file,
+        is_browser_url, is_expected_loader_fabric_metadata, is_required_mod_for_profile,
+        java_feature_from_text, loader_core_sha256, microsoft_refresh_error, random_base64_url,
+        safe_file_name, verify_fabric_mod_id, verify_fabric_mod_identity, write_private_file,
         MANAGED_CLIENT_MOD_ID, MICROSOFT_REAUTH_REQUIRED,
     };
     use serde_json::json;
@@ -5129,6 +5149,34 @@ mod tests {
         ));
         assert!(!is_browser_url("/home/player/.gambleclient"));
         assert!(!is_browser_url("javascript:alert(1)"));
+    }
+
+    #[test]
+    fn required_mods_are_scoped_to_the_profile_that_manages_them() {
+        assert!(is_required_mod_for_profile(
+            "gamble-client",
+            "gamble-client-loader.jar"
+        ));
+        assert!(is_required_mod_for_profile(
+            "client-recording",
+            "gamble-client-loader.jar.disabled"
+        ));
+        assert!(!is_required_mod_for_profile(
+            "fabric",
+            "gamble-client-loader.jar"
+        ));
+        assert!(!is_required_mod_for_profile(
+            "fabric-testing",
+            "gamble-client-loader.jar"
+        ));
+        assert!(is_required_mod_for_profile(
+            "fabric",
+            "fabric-api-0.140.2.jar"
+        ));
+        assert!(!is_required_mod_for_profile(
+            "vanilla",
+            "fabric-api-0.140.2.jar"
+        ));
     }
 
     #[test]
