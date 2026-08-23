@@ -94,6 +94,7 @@ public class FxMain extends Application {
     private Label launcherReleased;
     private Label clientInstalled;
     private Label clientReleased;
+    private Label brandTitle;
     private ComboBox<String> profileBox;
     private ComboBox<String> buildBox;
     private ComboBox<String> memoryBox;
@@ -122,6 +123,7 @@ public class FxMain extends Application {
         this.stage = stage;
         backend = new Main();
         runSwing(() -> {
+            call("loadDisplayNames");
             call("createRoot");
         });
         slotSoundsEnabled = backendBoolean("readSlotSoundsEnabled");
@@ -139,7 +141,7 @@ public class FxMain extends Application {
         appRoot = new StackPane(root);
         Scene scene = new Scene(appRoot, 1180, 760);
         scene.getStylesheets().add(getClass().getResource("/launcher-fx.css").toExternalForm());
-        stage.setTitle("Gamble Client Launcher");
+        stage.setTitle(swingText("launcherDisplayName"));
         Image icon = resourceImage("/assets/cg-mod-icon.png");
         if (icon != null) stage.getIcons().add(icon);
         stage.setMinWidth(1080);
@@ -160,8 +162,8 @@ public class FxMain extends Application {
         side.getStyleClass().add("sidebar");
         side.setPrefWidth(315);
 
-        Label title = new Label("Gamble Client");
-        title.getStyleClass().add("title");
+        brandTitle = new Label(swingText("clientDisplayName"));
+        brandTitle.getStyleClass().add("title");
 
         launcherInstalled = chipLine("Installed: " + backendString("launcherVersion"));
         launcherReleased = chipLine("Released: checking...");
@@ -171,7 +173,7 @@ public class FxMain extends Application {
         antiScreenshareButton = actionButton("AntiScreenshare", this::openAntiScreenshare);
 
         side.getChildren().addAll(
-            title,
+            brandTitle,
             versionChip("Launcher", launcherInstalled, launcherReleased),
             versionChip("Client", clientInstalled, clientReleased),
             slotMachine(),
@@ -320,8 +322,29 @@ public class FxMain extends Application {
         Button credits = secondary("Credits");
         credits.setOnAction(e -> openUrl("https://gamble-client.store/credits"));
 
+        TextField launcherName = new TextField(swingText("launcherDisplayName"));
+        TextField clientName = new TextField(swingText("clientDisplayName"));
+        Runnable saveNames = () -> {
+            runSwing(() -> {
+                ((JTextField) field("launcherDisplayName")).setText(launcherName.getText());
+                ((JTextField) field("clientDisplayName")).setText(clientName.getText());
+                call("saveDisplayNames");
+            });
+            launcherName.setText(swingText("launcherDisplayName"));
+            clientName.setText(swingText("clientDisplayName"));
+            stage.setTitle(launcherName.getText());
+            if (brandTitle != null) brandTitle.setText(clientName.getText());
+        };
+        launcherName.setOnAction(e -> saveNames.run());
+        clientName.setOnAction(e -> saveNames.run());
+        launcherName.focusedProperty().addListener((obs, old, focused) -> { if (!focused) saveNames.run(); });
+        clientName.focusedProperty().addListener((obs, old, focused) -> { if (!focused) saveNames.run(); });
+
         body.getChildren().addAll(
             header,
+            section("Appearance",
+                label("Visible names only; managed folders and update identifiers stay canonical.", "muted"),
+                controlField("Launcher name", launcherName), controlField("Client name", clientName)),
             section("Versions", chip("Minecraft", "1.21.11"), chip("Fabric Loader", "0.19.3+ (profile selectable)")),
             section("Runtime", controlField("Memory", memoryBox), controlField("Java Args", javaArgs)),
             section("Updates", label("Launcher and client update checks", "muted"), buttonRow(autoCheck, checkUpdatesButton())),

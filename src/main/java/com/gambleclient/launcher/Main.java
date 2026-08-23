@@ -248,6 +248,9 @@ public class Main {
     private JPanel usernameBlock;
     private final JComboBox<Integer> memoryGb = new JComboBox<>(new Integer[] {2, 3, 4, 5, 6, 7, 8, 10, 12, 16});
     private final JTextField javaArgs = new JTextField("");
+    private final JTextField launcherDisplayName = new JTextField("Gamble Client Launcher");
+    private final JTextField clientDisplayName = new JTextField("Gamble Client");
+    private final JLabel heroTitle = new JLabel("Gamble Client");
     private final JProgressBar progress = new JProgressBar(0, 100);
     private final JTextPane log = new JTextPane();
     private final JTextArea runtimeInfo = new JTextArea();
@@ -324,6 +327,7 @@ public class Main {
     }
 
     private void show() {
+        loadDisplayNames();
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setMinimumSize(new Dimension(1100, 720));
         frame.setIconImages(appIconImages());
@@ -372,9 +376,10 @@ public class Main {
         hero.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
 
         JPanel copy = transparentPanel(new BorderLayout(0, 18));
-        JLabel title = label("Gamble Client", 30, Font.BOLD, TEXT);
+        heroTitle.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 30));
+        heroTitle.setForeground(TEXT);
         JLabel subtitle = htmlLabel("Fast managed launches<br>with a clean game folder.", 14, MUTED);
-        copy.add(title, BorderLayout.NORTH);
+        copy.add(heroTitle, BorderLayout.NORTH);
         copy.add(subtitle, BorderLayout.CENTER);
 
         JPanel chips = transparentPanel(new GridBagLayout());
@@ -650,15 +655,18 @@ public class Main {
         gbc.weightx = 1;
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.insets = new Insets(0, 0, 14, 0);
-        content.add(settingsSection("Launch", createLaunchSettingsPanel()), gbc);
+        content.add(settingsSection("Appearance", createAppearanceSettingsPanel()), gbc);
 
         gbc.gridy = 1;
-        content.add(settingsSection("Updates", createUpdateSettingsPanel()), gbc);
+        content.add(settingsSection("Launch", createLaunchSettingsPanel()), gbc);
 
         gbc.gridy = 2;
-        content.add(settingsSection("Folders", createFolderSettingsPanel()), gbc);
+        content.add(settingsSection("Updates", createUpdateSettingsPanel()), gbc);
 
         gbc.gridy = 3;
+        content.add(settingsSection("Folders", createFolderSettingsPanel()), gbc);
+
+        gbc.gridy = 4;
         gbc.weighty = 1;
         gbc.fill = GridBagConstraints.BOTH;
         gbc.insets = new Insets(0, 0, 0, 0);
@@ -667,6 +675,21 @@ public class Main {
         screen.add(header, BorderLayout.NORTH);
         screen.add(content, BorderLayout.CENTER);
         return screen;
+    }
+
+    private JPanel createAppearanceSettingsPanel() {
+        JPanel panel = transparentPanel(new GridBagLayout());
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0;
+        gbc.weightx = 1;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.insets = new Insets(0, 0, 12, 0);
+        addSettingsField(panel, gbc, 0, "Launcher name", launcherDisplayName);
+        addSettingsField(panel, gbc, 1, "Client name", clientDisplayName);
+        gbc.gridy = 2;
+        gbc.insets = new Insets(0, 0, 0, 0);
+        panel.add(label("Appearance only: folders, update IDs, and security checks keep their canonical Gamble Client names.", 12, Font.PLAIN, MUTED), gbc);
+        return panel;
     }
 
     private JPanel createMicrosoftAccountPanel() {
@@ -786,6 +809,8 @@ public class Main {
         styleInput(username);
         styleInput(memoryGb);
         styleInput(javaArgs);
+        styleInput(launcherDisplayName);
+        styleInput(clientDisplayName);
         autoCheckUpdates.setSelected(readAutoCheckUpdates());
         styleCheckBox(autoCheckUpdates);
         memoryGb.setSelectedItem(4);
@@ -805,7 +830,12 @@ public class Main {
         });
         signOutButton.addActionListener(e -> signOut());
         settingsButton.addActionListener(e -> showSettingsScreen());
-        settingsBackButton.addActionListener(e -> showLaunchScreen());
+        settingsBackButton.addActionListener(e -> {
+            saveDisplayNames();
+            showLaunchScreen();
+        });
+        launcherDisplayName.addActionListener(e -> saveDisplayNames());
+        clientDisplayName.addActionListener(e -> saveDisplayNames());
         promptSignInButton.addActionListener(e -> toggleLauncherSignIn());
         promptLaterButton.addActionListener(e -> {
             signInPromptDismissed = true;
@@ -1270,6 +1300,44 @@ public class Main {
         }
     }
 
+    private void loadDisplayNames() {
+        Map<String, Object> settings = readLauncherSettings();
+        launcherDisplayName.setText(sanitizeDisplayName(Json.string(settings.get("launcherDisplayName")), "Gamble Client Launcher"));
+        clientDisplayName.setText(sanitizeDisplayName(Json.string(settings.get("clientDisplayName")), "Gamble Client"));
+        applyDisplayNames();
+    }
+
+    private void saveDisplayNames() {
+        launcherDisplayName.setText(sanitizeDisplayName(launcherDisplayName.getText(), "Gamble Client Launcher"));
+        clientDisplayName.setText(sanitizeDisplayName(clientDisplayName.getText(), "Gamble Client"));
+        Map<String, Object> settings = readLauncherSettings();
+        settings.put("launcherDisplayName", launcherDisplayName.getText());
+        settings.put("clientDisplayName", clientDisplayName.getText());
+        saveLauncherSettings(settings, "Display names saved.");
+        applyDisplayNames();
+    }
+
+    private void applyDisplayNames() {
+        frame.setTitle(launcherDisplayName.getText());
+        heroTitle.setText(clientDisplayName.getText());
+    }
+
+    private static String sanitizeDisplayName(String value, String fallback) {
+        StringBuilder cleaned = new StringBuilder();
+        String input = value == null ? "" : value;
+        for (int i = 0; i < input.length() && cleaned.length() < 40; i++) {
+            char character = input.charAt(i);
+            if (character == '§') {
+                if (i + 1 < input.length()) i++;
+                continue;
+            }
+            if (Character.isISOControl(character)) continue;
+            cleaned.append(character);
+        }
+        String result = cleaned.toString().trim().replaceAll("\\s+", " ");
+        return result.isEmpty() ? fallback : result;
+    }
+
     private void saveLauncherSettings(Map<String, Object> settings, String successMessage) {
         try {
             File folder = getLauncherDataFolder();
@@ -1281,7 +1349,9 @@ public class Main {
                 + "\"autoCheckUpdates\":" + jsonBoolean(settings.get("autoCheckUpdates")) + ","
                 + "\"slotSoundsEnabled\":" + (settings.containsKey("slotSoundsEnabled") ? jsonBoolean(settings.get("slotSoundsEnabled")) : true) + ","
                 + "\"slotWinSoundsEnabled\":" + (settings.containsKey("slotWinSoundsEnabled") ? jsonBoolean(settings.get("slotWinSoundsEnabled")) : true) + ","
-                + "\"selectedBuild\":\"" + jsonEscape(Json.string(settings.get("selectedBuild"))) + "\""
+                + "\"selectedBuild\":\"" + jsonEscape(Json.string(settings.get("selectedBuild"))) + "\","
+                + "\"launcherDisplayName\":\"" + jsonEscape(sanitizeDisplayName(Json.string(settings.get("launcherDisplayName")), "Gamble Client Launcher")) + "\","
+                + "\"clientDisplayName\":\"" + jsonEscape(sanitizeDisplayName(Json.string(settings.get("clientDisplayName")), "Gamble Client")) + "\""
                 + "}" + System.lineSeparator();
             Files.write(getLauncherSettingsFile().toPath(), json.getBytes(StandardCharsets.UTF_8));
             log(successMessage);
@@ -4229,6 +4299,7 @@ public class Main {
         command.add("-Djava.library.path=" + nativesDir.getAbsolutePath());
         command.add("-Dminecraft.launcher.brand=GambleClientLauncher");
         command.add("-Dminecraft.launcher.version=" + LAUNCHER_VERSION);
+        command.add("-Dgamble.displayName=" + sanitizeDisplayName(clientDisplayName.getText(), "Gamble Client"));
         if (launchProfile.includesGambleClient && launchBuild != null && !launchBuild.isBlank()) {
             command.add("-Dgamble.launchBuild=" + launchBuild);
             command.add("-Dgamble.loader.build=" + launchBuild);

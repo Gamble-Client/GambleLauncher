@@ -15,6 +15,8 @@ const PROFILE_ACCOUNTS_KEY = "gamble.launcher.profileAccounts";
 const SELECTED_BUILD_KEY = "gamble.launcher.selectedBuild";
 const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
+const LAUNCHER_DISPLAY_NAME_KEY = "gamble.launcher.displayName";
+const CLIENT_DISPLAY_NAME_KEY = "gamble.client.displayName";
 const LAUNCHER_VERSION = "0.1.119";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
@@ -69,6 +71,8 @@ const state = {
   antiScreenshare: defaultAntiScreenshare(),
   showAdvancedSettings: defaultAdvancedSettings(),
   animationsEnabled: defaultAnimationsEnabled(),
+  launcherDisplayName: storedDisplayName(LAUNCHER_DISPLAY_NAME_KEY, "Gamble Client Launcher"),
+  clientDisplayName: storedDisplayName(CLIENT_DISPLAY_NAME_KEY, "Gamble Client"),
   status: "Starting",
   busy: false,
   signIn: null,
@@ -148,6 +152,20 @@ function defaultAdvancedSettings() {
 
 function defaultAnimationsEnabled() {
   return globalThis.localStorage?.getItem(ANIMATIONS_KEY) !== "false";
+}
+
+function sanitizeDisplayName(value, fallback) {
+  const cleaned = String(value ?? "")
+    .replace(/§./g, "")
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 40);
+  return cleaned || fallback;
+}
+
+function storedDisplayName(key, fallback) {
+  return sanitizeDisplayName(readStorage(key, fallback), fallback);
 }
 
 async function invoke(command, args = {}) {
@@ -395,10 +413,11 @@ function render() {
   const signedIn = Boolean(state.account && state.token);
   const selectedBuild = buildForAccount();
   const canInstall = signedIn && profile.client;
+  document.title = state.launcherDisplayName;
   app.innerHTML = `
     <div class="app-frame">
       <header class="window-bar" data-window-drag data-tauri-drag-region>
-        <span class="window-title">Gamble Client Launcher</span>
+        <span class="window-title">${escapeHtml(state.launcherDisplayName)}</span>
         <div class="window-actions" aria-label="Window controls">
           <button type="button" data-window-action="minimize" aria-label="Minimize">−</button>
           <button type="button" data-window-action="maximize" aria-label="Maximize">□</button>
@@ -418,8 +437,8 @@ function render() {
         <div class="brand">
           <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
           <div>
-            <strong>Gamble Client</strong>
-            <span>Official launcher</span>
+            <strong>${escapeHtml(state.clientDisplayName)}</strong>
+            <span>${escapeHtml(state.launcherDisplayName)}</span>
           </div>
         </div>
         <nav>
@@ -479,7 +498,7 @@ function profileHasMods(profile) {
 }
 
 function profileTypeLabel(profile) {
-  if (profile?.client) return "Gamble Client";
+  if (profile?.client) return state.clientDisplayName;
   if (profile?.loader === "fabric") return "Fabric";
   return "Vanilla";
 }
@@ -540,7 +559,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
     <section class="play-stage">
       <section class="launch-panel">
         <div class="launch-copy">
-          <span class="eyebrow">Gamble Client</span>
+          <span class="eyebrow">${escapeHtml(state.clientDisplayName)}</span>
           <h2>${escapeHtml(selectedBuild.label)}</h2>
           <div class="version-strip">
             <span>Channel</span>
@@ -901,6 +920,23 @@ function settingsView(profile, selectedBuild) {
       </div>
     </section>
     <section class="settings-grid">
+      <section class="identity-settings wide-field" aria-labelledby="identity-settings-title">
+        <div>
+          <span class="eyebrow">Appearance</span>
+          <strong id="identity-settings-title">Launcher and client names</strong>
+          <small>Changes visible branding only. Install folders, update IDs, and security checks keep their canonical Gamble Client names.</small>
+        </div>
+        <div class="identity-fields">
+          <label>
+            <span>Launcher name</span>
+            <input data-field="launcherDisplayName" maxlength="40" value="${escapeAttr(state.launcherDisplayName)}" placeholder="Gamble Client Launcher">
+          </label>
+          <label>
+            <span>Client name</span>
+            <input data-field="clientDisplayName" maxlength="40" value="${escapeAttr(state.clientDisplayName)}" placeholder="Gamble Client">
+          </label>
+        </div>
+      </section>
       ${state.microsoft ? `
         <div class="setting-note">
           <span>Offline username</span>
@@ -2388,7 +2424,8 @@ app.addEventListener("click", async (event) => {
           accountUuid: selectedAccount?.uuid || "",
           memory: Number(state.memory) || 4,
           javaArgs: state.javaArgs,
-          antiScreenshare: state.antiScreenshare
+          antiScreenshare: state.antiScreenshare,
+          clientDisplayName: state.clientDisplayName
         }
       });
       if (String(message).toLowerCase().includes("stop signal")) {
@@ -2677,6 +2714,13 @@ app.addEventListener("change", async (event) => {
     render();
     return;
   }
+  if (field === "launcherDisplayName" || field === "clientDisplayName") {
+    const fallback = field === "launcherDisplayName" ? "Gamble Client Launcher" : "Gamble Client";
+    state[field] = sanitizeDisplayName(event.target.value, fallback);
+    localStorage.setItem(field === "launcherDisplayName" ? LAUNCHER_DISPLAY_NAME_KEY : CLIENT_DISPLAY_NAME_KEY, state[field]);
+    render();
+    return;
+  }
   state[field] = event.target.value;
   if (field === "username") localStorage.setItem("gamble.launcher.username", state.username);
   if (field === "javaArgs") localStorage.setItem("gamble.launcher.javaArgs", state.javaArgs);
@@ -2709,6 +2753,12 @@ app.addEventListener("input", (event) => {
   state[field] = event.target.value;
   if (field === "username") localStorage.setItem("gamble.launcher.username", state.username);
   if (field === "javaArgs") localStorage.setItem("gamble.launcher.javaArgs", state.javaArgs);
+  if (field === "launcherDisplayName" || field === "clientDisplayName") {
+    const fallback = field === "launcherDisplayName" ? "Gamble Client Launcher" : "Gamble Client";
+    state[field] = sanitizeDisplayName(event.target.value, fallback);
+    localStorage.setItem(field === "launcherDisplayName" ? LAUNCHER_DISPLAY_NAME_KEY : CLIENT_DISPLAY_NAME_KEY, state[field]);
+    if (field === "launcherDisplayName") document.title = state.launcherDisplayName;
+  }
 });
 
 function escapeHtml(value) {

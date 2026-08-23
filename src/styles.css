@@ -933,6 +933,47 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.identity-settings {
+  display: grid;
+  grid-template-columns: minmax(190px, .75fr) minmax(0, 1.25fr);
+  gap: 18px;
+  align-items: center;
+  padding: 15px;
+  border: 1px solid rgba(255, 255, 255, .11);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(29, 35, 42, .92), rgba(15, 19, 23, .94));
+  box-shadow: inset 1px 1px 0 rgba(255,255,255,.035), 8px 8px 18px rgba(0,0,0,.24);
+}
+
+.identity-settings strong,
+.identity-settings small {
+  display: block;
+}
+
+.identity-settings strong {
+  margin-top: 5px;
+  font-size: 1.04rem;
+}
+
+.identity-settings small {
+  margin-top: 7px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.identity-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 760px) {
+  .identity-settings,
+  .identity-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 label {
   display: grid;
   gap: 7px;

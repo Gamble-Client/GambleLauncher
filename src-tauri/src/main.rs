@@ -414,6 +414,8 @@ struct LaunchRequest {
     java_args: String,
     #[serde(rename = "antiScreenshare")]
     anti_screenshare: bool,
+    #[serde(default, rename = "clientDisplayName")]
+    client_display_name: String,
 }
 
 #[derive(Default)]
@@ -1598,6 +1600,7 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         input.memory.max(2).min(16),
         &input.java_args,
         input.anti_screenshare,
+        &input.client_display_name,
         &java,
     ) {
         Ok(command) => command,
@@ -2793,6 +2796,7 @@ fn build_minecraft_command(
     memory: u8,
     extra_java_args: &str,
     anti_screenshare: bool,
+    client_display_name: &str,
     java: &str,
 ) -> Result<Vec<String>, String> {
     let mut command = Vec::new();
@@ -2802,6 +2806,10 @@ fn build_minecraft_command(
     command.push("-Dminecraft.launcher.brand=GambleClientLauncher".to_string());
     command.push(format!("-Dminecraft.launcher.version={VERSION}"));
     command.push(format!("-Dgamble.antiScreenshare={anti_screenshare}"));
+    command.push(format!(
+        "-Dgamble.displayName={}",
+        sanitize_display_name(client_display_name, "Gamble Client")
+    ));
     if profile_installs_client(profile_id) && !build.is_empty() {
         command.push(format!("-Dgamble.launchBuild={build}"));
         command.push(format!("-Dgamble.loader.build={build}"));
@@ -2858,6 +2866,33 @@ fn build_minecraft_command(
         );
     }
     Ok(command)
+}
+
+fn sanitize_display_name(value: &str, fallback: &str) -> String {
+    let mut skip_format_code = false;
+    let cleaned = value
+        .chars()
+        .filter(|character| {
+            if skip_format_code {
+                skip_format_code = false;
+                return false;
+            }
+            if *character == '§' {
+                skip_format_code = true;
+                return false;
+            }
+            !character.is_control()
+        })
+        .take(40)
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if cleaned.is_empty() {
+        fallback.to_string()
+    } else {
+        cleaned
+    }
 }
 
 fn download_file(url: &str, path: &Path) -> Result<(), String> {
