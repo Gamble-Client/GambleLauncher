@@ -22,9 +22,9 @@ use std::{
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::{AppHandle, Emitter};
 #[cfg(target_os = "windows")]
 use tauri::Manager;
+use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
@@ -59,6 +59,7 @@ const MAX_MANAGED_CLIENT_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_LOADER_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_FABRIC_METADATA_BYTES: u64 = 1024 * 1024;
 const MANAGED_CLIENT_MOD_ID: &str = "cg-mod";
+const STANDALONE_LOADER_MOD_ID: &str = "gamble-client-standalone-loader";
 const LOADER_PROVENANCE_ENTRY: &str = "META-INF/gamble-loader-provenance.json";
 const LOADER_SIGNING_KEY_ID: &str = "617acff9930c4e68";
 const LOADER_SIGNING_PUBLIC_KEY: &str =
@@ -2833,6 +2834,19 @@ fn build_minecraft_command(
         }
     }
     command.extend(split_args(extra_java_args)?);
+    if matches!(
+        profile_kind(profile_id),
+        ProfileKind::Fabric | ProfileKind::Client
+    ) {
+        // Fabric accepts both properties from inherited version metadata and
+        // arbitrary JVM args. Set the authoritative managed profile paths last
+        // so a stale launcher/profile cannot redirect discovery to another
+        // .minecraft folder.
+        command.push(format!(
+            "-Dfabric.modsFolder={}",
+            display_path(&mods_folder(profile_id))
+        ));
+    }
     command.push("-cp".to_string());
     command.push(join_classpath(classpath));
     command.push(profile.main_class.clone());
@@ -3093,6 +3107,7 @@ fn is_launcher_managed_jvm_arg(arg: &str) -> bool {
         || arg.starts_with("-Dminecraft.launcher.brand=")
         || arg.starts_with("-Dminecraft.launcher.version=")
         || arg.starts_with("-Dgamble.")
+        || arg.starts_with("-Dfabric.modsFolder=")
         || arg == "-DFabricMcEmu="
         || arg == "-cp"
         || arg == "-classpath"
@@ -3987,14 +4002,122 @@ fn ensure_loader_jar(profile: &str, token: &str) -> Result<(), String> {
         if !is_memory_loader_jar(&staging) {
             return Err("Server returned an obsolete standalone loader artifact.".to_string());
         }
+        if !has_launcher_managed_enrollment(&staging) {
+            return Err("Server returned a loader without fresh managed enrollment.".to_string());
+        }
         restrict_private_file(&staging)?;
-        fs::rename(&staging, &loader).map_err(error_text)?;
+        quarantine_duplicate_loader_jars(&mods, &loader)?;
+        replace_file_with_rollback(&staging, &loader)?;
+        if !is_memory_loader_jar(&loader) || !has_launcher_managed_enrollment(&loader) {
+            return Err("Installed loader failed its post-write verification.".to_string());
+        }
         Ok(())
     })();
     if result.is_err() {
         let _ = fs::remove_file(&staging);
     }
     result
+}
+
+fn replace_file_with_rollback(staging: &Path, target: &Path) -> Result<(), String> {
+    let backup = target.with_extension("jar.previous");
+    let _ = fs::remove_file(&backup);
+    let had_target = target.is_file();
+    if had_target {
+        fs::rename(target, &backup).map_err(|error| {
+            format!("Could not prepare the existing managed loader for replacement: {error}")
+        })?;
+    }
+
+    if let Err(error) = fs::rename(staging, target) {
+        if had_target && backup.is_file() {
+            let _ = fs::rename(&backup, target);
+        }
+        return Err(format!(
+            "Could not install the fresh managed loader: {error}"
+        ));
+    }
+    let _ = fs::remove_file(backup);
+    Ok(())
+}
+
+fn quarantine_duplicate_loader_jars(mods: &Path, canonical: &Path) -> Result<usize, String> {
+    if !mods.is_dir() {
+        return Ok(0);
+    }
+    let mut duplicates = Vec::new();
+    for entry in fs::read_dir(mods).map_err(error_text)? {
+        let entry = entry.map_err(error_text)?;
+        let path = entry.path();
+        if path == canonical || !path.is_file() {
+            continue;
+        }
+        let lower = entry.file_name().to_string_lossy().to_lowercase();
+        if !lower.ends_with(".jar") {
+            continue;
+        }
+        if verify_fabric_mod_id(&path, STANDALONE_LOADER_MOD_ID).is_ok() {
+            duplicates.push((path, entry.file_name()));
+        }
+    }
+    if duplicates.is_empty() {
+        return Ok(0);
+    }
+
+    let backup = mods.join(".gamble-client-backups").join(format!(
+        "duplicate-loaders-{}-{}",
+        timestamp(),
+        random_base64_url(8)
+    ));
+    fs::create_dir_all(&backup).map_err(error_text)?;
+    for (path, name) in &duplicates {
+        fs::rename(path, backup.join(name)).map_err(error_text)?;
+    }
+    Ok(duplicates.len())
+}
+
+fn has_launcher_managed_enrollment(path: &Path) -> bool {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let mut archive = match ZipArchive::new(file) {
+        Ok(archive) => archive,
+        Err(_) => return false,
+    };
+    let mut entry = match archive.by_name("gcclient-standalone-enrollment.json") {
+        Ok(entry) if entry.size() <= 16 * 1024 => entry,
+        _ => return false,
+    };
+    let mut bytes = Vec::new();
+    if entry.read_to_end(&mut bytes).is_err() {
+        return false;
+    }
+    let value = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let code = value
+        .get("code")
+        .and_then(|item| item.as_str())
+        .unwrap_or("");
+    let expires_at = value
+        .get("expiresAt")
+        .and_then(|item| item.as_u64())
+        .unwrap_or(0);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    value
+        .get("launcherManaged")
+        .and_then(|item| item.as_bool())
+        .unwrap_or(false)
+        && (32..=256).contains(&code.len())
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        && expires_at > now
 }
 
 fn is_memory_loader_jar(path: &Path) -> bool {
@@ -4082,25 +4205,49 @@ fn is_expected_loader_fabric_metadata(metadata: &serde_json::Value) -> bool {
         return false;
     };
     let expected_root = [
-        "schemaVersion", "id", "version", "name", "icon", "environment", "entrypoints", "depends",
+        "schemaVersion",
+        "id",
+        "version",
+        "name",
+        "icon",
+        "environment",
+        "entrypoints",
+        "depends",
     ];
-    if root.len() != expected_root.len() || expected_root.iter().any(|key| !root.contains_key(*key)) {
+    if root.len() != expected_root.len() || expected_root.iter().any(|key| !root.contains_key(*key))
+    {
         return false;
     }
-    let Some(entrypoints) = metadata.get("entrypoints").and_then(|value| value.as_object()) else {
+    let Some(entrypoints) = metadata
+        .get("entrypoints")
+        .and_then(|value| value.as_object())
+    else {
         return false;
     };
     let Some(depends) = metadata.get("depends").and_then(|value| value.as_object()) else {
         return false;
     };
-    let pre_launch = entrypoints.get("preLaunch").and_then(|value| value.as_array());
+    let pre_launch = entrypoints
+        .get("preLaunch")
+        .and_then(|value| value.as_array());
     let minecraft = depends.get("minecraft").and_then(|value| value.as_array());
-    let name = metadata.get("name").and_then(|value| value.as_str()).unwrap_or("");
-    let version = metadata.get("version").and_then(|value| value.as_str()).unwrap_or("");
-    metadata.get("schemaVersion").and_then(|value| value.as_u64()) == Some(1)
-        && metadata.get("id").and_then(|value| value.as_str()) == Some("gamble-client-standalone-loader")
+    let name = metadata
+        .get("name")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let version = metadata
+        .get("version")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    metadata
+        .get("schemaVersion")
+        .and_then(|value| value.as_u64())
+        == Some(1)
+        && metadata.get("id").and_then(|value| value.as_str())
+            == Some("gamble-client-standalone-loader")
         && !version.trim().is_empty()
-        && !name.trim().is_empty() && name.chars().count() <= 64
+        && !name.trim().is_empty()
+        && name.chars().count() <= 64
         && metadata.get("icon").and_then(|value| value.as_str()) == Some("assets/cg-mod/icon.png")
         && metadata.get("environment").and_then(|value| value.as_str()) == Some("client")
         && entrypoints.len() == 1
@@ -5164,10 +5311,12 @@ fn open_external(target: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_browser_url, is_expected_loader_fabric_metadata, is_required_mod_for_profile,
-        java_feature_from_text, loader_core_sha256, microsoft_refresh_error, random_base64_url,
-        safe_file_name, verify_fabric_mod_id, verify_fabric_mod_identity, write_private_file,
-        MANAGED_CLIENT_MOD_ID, MICROSOFT_REAUTH_REQUIRED,
+        has_launcher_managed_enrollment, is_browser_url, is_expected_loader_fabric_metadata,
+        is_required_mod_for_profile, java_feature_from_text, loader_core_sha256,
+        microsoft_refresh_error, quarantine_duplicate_loader_jars, random_base64_url,
+        replace_file_with_rollback, safe_file_name, verify_fabric_mod_id,
+        verify_fabric_mod_identity, write_private_file, MANAGED_CLIENT_MOD_ID,
+        MICROSOFT_REAUTH_REQUIRED,
     };
     use serde_json::json;
     use std::{env, fs, fs::File, io::Cursor, io::Write, path::PathBuf};
@@ -5330,6 +5479,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn managed_enrollment_requires_a_fresh_launcher_code() {
+        let valid = write_enrollment_jar(true, u64::MAX);
+        let standalone = write_enrollment_jar(false, u64::MAX);
+        let expired = write_enrollment_jar(true, 1);
+        assert!(has_launcher_managed_enrollment(&valid));
+        assert!(!has_launcher_managed_enrollment(&standalone));
+        assert!(!has_launcher_managed_enrollment(&expired));
+        for path in [valid, standalone, expired] {
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn loader_replacement_overwrites_an_existing_windows_style_target() {
+        let root = env::temp_dir().join(format!(
+            "gamble-loader-replace-test-{}",
+            random_base64_url(24)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let target = root.join("gamble-client-loader.jar");
+        let staging = root.join("gamble-client-loader.jar.part");
+        fs::write(&target, b"stale").unwrap();
+        fs::write(&staging, b"fresh").unwrap();
+        replace_file_with_rollback(&staging, &target).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"fresh");
+        assert!(!staging.exists());
+        assert!(!root.join("gamble-client-loader.jar.previous").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn duplicate_standalone_loaders_are_quarantined_before_launch() {
+        let root = env::temp_dir().join(format!(
+            "gamble-loader-duplicate-test-{}",
+            random_base64_url(24)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let canonical = root.join("gamble-client-loader.jar");
+        let duplicate = root.join("old-personalized-loader.jar");
+        let unrelated = root.join("example-mod.jar");
+        write_test_jar_at(&canonical, r#"{"id":"gamble-client-standalone-loader"}"#);
+        write_test_jar_at(&duplicate, r#"{"id":"gamble-client-standalone-loader"}"#);
+        write_test_jar_at(&unrelated, r#"{"id":"example-mod"}"#);
+
+        assert_eq!(
+            quarantine_duplicate_loader_jars(&root, &canonical).unwrap(),
+            1
+        );
+        assert!(canonical.is_file());
+        assert!(!duplicate.exists());
+        assert!(unrelated.is_file());
+        let backups = root.join(".gamble-client-backups");
+        assert_eq!(
+            fs::read_dir(backups)
+                .unwrap()
+                .flat_map(|entry| fs::read_dir(entry.unwrap().path()).unwrap())
+                .count(),
+            1
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn write_loader_bytes(metadata: &str, executable: &[u8]) -> Vec<u8> {
         let mut archive = ZipWriter::new(Cursor::new(Vec::new()));
         archive
@@ -5361,6 +5573,44 @@ mod tests {
             .start_file("fabric.mod.json", SimpleFileOptions::default())
             .unwrap();
         archive.write_all(metadata.as_bytes()).unwrap();
+        archive.finish().unwrap();
+        path
+    }
+
+    fn write_test_jar_at(path: &PathBuf, metadata: &str) {
+        let file = File::create(path).unwrap();
+        let mut archive = ZipWriter::new(file);
+        archive
+            .start_file("fabric.mod.json", SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(metadata.as_bytes()).unwrap();
+        archive.finish().unwrap();
+    }
+
+    fn write_enrollment_jar(launcher_managed: bool, expires_at: u64) -> PathBuf {
+        let path = env::temp_dir().join(format!(
+            "gamble-enrollment-test-{}.jar",
+            random_base64_url(24)
+        ));
+        let file = File::create(&path).unwrap();
+        let mut archive = ZipWriter::new(file);
+        archive
+            .start_file(
+                "gcclient-standalone-enrollment.json",
+                SimpleFileOptions::default(),
+            )
+            .unwrap();
+        archive
+            .write_all(
+                json!({
+                    "code": "abcdefghijklmnopqrstuvwxyzABCDEFGH12345678",
+                    "expiresAt": expires_at,
+                    "launcherManaged": launcher_managed
+                })
+                .to_string()
+                .as_bytes(),
+            )
+            .unwrap();
         archive.finish().unwrap();
         path
     }

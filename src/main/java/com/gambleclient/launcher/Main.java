@@ -132,7 +132,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.119";
+    private static final String LAUNCHER_VERSION = "0.1.120";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -161,6 +161,7 @@ public class Main {
     private static final String MINECRAFT_VERSION = "1.21.11";
     private static final String FABRIC_LOADER_VERSION = "0.19.3";
     private static final String MANAGED_CLIENT_MOD_ID = "cg-mod";
+    private static final String STANDALONE_LOADER_MOD_ID = "gamble-client-standalone-loader";
     private static final long MAX_DOWNLOAD_BYTES = 512L * 1024L * 1024L;
     private static final long MAX_MANAGED_CLIENT_BYTES = 64L * 1024L * 1024L;
     private static final long MAX_TEXT_RESPONSE_BYTES = 4L * 1024L * 1024L;
@@ -4314,6 +4315,11 @@ public class Main {
         }
         addDefaultCapeProviderProperties(command);
         command.addAll(extraJavaArgs);
+        if (launchProfile.fabric) {
+            // Keep Fabric tied to this launcher's selected managed profile even
+            // when old inherited/custom JVM args contain a different mod path.
+            command.add("-Dfabric.modsFolder=" + new File(gameDir, "mods").getAbsolutePath());
+        }
         command.add("-cp");
         command.add(joinClasspath(classpath));
         command.add(profile.mainClass);
@@ -4349,6 +4355,7 @@ public class Main {
             || arg.startsWith("-Dminecraft.launcher.brand=")
             || arg.startsWith("-Dminecraft.launcher.version=")
             || arg.startsWith("-Dgamble.capes.")
+            || arg.startsWith("-Dfabric.modsFolder=")
             || arg.equals("-DFabricMcEmu=")
             || "net.minecraft.client.main.Main".equals(arg)
             || arg.endsWith(".KnotClient")
@@ -5303,12 +5310,66 @@ public class Main {
                 if (total != length) throw new IOException("Standalone loader size check failed.");
             }
             if (!isMemoryLoaderJar(temporary)) throw new IOException("Server returned an obsolete loader artifact.");
+            if (!hasLauncherManagedEnrollment(temporary)) {
+                throw new IOException("Server returned a loader without fresh managed enrollment.");
+            }
             hardenPrivateFile(temporary);
+            quarantineDuplicateLoaderJars(mods, loader);
             Files.move(temporary.toPath(), loader.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            if (!isMemoryLoaderJar(loader) || !hasLauncherManagedEnrollment(loader)) {
+                throw new IOException("Installed loader failed its post-write verification.");
+            }
             log("Installed personalized memory loader: " + loader.getName());
         } finally {
             Files.deleteIfExists(temporary.toPath());
             connection.disconnect();
+        }
+    }
+
+    private boolean hasLauncherManagedEnrollment(File file) {
+        if (file == null || !file.isFile()) return false;
+        try (ZipFile zip = new ZipFile(file)) {
+            ZipEntry entry = zip.getEntry("gcclient-standalone-enrollment.json");
+            if (entry == null || entry.getSize() < 0 || entry.getSize() > 16L * 1024L) return false;
+            String text = new String(zip.getInputStream(entry).readNBytes(16 * 1024), StandardCharsets.UTF_8);
+            Map<String, Object> enrollment = Json.asObject(Json.parse(text));
+            String code = Json.string(enrollment.get("code"));
+            long expiresAt = jsonLong(enrollment.get("expiresAt"));
+            boolean launcherManaged = Boolean.TRUE.equals(enrollment.get("launcherManaged"));
+            return launcherManaged
+                && code.length() >= 32
+                && code.length() <= 256
+                && code.chars().allMatch(character -> Character.isLetterOrDigit(character) || character == '_' || character == '-')
+                && expiresAt > System.currentTimeMillis() / 1000L;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private void quarantineDuplicateLoaderJars(File mods, File canonical) throws IOException {
+        File[] files = mods.listFiles();
+        if (files == null) return;
+        List<File> duplicates = new ArrayList<>();
+        for (File file : files) {
+            if (!file.isFile() || file.equals(canonical)
+                || !file.getName().toLowerCase(Locale.ROOT).endsWith(".jar")) continue;
+            try {
+                verifyFabricModId(file, STANDALONE_LOADER_MOD_ID);
+                duplicates.add(file);
+            } catch (IOException ignored) {
+                // Not another standalone loader.
+            }
+        }
+        if (duplicates.isEmpty()) return;
+
+        File backup = new File(new File(mods, ".gamble-client-backups"),
+            "duplicate-loaders-" + System.currentTimeMillis());
+        if (!backup.mkdirs() && !backup.isDirectory()) {
+            throw new IOException("Could not create duplicate-loader backup folder: " + backup);
+        }
+        for (File duplicate : duplicates) {
+            Files.move(duplicate.toPath(), new File(backup, duplicate.getName()).toPath());
+            log("Moved duplicate standalone loader out of the active mods folder: " + duplicate.getName());
         }
     }
 

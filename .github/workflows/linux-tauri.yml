@@ -60,6 +60,10 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
+      - name: Test native launcher on Linux
+        working-directory: src-tauri
+        run: cargo test
+
       - name: Build Linux bundles
         env:
           RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/src/gamble-client-launcher --remap-path-prefix=/home/runner/.cargo=/rust/cargo

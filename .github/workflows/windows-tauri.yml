@@ -56,6 +56,10 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
+      - name: Test native launcher on Windows
+        working-directory: src-tauri
+        run: cargo test
+
       - name: Build Windows bundles
         shell: pwsh
         run: |
