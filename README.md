@@ -87,6 +87,18 @@ Windows installer:
 
 The Windows `.exe` has to be built on Windows with `jpackage` and WiX installed. Linux builds produce a portable app image under `build/native/`.
 
+Universal JAR macOS smoke check:
+
+```bash
+./gradlew hardenedLauncherJar
+./scripts/merge-macos-javafx-natives.sh build/libs/gamble-client-launcher-0.1.123.jar
+```
+
+The release workflow combines the Intel and Apple Silicon JavaFX binaries in
+the universal JAR. The normal `java -jar` path does not require an executable
+bit or a special fallback-GUI permission; macOS may still ask for the usual
+first-run accessibility or network approval when the launcher opens Minecraft.
+
 Run:
 
 ```bash

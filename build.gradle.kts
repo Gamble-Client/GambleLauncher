@@ -11,7 +11,7 @@ plugins {
 }
 
 group = "com.gambleclient"
-version = "0.1.122"
+version = "0.1.123"
 
 val javafxVersion = "22.0.2"
 val javafxModuleNames = listOf("base", "graphics", "controls", "media", "web")
@@ -92,6 +92,19 @@ val hardenedLauncherJar = tasks.register<Jar>("hardenedLauncherJar") {
 }
 
 tasks.assemble {
+    dependsOn(hardenedLauncherJar)
+}
+
+// The application distribution tasks consume the hardened fat jar. Declare
+// that relationship explicitly so Gradle's strict task validation cannot race
+// a clean build and package stale or missing launcher bytes.
+tasks.named("startScripts") {
+    dependsOn(hardenedLauncherJar)
+}
+tasks.named("distTar") {
+    dependsOn(hardenedLauncherJar)
+}
+tasks.named("distZip") {
     dependsOn(hardenedLauncherJar)
 }
 

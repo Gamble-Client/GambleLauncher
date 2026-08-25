@@ -3385,7 +3385,8 @@ fn download_file_once(url: &str, path: &Path) -> Result<(), String> {
         }
         output.flush().map_err(error_text)?;
         drop(output);
-        fs::rename(&temp, path).map_err(error_text)
+        let backup = path.with_extension("download.previous");
+        replace_path_with_rollback(&temp, path, &backup)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temp);
@@ -4500,21 +4501,23 @@ fn ensure_loader_jar(profile: &str, token: &str) -> Result<(), String> {
 
 fn replace_file_with_rollback(staging: &Path, target: &Path) -> Result<(), String> {
     let backup = target.with_extension("jar.previous");
+    replace_path_with_rollback(staging, target, &backup)
+}
+
+fn replace_path_with_rollback(staging: &Path, target: &Path, backup: &Path) -> Result<(), String> {
     let _ = fs::remove_file(&backup);
     let had_target = target.is_file();
     if had_target {
-        fs::rename(target, &backup).map_err(|error| {
-            format!("Could not prepare the existing managed loader for replacement: {error}")
+        fs::rename(target, backup).map_err(|error| {
+            format!("Could not prepare the existing file for replacement: {error}")
         })?;
     }
 
     if let Err(error) = fs::rename(staging, target) {
         if had_target && backup.is_file() {
-            let _ = fs::rename(&backup, target);
+            let _ = fs::rename(backup, target);
         }
-        return Err(format!(
-            "Could not install the fresh managed loader: {error}"
-        ));
+        return Err(format!("Could not install the replacement file: {error}"));
     }
     let _ = fs::remove_file(backup);
     Ok(())
@@ -5793,10 +5796,10 @@ mod tests {
         has_launcher_managed_enrollment, is_browser_url, is_expected_loader_fabric_metadata,
         is_required_mod_for_profile, java_feature_from_text, loader_core_sha256,
         microsoft_refresh_error, normalize_graphics_mode, quarantine_duplicate_loader_jars,
-        random_base64_url, replace_file_with_rollback, safe_file_name, should_apply_amd_guard,
-        validate_gpu_selector, verify_fabric_mod_id, verify_fabric_mod_identity,
-        webkit_safe_mode_enabled, write_private_file, MANAGED_CLIENT_MOD_ID,
-        MICROSOFT_REAUTH_REQUIRED,
+        random_base64_url, replace_file_with_rollback, replace_path_with_rollback, safe_file_name,
+        should_apply_amd_guard, validate_gpu_selector, verify_fabric_mod_id,
+        verify_fabric_mod_identity, webkit_safe_mode_enabled, write_private_file,
+        MANAGED_CLIENT_MOD_ID, MICROSOFT_REAUTH_REQUIRED,
     };
     use serde_json::json;
     use std::{env, fs, fs::File, io::Cursor, io::Write, path::PathBuf};
@@ -6019,6 +6022,27 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(), b"fresh");
         assert!(!staging.exists());
         assert!(!root.join("gamble-client-loader.jar.previous").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn launcher_update_replaces_an_existing_windows_style_download() {
+        let root = env::temp_dir().join(format!(
+            "gamble-launcher-update-test-{}",
+            random_base64_url(24)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let target = root.join("Gamble Client Launcher_0.1.123_x64-setup.exe");
+        let staging = root.join("Gamble Client Launcher_0.1.123_x64-setup.exe.part");
+        let backup = root.join("Gamble Client Launcher_0.1.123_x64-setup.download.previous");
+        fs::write(&target, b"old installer").unwrap();
+        fs::write(&staging, b"new installer").unwrap();
+
+        replace_path_with_rollback(&staging, &target, &backup).unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"new installer");
+        assert!(!staging.exists());
+        assert!(!backup.exists());
         let _ = fs::remove_dir_all(root);
     }
 

@@ -41,10 +41,16 @@
     *** launcherReleasedVersion;
     *** clientInstalledVersion;
     *** clientReleasedVersion;
+    *** launcherDisplayName;
+    *** clientDisplayName;
+    *** graphicsMode;
+    *** gpuSelector;
     *** launcherAds;
     *** accountStatus;
 
     private javax.swing.JPanel createRoot();
+    private void loadDisplayNames();
+    private void saveDisplayNames();
     private boolean readSlotSoundsEnabled();
     private boolean readSlotWinSoundsEnabled();
     private void installSelectedBuild(boolean);
@@ -63,6 +69,8 @@
     private java.lang.String toggleAntiScreenshareModule(java.lang.String,boolean);
     private java.lang.String saveAntiScreenshareConfig();
     private java.lang.String setAntiScreenshareModuleSetting(java.lang.String,java.lang.String,java.lang.String);
+    private java.lang.String enableAntiScreenshareHud();
+    private java.lang.String disableAntiScreenshareHud();
     private boolean antiScreenshareHudEnabled();
     private java.util.Map antiScreenshareHudInfo();
     private java.util.List antiScreenshareModules();

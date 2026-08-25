@@ -1,0 +1,59 @@
+name: Smoke Test Universal macOS Launcher JAR
+
+on:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    name: macOS JAR smoke (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-13, macos-14]
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Read launcher version
+        id: package
+        shell: bash
+        run: echo "version=$(sed -nE 's/^version = \"([^\"]+)\"/\1/p' build.gradle.kts | head -n 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Build hardened launcher JAR
+        run: ./gradlew hardenedLauncherJar
+
+      - name: Merge Intel and Apple Silicon JavaFX natives
+        run: ./scripts/merge-macos-javafx-natives.sh "build/libs/gamble-client-launcher-${{ steps.package.outputs.version }}.jar"
+
+      - name: Verify both macOS native architectures
+        shell: bash
+        run: |
+          jar_path="build/libs/gamble-client-launcher-${{ steps.package.outputs.version }}.jar"
+          unzip -p "$jar_path" libglass.dylib | file -
+          unzip -p "$jar_path" libjfxwebkit.dylib | file -
+          unzip -p "$jar_path" libglass.dylib | file - | grep -E "universal|x86_64|arm64"
+
+      - name: Run macOS universal JAR self-test
+        shell: bash
+        run: |
+          game_dir="$RUNNER_TEMP/gamble-client"
+          mkdir -p "$game_dir"
+          java -Dgamble.gameDir="$game_dir" -jar "build/libs/gamble-client-launcher-${{ steps.package.outputs.version }}.jar" --self-test | tee "$RUNNER_TEMP/jar-self-test.log"
+          grep -Ei "Operating system - Mac OS X|Launcher release metadata - HTTP 200|Java runtime - Java 21" "$RUNNER_TEMP/jar-self-test.log"
+
+      - name: Upload self-test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamble-client-macos-jar-${{ matrix.runner }}
+          path: ${{ runner.temp }}/jar-self-test.log
+          if-no-files-found: warn

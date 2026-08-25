@@ -33,6 +33,27 @@ jobs:
           }
           "LAUNCHER_EXE=$launcher" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: Reinstall over the existing launcher (Windows update smoke)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $before = Get-Item $env:LAUNCHER_EXE
+          if ($before.Length -le 0) {
+            throw "The first Windows install produced an empty launcher executable."
+          }
+          $update = Start-Process -FilePath (Join-Path $env:RUNNER_TEMP "gamble-client-launcher-setup.exe") -ArgumentList "/S" -Wait -PassThru
+          if ($update.ExitCode -ne 0) {
+            throw "The second installer run failed with code $($update.ExitCode)."
+          }
+          if (-not (Test-Path $env:LAUNCHER_EXE)) {
+            throw "The Windows update removed the installed launcher."
+          }
+          $after = Get-Item $env:LAUNCHER_EXE
+          if ($after.Length -le 0) {
+            throw "The Windows update left an empty launcher executable."
+          }
+          Write-Host "Windows installer overwrite passed: $($before.Length) -> $($after.Length) bytes."
+
       - name: Launch and reject a blank WebView
         shell: pwsh
         run: |

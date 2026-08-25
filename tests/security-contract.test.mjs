@@ -161,6 +161,27 @@ test("automatic update prompts never cover an active sign-in flow", async () => 
     assert.match(java, /if \(isLauncherSignInActive\(\)\) \{[\s\S]*Launcher update prompt deferred/);
 });
 
+test("the hardened universal JAR keeps every JavaFX reflection bridge member", async () => {
+    const proguard = await source("proguard-launcher.pro");
+    const bridgeMethods = [
+        "loadDisplayNames",
+        "saveDisplayNames",
+        "enableAntiScreenshareHud",
+        "disableAntiScreenshareHud",
+        "getModsFolder",
+        "getResourcePacksFolder",
+        "getMinecraftFolder"
+    ];
+    const bridgeFields = ["launcherDisplayName", "clientDisplayName", "graphicsMode", "gpuSelector"];
+
+    for (const member of bridgeMethods) {
+        assert.match(proguard, new RegExp(`${member}\\(`), `missing kept method: ${member}`);
+    }
+    for (const member of bridgeFields) {
+        assert.match(proguard, new RegExp(`\\*\\*\\* ${member};`), `missing kept field: ${member}`);
+    }
+});
+
 test("expired Microsoft refresh tokens reopen sign-in instead of exposing an HTTP URL", async () => {
     const frontend = await source("src/main.js");
     const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
