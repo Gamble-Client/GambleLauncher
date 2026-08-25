@@ -1205,9 +1205,8 @@ fn safe_environment_value(key: &str) -> String {
 fn first_line_from_file(path: &Path) -> String {
     fs::read_to_string(path)
         .ok()
-        .and_then(|contents| contents.lines().next().map(str::trim))
+        .and_then(|contents| contents.lines().next().map(|line| line.trim().to_string()))
         .filter(|line| !line.is_empty())
-        .map(str::to_string)
         .unwrap_or_else(|| "<unknown>".to_string())
 }
 
@@ -1248,18 +1247,21 @@ fn graphics_device_report() -> String {
                     .and_then(|contents| {
                         contents.lines().find_map(|line| {
                             line.strip_prefix("DRIVER=")
-                                .map(str::trim)
+                                .map(|value| value.trim().to_string())
                                 .filter(|value| !value.is_empty())
                         })
                     })
-                    .unwrap_or("<unknown>");
+                    .unwrap_or_else(|| "<unknown>".to_string());
                 format!("{name}: vendor={vendor}, driver={driver}")
             })
             .collect::<Vec<_>>()
             .join("; ");
     }
 
-    "<DRM inventory is only available on Linux>".to_string()
+    #[cfg(not(target_os = "linux"))]
+    {
+        "<DRM inventory is only available on Linux>".to_string()
+    }
 }
 
 fn graphics_environment_report() -> String {
@@ -3953,9 +3955,9 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gamble Client Launcher");
-    app.run(|app_handle, event| {
+    app.run(|app_handle, _event| {
         #[cfg(target_os = "windows")]
-        if matches!(event, tauri::RunEvent::Ready) {
+        if matches!(_event, tauri::RunEvent::Ready) {
             if let Some(window) = app_handle.get_webview_window("main") {
                 let app_url = tauri::Url::parse("https://tauri.localhost/index.html")
                     .expect("the embedded Windows app URL is valid");
