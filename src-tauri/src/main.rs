@@ -1272,6 +1272,7 @@ fn host_has_amd_drm() -> bool {
             .ok()
             .into_iter()
             .flatten()
+            .filter_map(Result::ok)
             .map(|entry| entry.path())
             .filter(|path| {
                 path.file_name()
@@ -4039,7 +4040,7 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gamble Client Launcher");
-    app.run(|app_handle, event| {
+    app.run(|_app_handle, event| {
         #[cfg(not(target_os = "windows"))]
         let _ = &event;
         #[cfg(target_os = "windows")]
