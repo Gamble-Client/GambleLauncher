@@ -4040,9 +4040,9 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gamble Client Launcher");
-    app.run(|_app_handle, event| {
+    app.run(|app_handle, event| {
         #[cfg(not(target_os = "windows"))]
-        let _ = &event;
+        let _ = (&app_handle, &event);
         #[cfg(target_os = "windows")]
         if matches!(event, tauri::RunEvent::Ready) {
             if let Some(window) = app_handle.get_webview_window("main") {
