@@ -19,7 +19,7 @@ const LAUNCHER_DISPLAY_NAME_KEY = "gamble.launcher.displayName";
 const CLIENT_DISPLAY_NAME_KEY = "gamble.client.displayName";
 const GRAPHICS_MODE_KEY = "gamble.launcher.graphicsMode";
 const GPU_SELECTOR_KEY = "gamble.launcher.gpuSelector";
-const LAUNCHER_VERSION = "0.1.123";
+const LAUNCHER_VERSION = "0.1.124";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 // Browser mocks are a development-only visual harness. Vite removes this branch
@@ -108,16 +108,28 @@ const state = {
 };
 
 function readStorage(key, fallback = "") {
-  return (globalThis.localStorage?.getItem(key) || fallback).trim();
+  try {
+    return (globalThis.localStorage?.getItem(key) || fallback).trim();
+  } catch {
+    return String(fallback || "").trim();
+  }
 }
 
 function readJsonStorage(key, fallback) {
   try {
-    const value = globalThis.localStorage?.getItem(key);
+    const value = readStorage(key);
     if (!value) return fallback;
     return JSON.parse(value);
   } catch {
     return fallback;
+  }
+}
+
+function writeStorage(key, value) {
+  try {
+    globalThis.localStorage?.setItem(key, String(value));
+  } catch {
+    // WebKit private mode, profile permissions, or quota limits can disable storage.
   }
 }
 
@@ -168,15 +180,15 @@ function defaultGpuSelector() {
 }
 
 function defaultAntiScreenshare() {
-  return globalThis.localStorage?.getItem("gamble.launcher.antiScreenshare") === "true";
+  return readStorage("gamble.launcher.antiScreenshare") === "true";
 }
 
 function defaultAdvancedSettings() {
-  return globalThis.localStorage?.getItem(ADVANCED_SETTINGS_KEY) === "true";
+  return readStorage(ADVANCED_SETTINGS_KEY) === "true";
 }
 
 function defaultAnimationsEnabled() {
-  return globalThis.localStorage?.getItem(ANIMATIONS_KEY) !== "false";
+  return readStorage(ANIMATIONS_KEY, "true") !== "false";
 }
 
 function sanitizeDisplayName(value, fallback) {
@@ -545,11 +557,11 @@ function profileById(id) {
 }
 
 function saveCustomProfiles() {
-  localStorage.setItem(CUSTOM_PROFILES_KEY, JSON.stringify(state.customProfiles || []));
+  writeStorage(CUSTOM_PROFILES_KEY, JSON.stringify(state.customProfiles || []));
 }
 
 function saveProfileAccountOverrides() {
-  localStorage.setItem(PROFILE_ACCOUNTS_KEY, JSON.stringify(state.profileAccountOverrides || {}));
+  writeStorage(PROFILE_ACCOUNTS_KEY, JSON.stringify(state.profileAccountOverrides || {}));
 }
 
 function profileAccount(profile = currentProfile()) {
@@ -2015,7 +2027,7 @@ async function installSelected() {
     state.manifest = result;
     state.clientStatus = { ...result, installed: true, updateAvailable: false };
     state.dismissedClientVersion = clientStatusKey();
-    localStorage.setItem(CLIENT_DISMISS_KEY, state.dismissedClientVersion);
+    writeStorage(CLIENT_DISMISS_KEY, state.dismissedClientVersion);
     log(result.message);
     await refreshFiles();
   } catch (error) {
@@ -2031,7 +2043,7 @@ async function downloadLauncherUpdate() {
     await yieldToUi();
     const result = await invoke("download_launcher_update");
     state.dismissedLauncherVersion = latestLauncherVersion();
-    localStorage.setItem(LAUNCHER_DISMISS_KEY, state.dismissedLauncherVersion);
+    writeStorage(LAUNCHER_DISMISS_KEY, state.dismissedLauncherVersion);
     log(result.message || "Launcher update downloaded to your Downloads folder.");
   } catch (error) {
     log(`Launcher update failed: ${error.message || error}`);
@@ -2279,7 +2291,7 @@ async function refreshAntiScreenshareStatus() {
     } else {
       state.antiStatus.enabled = state.antiScreenshare;
     }
-    localStorage.setItem("gamble.launcher.antiScreenshare", String(state.antiScreenshare));
+    writeStorage("gamble.launcher.antiScreenshare", String(state.antiScreenshare));
   } catch (error) {
     state.antiStatus = {
       enabled: state.antiScreenshare,
@@ -2419,11 +2431,11 @@ app.addEventListener("click", async (event) => {
     await downloadLauncherUpdate();
   } else if (action === "dismiss-launcher-popup") {
     state.dismissedLauncherVersion = latestLauncherVersion();
-    localStorage.setItem(LAUNCHER_DISMISS_KEY, state.dismissedLauncherVersion);
+    writeStorage(LAUNCHER_DISMISS_KEY, state.dismissedLauncherVersion);
     render();
   } else if (action === "dismiss-client-popup") {
     state.dismissedClientVersion = clientStatusKey();
-    localStorage.setItem(CLIENT_DISMISS_KEY, state.dismissedClientVersion);
+    writeStorage(CLIENT_DISMISS_KEY, state.dismissedClientVersion);
     render();
   } else if (action === "dismiss-popup") {
     state.popup = null;
@@ -2578,7 +2590,7 @@ app.addEventListener("click", async (event) => {
       const status = await invoke("set_anti_screenshare", { profile: state.selectedProfile, enabled: next });
       state.antiStatus = status;
       state.antiScreenshare = Boolean(status.enabled);
-      localStorage.setItem("gamble.launcher.antiScreenshare", String(state.antiScreenshare));
+      writeStorage("gamble.launcher.antiScreenshare", String(state.antiScreenshare));
       log(status.message || `AntiScreenshare ${state.antiScreenshare ? "enabled" : "disabled"}.`);
     } catch (error) {
       log(`AntiScreenshare update failed: ${error.message || error}`);
@@ -2591,7 +2603,7 @@ app.addEventListener("click", async (event) => {
       const status = await invoke("apply_anti_screenshare_clean_view", { profile: state.selectedProfile });
       state.antiStatus = status;
       state.antiScreenshare = Boolean(status.enabled);
-      localStorage.setItem("gamble.launcher.antiScreenshare", "true");
+      writeStorage("gamble.launcher.antiScreenshare", "true");
       log(status.message || "Clean View applied.");
     } catch (error) {
       log(`Clean View failed: ${error.message || error}`);
@@ -2616,7 +2628,7 @@ app.addEventListener("click", async (event) => {
     await startSponsor();
   } else if (action === "toggle-advanced") {
     state.showAdvancedSettings = !state.showAdvancedSettings;
-    localStorage.setItem(ADVANCED_SETTINGS_KEY, String(state.showAdvancedSettings));
+    writeStorage(ADVANCED_SETTINGS_KEY, String(state.showAdvancedSettings));
     render();
   } else if (action === "toggle-profile-create") {
     state.profileCreateOpen = !state.profileCreateOpen;
@@ -2636,7 +2648,7 @@ app.addEventListener("click", async (event) => {
     if (!currentProfile().client || !canUseBuild(buildId)) return;
     state.selectedBuild = buildId;
     state.selectedBuildExplicit = true;
-    localStorage.setItem(SELECTED_BUILD_KEY, buildId);
+    writeStorage(SELECTED_BUILD_KEY, buildId);
     state.clientStatus = null;
     state.manifest = null;
     await refreshManifest().catch(() => {});
@@ -2763,7 +2775,7 @@ app.addEventListener("change", async (event) => {
   const settingToggle = event.target.closest("[data-setting-toggle]")?.dataset.settingToggle;
   if (settingToggle === "animationsEnabled") {
     state.animationsEnabled = event.target.checked;
-    localStorage.setItem(ANIMATIONS_KEY, state.animationsEnabled ? "true" : "false");
+    writeStorage(ANIMATIONS_KEY, state.animationsEnabled ? "true" : "false");
     render();
     return;
   }
@@ -2793,21 +2805,21 @@ app.addEventListener("change", async (event) => {
   if (field === "launcherDisplayName" || field === "clientDisplayName") {
     const fallback = field === "launcherDisplayName" ? "Gamble Client Launcher" : "Gamble Client";
     state[field] = sanitizeDisplayName(event.target.value, fallback);
-    localStorage.setItem(field === "launcherDisplayName" ? LAUNCHER_DISPLAY_NAME_KEY : CLIENT_DISPLAY_NAME_KEY, state[field]);
+    writeStorage(field === "launcherDisplayName" ? LAUNCHER_DISPLAY_NAME_KEY : CLIENT_DISPLAY_NAME_KEY, state[field]);
     render();
     return;
   }
   state[field] = event.target.value;
-  if (field === "username") localStorage.setItem("gamble.launcher.username", state.username);
-  if (field === "javaArgs") localStorage.setItem("gamble.launcher.javaArgs", state.javaArgs);
-  if (field === "memory") localStorage.setItem("gamble.launcher.memory", state.memory);
+  if (field === "username") writeStorage("gamble.launcher.username", state.username);
+  if (field === "javaArgs") writeStorage("gamble.launcher.javaArgs", state.javaArgs);
+  if (field === "memory") writeStorage("gamble.launcher.memory", state.memory);
   if (field === "graphicsMode") {
     state.graphicsMode = normalizeGraphicsMode(state.graphicsMode);
-    localStorage.setItem(GRAPHICS_MODE_KEY, state.graphicsMode);
+    writeStorage(GRAPHICS_MODE_KEY, state.graphicsMode);
   }
   if (field === "gpuSelector") {
     state.gpuSelector = sanitizeGpuSelector(state.gpuSelector);
-    localStorage.setItem(GPU_SELECTOR_KEY, state.gpuSelector);
+    writeStorage(GPU_SELECTOR_KEY, state.gpuSelector);
   }
   if (field === "selectedProfile") {
     state.clientStatus = null;
@@ -2818,7 +2830,7 @@ app.addEventListener("change", async (event) => {
   }
   if (field === "selectedBuild") {
     state.selectedBuildExplicit = true;
-    localStorage.setItem(SELECTED_BUILD_KEY, state.selectedBuild);
+    writeStorage(SELECTED_BUILD_KEY, state.selectedBuild);
     state.clientStatus = null;
     state.manifest = null;
     await refreshManifest().catch(() => {});
@@ -2835,20 +2847,20 @@ app.addEventListener("input", (event) => {
     return;
   }
   state[field] = event.target.value;
-  if (field === "username") localStorage.setItem("gamble.launcher.username", state.username);
-  if (field === "javaArgs") localStorage.setItem("gamble.launcher.javaArgs", state.javaArgs);
+  if (field === "username") writeStorage("gamble.launcher.username", state.username);
+  if (field === "javaArgs") writeStorage("gamble.launcher.javaArgs", state.javaArgs);
   if (field === "graphicsMode") {
     state.graphicsMode = normalizeGraphicsMode(state.graphicsMode);
-    localStorage.setItem(GRAPHICS_MODE_KEY, state.graphicsMode);
+    writeStorage(GRAPHICS_MODE_KEY, state.graphicsMode);
   }
   if (field === "gpuSelector") {
     state.gpuSelector = sanitizeGpuSelector(state.gpuSelector);
-    localStorage.setItem(GPU_SELECTOR_KEY, state.gpuSelector);
+    writeStorage(GPU_SELECTOR_KEY, state.gpuSelector);
   }
   if (field === "launcherDisplayName" || field === "clientDisplayName") {
     const fallback = field === "launcherDisplayName" ? "Gamble Client Launcher" : "Gamble Client";
     state[field] = sanitizeDisplayName(event.target.value, fallback);
-    localStorage.setItem(field === "launcherDisplayName" ? LAUNCHER_DISPLAY_NAME_KEY : CLIENT_DISPLAY_NAME_KEY, state[field]);
+    writeStorage(field === "launcherDisplayName" ? LAUNCHER_DISPLAY_NAME_KEY : CLIENT_DISPLAY_NAME_KEY, state[field]);
     if (field === "launcherDisplayName") document.title = state.launcherDisplayName;
   }
 });

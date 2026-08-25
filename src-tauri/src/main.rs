@@ -2016,7 +2016,8 @@ fn apply_game_graphics_environment(command: &mut Command, graphics_mode: &str, g
             "AMD_DEBUG",
             "usellvm,nodcc,nodpbb,nofmask,nooutoforder,nongg",
         );
-        command.env("AMD_FORCE_SHADER_USE_ACO", "0");
+        // Do not set AMD_FORCE_SHADER_USE_ACO. Mesa expects shader selectors
+        // or a hash file for that debug variable; "0" is not a valid value.
     }
     if graphics_mode == "software" {
         command.env("LIBGL_ALWAYS_SOFTWARE", "1");
@@ -2026,7 +2027,7 @@ fn apply_game_graphics_environment(command: &mut Command, graphics_mode: &str, g
 fn game_graphics_environment_report(graphics_mode: &str, gpu_selector: &str) -> String {
     let amd_guard = should_apply_amd_guard(graphics_mode, host_has_amd_drm());
     format!(
-        "Game environment: GAMBLE_GRAPHICS_MODE={graphics_mode}, DRI_PRIME={}, AMD guard pre-JVM={}, MESA_GLTHREAD={}, AMD_DEBUG={}, AMD_FORCE_SHADER_USE_ACO={}, LIBGL_ALWAYS_SOFTWARE={}",
+        "Game environment: GAMBLE_GRAPHICS_MODE={graphics_mode}, DRI_PRIME={}, AMD guard pre-JVM={}, MESA_GLTHREAD={}, AMD_DEBUG={}, AMD_FORCE_SHADER_USE_ACO=<unset>, LIBGL_ALWAYS_SOFTWARE={}",
         if gpu_selector.is_empty() {
             "<unset>"
         } else {
@@ -2039,7 +2040,6 @@ fn game_graphics_environment_report(graphics_mode: &str, gpu_selector: &str) -> 
         } else {
             "<unset>"
         },
-        if amd_guard { "0" } else { "<unset>" },
         if graphics_mode == "software" {
             "1"
         } else {
@@ -6032,9 +6032,9 @@ mod tests {
             random_base64_url(24)
         ));
         fs::create_dir_all(&root).unwrap();
-        let target = root.join("Gamble Client Launcher_0.1.123_x64-setup.exe");
-        let staging = root.join("Gamble Client Launcher_0.1.123_x64-setup.exe.part");
-        let backup = root.join("Gamble Client Launcher_0.1.123_x64-setup.download.previous");
+        let target = root.join("Gamble Client Launcher_0.1.124_x64-setup.exe");
+        let staging = root.join("Gamble Client Launcher_0.1.124_x64-setup.exe.part");
+        let backup = root.join("Gamble Client Launcher_0.1.124_x64-setup.download.previous");
         fs::write(&target, b"old installer").unwrap();
         fs::write(&staging, b"new installer").unwrap();
 

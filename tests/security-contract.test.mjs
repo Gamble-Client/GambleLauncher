@@ -136,6 +136,16 @@ test("production launcher UI omits owner-specific preview data and sanitizes vis
     assert.match(cargo, /panic = "abort"/);
 });
 
+test("launcher settings survive unavailable WebView storage", async () => {
+    const frontend = await source("src/main.js");
+
+    assert.match(frontend, /function readStorage\(key, fallback = ""\)/);
+    assert.match(frontend, /function writeStorage\(key, value\)/);
+    assert.match(frontend, /WebKit private mode, profile permissions, or quota limits/);
+    assert.match(frontend, /const value = readStorage\(key\);/);
+    assert.doesNotMatch(frontend, /localStorage\.setItem\(/);
+});
+
 test("native production assets use relative URLs inside the embedded WebView", async () => {
     const packageJson = JSON.parse(await source("package.json"));
     assert.equal(packageJson.scripts.build, "vite build --base ./");
@@ -286,6 +296,7 @@ test("profile launches use their account without rewriting the launcher default"
 test("graphics safety settings stay scoped to Minecraft and retain GPU crash evidence", async () => {
     const frontend = await source("src/main.js");
     const rust = await source("src-tauri/src/main.rs");
+    const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
 
     assert.match(frontend, /graphicsMode: state\.graphicsMode/);
     assert.match(frontend, /gpuSelector: state\.gpuSelector/);
@@ -303,6 +314,9 @@ test("graphics safety settings stay scoped to Minecraft and retain GPU crash evi
     assert.match(rust, /fn record_minecraft_exit\(/);
     assert.match(rust, /gpu_fault/);
     assert.match(rust, /GAMBLE_GRAPHICS_MODE/);
+    assert.doesNotMatch(rust, /command\.env\("AMD_FORCE_SHADER_USE_ACO"/);
+    assert.doesNotMatch(java, /environment\.put\("AMD_FORCE_SHADER_USE_ACO"/);
+    assert.match(java, /Do not set AMD_FORCE_SHADER_USE_ACO/);
 });
 
 test("plain Fabric profiles do not lock the Gamble loader", async () => {
