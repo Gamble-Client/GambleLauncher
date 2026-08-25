@@ -262,6 +262,23 @@ test("profile launches use their account without rewriting the launcher default"
     assert.match(rust, /fn microsoft_account_for_launch\(requested_uuid: &str\)/);
 });
 
+test("graphics safety settings stay scoped to Minecraft and retain GPU crash evidence", async () => {
+    const frontend = await source("src/main.js");
+    const rust = await source("src-tauri/src/main.rs");
+
+    assert.match(frontend, /graphicsMode: state\.graphicsMode/);
+    assert.match(frontend, /gpuSelector: state\.gpuSelector/);
+    assert.match(frontend, /data-field="graphicsMode"/);
+    assert.match(frontend, /data-field="gpuSelector"/);
+    assert.match(rust, /fn configure_launcher_webkit_environment\(\)/);
+    assert.match(rust, /fn apply_game_graphics_environment\(/);
+    assert.match(rust, /WEBKIT_DISABLE_DMABUF_RENDERER/);
+    assert.match(rust, /command\.env_remove\(key\)/);
+    assert.match(rust, /fn record_minecraft_exit\(/);
+    assert.match(rust, /gpu_fault/);
+    assert.match(rust, /GAMBLE_GRAPHICS_MODE/);
+});
+
 test("plain Fabric profiles do not lock the Gamble loader", async () => {
     const rust = await source("src-tauri/src/main.rs");
 

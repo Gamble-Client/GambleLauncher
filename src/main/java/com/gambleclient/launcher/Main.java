@@ -132,7 +132,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.120";
+    private static final String LAUNCHER_VERSION = "0.1.121";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -249,6 +249,8 @@ public class Main {
     private JPanel usernameBlock;
     private final JComboBox<Integer> memoryGb = new JComboBox<>(new Integer[] {2, 3, 4, 5, 6, 7, 8, 10, 12, 16});
     private final JTextField javaArgs = new JTextField("");
+    private final JComboBox<String> graphicsMode = new JComboBox<>(new String[] {"Automatic", "Safe graphics", "Software fallback"});
+    private final JTextField gpuSelector = new JTextField("");
     private final JTextField launcherDisplayName = new JTextField("Gamble Client Launcher");
     private final JTextField clientDisplayName = new JTextField("Gamble Client");
     private final JLabel heroTitle = new JLabel("Gamble Client");
@@ -588,6 +590,8 @@ public class Main {
         buildBox.setToolTipText("Tier selected for Gamble Client launches.");
         memoryGb.setToolTipText("Maximum Java memory in GB.");
         javaArgs.setToolTipText("Optional JVM arguments. Leave blank unless you know you need them.");
+        graphicsMode.setToolTipText("Automatic, safe hardware rendering, or an emergency software fallback.");
+        gpuSelector.setToolTipText("Optional DRI_PRIME selector such as 1 or 1!. Leave blank for the default GPU.");
 
         username.setToolTipText("Player name for the local launch session.");
         addInputBlock(form, gbc, 0, 0, 1, "Profile", createProfileControl(), new Insets(0, 0, 10, 10));
@@ -727,6 +731,11 @@ public class Main {
         addSettingsField(panel, gbc, 0, "Build", buildBox);
         addSettingsField(panel, gbc, 1, "Memory (GB)", memoryGb);
         addSettingsField(panel, gbc, 2, "Java Args", javaArgs);
+        addSettingsField(panel, gbc, 3, "Graphics mode", graphicsMode);
+        addSettingsField(panel, gbc, 4, "GPU selector (DRI_PRIME)", gpuSelector);
+        gbc.gridy = 5;
+        gbc.insets = new Insets(0, 0, 0, 0);
+        panel.add(label("Safe graphics keeps hardware acceleration but disables the known risky Mesa paths. Software fallback is CPU-rendered.", 12, Font.PLAIN, MUTED), gbc);
         return panel;
     }
 
@@ -810,6 +819,8 @@ public class Main {
         styleInput(username);
         styleInput(memoryGb);
         styleInput(javaArgs);
+        styleInput(graphicsMode);
+        styleInput(gpuSelector);
         styleInput(launcherDisplayName);
         styleInput(clientDisplayName);
         autoCheckUpdates.setSelected(readAutoCheckUpdates());
@@ -817,6 +828,15 @@ public class Main {
         memoryGb.setSelectedItem(4);
         selectStoredProfile();
         selectStoredBuild();
+        graphicsMode.addActionListener(e -> saveGraphicsSettings());
+        gpuSelector.addActionListener(e -> saveGraphicsSettings());
+        gpuSelector.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusLost(java.awt.event.FocusEvent event) {
+                gpuSelector.setText(sanitizeGpuSelector(gpuSelector.getText()));
+                saveGraphicsSettings();
+            }
+        });
 
         progress.setForeground(ACCENT);
         progress.setBackground(FIELD);
@@ -1305,7 +1325,33 @@ public class Main {
         Map<String, Object> settings = readLauncherSettings();
         launcherDisplayName.setText(sanitizeDisplayName(Json.string(settings.get("launcherDisplayName")), "Gamble Client Launcher"));
         clientDisplayName.setText(sanitizeDisplayName(Json.string(settings.get("clientDisplayName")), "Gamble Client"));
+        graphicsMode.setSelectedItem(graphicsModeLabel(Json.string(settings.get("graphicsMode"))));
+        gpuSelector.setText(sanitizeGpuSelector(Json.string(settings.get("gpuSelector"))));
         applyDisplayNames();
+    }
+
+    private String selectedGraphicsMode() {
+        String label = String.valueOf(graphicsMode.getSelectedItem());
+        if ("Safe graphics".equals(label)) return "safe";
+        if ("Software fallback".equals(label)) return "software";
+        return "automatic";
+    }
+
+    private static String graphicsModeLabel(String value) {
+        if ("safe".equalsIgnoreCase(value)) return "Safe graphics";
+        if ("software".equalsIgnoreCase(value)) return "Software fallback";
+        return "Automatic";
+    }
+
+    private static String sanitizeGpuSelector(String value) {
+        String input = value == null ? "" : value.trim();
+        if (input.length() > 128) input = input.substring(0, 128);
+        StringBuilder clean = new StringBuilder(input.length());
+        for (int index = 0; index < input.length(); index++) {
+            char character = input.charAt(index);
+            if (Character.isLetterOrDigit(character) || "._:!-".indexOf(character) >= 0) clean.append(character);
+        }
+        return clean.toString();
     }
 
     private void saveDisplayNames() {
@@ -1316,6 +1362,13 @@ public class Main {
         settings.put("clientDisplayName", clientDisplayName.getText());
         saveLauncherSettings(settings, "Display names saved.");
         applyDisplayNames();
+    }
+
+    private void saveGraphicsSettings() {
+        Map<String, Object> settings = readLauncherSettings();
+        settings.put("graphicsMode", selectedGraphicsMode());
+        settings.put("gpuSelector", sanitizeGpuSelector(gpuSelector.getText()));
+        saveLauncherSettings(settings, "Graphics settings saved.");
     }
 
     private void applyDisplayNames() {
@@ -1352,7 +1405,9 @@ public class Main {
                 + "\"slotWinSoundsEnabled\":" + (settings.containsKey("slotWinSoundsEnabled") ? jsonBoolean(settings.get("slotWinSoundsEnabled")) : true) + ","
                 + "\"selectedBuild\":\"" + jsonEscape(Json.string(settings.get("selectedBuild"))) + "\","
                 + "\"launcherDisplayName\":\"" + jsonEscape(sanitizeDisplayName(Json.string(settings.get("launcherDisplayName")), "Gamble Client Launcher")) + "\","
-                + "\"clientDisplayName\":\"" + jsonEscape(sanitizeDisplayName(Json.string(settings.get("clientDisplayName")), "Gamble Client")) + "\""
+                + "\"clientDisplayName\":\"" + jsonEscape(sanitizeDisplayName(Json.string(settings.get("clientDisplayName")), "Gamble Client")) + "\","
+                + "\"graphicsMode\":\"" + jsonEscape(selectedGraphicsMode()) + "\","
+                + "\"gpuSelector\":\"" + jsonEscape(sanitizeGpuSelector(gpuSelector.getText())) + "\""
                 + "}" + System.lineSeparator();
             Files.write(getLauncherSettingsFile().toPath(), json.getBytes(StandardCharsets.UTF_8));
             log(successMessage);
@@ -3457,6 +3512,8 @@ public class Main {
 
         final Object selectedMemory = memoryGb.getSelectedItem();
         final int memory = selectedMemory instanceof Number ? ((Number) selectedMemory).intValue() : 4;
+        final String selectedGraphicsMode = selectedGraphicsMode();
+        final String selectedGpuSelector = sanitizeGpuSelector(gpuSelector.getText());
         final List<String> extraJavaArgs;
         try {
             extraJavaArgs = splitArgs(javaArgs.getText());
@@ -3503,7 +3560,8 @@ public class Main {
                 }
                 LaunchIdentity identity = resolveLaunchIdentity(name);
                 return launchMinecraftProcess(launchProfile, identity, memory, extraJavaArgs,
-                    launchProfile.includesGambleClient ? canonicalBuildId(build.id) : "");
+                    launchProfile.includesGambleClient ? canonicalBuildId(build.id) : "",
+                    selectedGraphicsMode, selectedGpuSelector);
             }
 
             @Override
@@ -3766,7 +3824,8 @@ public class Main {
     }
 
     private Process launchMinecraftProcess(LaunchProfile launchProfile, LaunchIdentity identity, int memory,
-                                          List<String> extraJavaArgs, String launchBuild) throws IOException {
+                                          List<String> extraJavaArgs, String launchBuild,
+                                          String graphicsMode, String gpuSelector) throws IOException {
         File gameDir = getMinecraftFolder(launchProfile);
         File versionsDir = new File(gameDir, "versions");
         if (!versionsDir.exists() && !versionsDir.mkdirs()) {
@@ -3797,7 +3856,7 @@ public class Main {
 
         setProgress(82, "Launching");
         try {
-            List<String> command = buildLaunchCommand(gameDir, profile, classpath, nativesDir, identity, memory, versionId, extraJavaArgs, launchProfile, launchBuild);
+            List<String> command = buildLaunchCommand(gameDir, profile, classpath, nativesDir, identity, memory, versionId, extraJavaArgs, launchProfile, launchBuild, graphicsMode, gpuSelector);
             LaunchValidation validation = validateLaunchSetup(gameDir, profile, classpath, nativesDir, versionId, launchProfile, identity);
             logValidationReport(validation);
             logLaunchCommandDetails(command, profile.mainClass, gameDir);
@@ -3808,6 +3867,7 @@ public class Main {
             ProcessBuilder builder = new ProcessBuilder(command);
             builder.directory(gameDir);
             builder.redirectErrorStream(false);
+            applyGraphicsEnvironment(builder.environment(), graphicsMode, gpuSelector);
             Process process = builder.start();
             return process;
         } catch (IOException e) {
@@ -4292,7 +4352,40 @@ public class Main {
         }
     }
 
-    private List<String> buildLaunchCommand(File gameDir, VersionProfile profile, List<File> classpath, File nativesDir, LaunchIdentity identity, int memory, String versionId, List<String> extraJavaArgs, LaunchProfile launchProfile, String launchBuild) {
+    private void applyGraphicsEnvironment(Map<String, String> environment, String graphicsMode, String gpuSelector) {
+        for (String key : new String[] {
+            "WEBKIT_DISABLE_DMABUF_RENDERER",
+            "GAMBLE_WEBKIT_SAFE_MODE",
+            "LIBGL_ALWAYS_SOFTWARE",
+            "MESA_GLTHREAD",
+            "mesa_glthread",
+            "AMD_DEBUG",
+            "AMD_FORCE_SHADER_USE_ACO",
+            "DRI_PRIME",
+            "GAMBLE_GRAPHICS_MODE",
+            "GAMBLE_DRI_PRIME"
+        }) {
+            environment.remove(key);
+        }
+        environment.put("GAMBLE_GRAPHICS_MODE", graphicsMode);
+        if (!gpuSelector.isEmpty()) {
+            environment.put("DRI_PRIME", gpuSelector);
+            environment.put("GAMBLE_DRI_PRIME", gpuSelector);
+        }
+        if ("safe".equals(graphicsMode) || "software".equals(graphicsMode)) {
+            environment.put("MESA_GLTHREAD", "0");
+            environment.put("AMD_DEBUG", "usellvm,nodcc,nodpbb,nofmask,nooutoforder,nongg");
+            environment.put("AMD_FORCE_SHADER_USE_ACO", "0");
+        }
+        if ("software".equals(graphicsMode)) environment.put("LIBGL_ALWAYS_SOFTWARE", "1");
+        diagnosticLog("Graphics mode: " + graphicsMode);
+        diagnosticLog("GPU selector: " + (gpuSelector.isEmpty() ? "automatic" : gpuSelector));
+        diagnosticLog("Java: " + System.getProperty("java.version", "unknown") + " / " + System.getProperty("java.vendor", "unknown"));
+        diagnosticLog("OS: " + System.getProperty("os.name", "unknown") + " / " + System.getProperty("os.version", "unknown") + " / " + System.getProperty("os.arch", "unknown"));
+        diagnosticLog("OpenGL/Mesa/Vulkan renderer: emitted by the client after Minecraft creates its graphics context.");
+    }
+
+    private List<String> buildLaunchCommand(File gameDir, VersionProfile profile, List<File> classpath, File nativesDir, LaunchIdentity identity, int memory, String versionId, List<String> extraJavaArgs, LaunchProfile launchProfile, String launchBuild, String graphicsMode, String gpuSelector) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable());
         command.add("-Xmx" + memory + "G");
@@ -4301,6 +4394,8 @@ public class Main {
         command.add("-Dminecraft.launcher.brand=GambleClientLauncher");
         command.add("-Dminecraft.launcher.version=" + LAUNCHER_VERSION);
         command.add("-Dgamble.displayName=" + sanitizeDisplayName(clientDisplayName.getText(), "Gamble Client"));
+        command.add("-Dgamble.graphics.mode=" + graphicsMode);
+        command.add("-Dgamble.graphics.gpu=" + gpuSelector);
         if (launchProfile.includesGambleClient && launchBuild != null && !launchBuild.isBlank()) {
             command.add("-Dgamble.launchBuild=" + launchBuild);
             command.add("-Dgamble.loader.build=" + launchBuild);
@@ -6024,6 +6119,12 @@ public class Main {
 
     private String classifyFailureLine(String line) {
         String lower = (line == null ? "" : line).toLowerCase(Locale.ROOT);
+        if (lower.contains("amdgpu") || lower.contains("gpuvm") || lower.contains("page fault")
+            || lower.contains("ring gfx timeout") || lower.contains("gpu reset")
+            || lower.contains("vram is lost") || lower.contains("device wedged")
+            || lower.contains("context is lost") || lower.contains("vk_error_device_lost")) {
+            return "GPU driver reset/context loss";
+        }
         if (lower.contains("classnotfoundexception")) return "ClassNotFoundException";
         if (lower.contains("noclassdeffounderror")) return "NoClassDefFoundError";
         if (lower.contains("unsatisfiedlinkerror")) return "Native library failure (UnsatisfiedLinkError)";
@@ -6052,6 +6153,14 @@ public class Main {
                 detected,
                 "A native library failed before Minecraft reached client initialization.",
                 "Your Java installation may be corrupted. Try reinstalling Java 17+ and restarting your launcher."
+            );
+        }
+        if (detected.contains("GPU driver reset")) {
+            return new LaunchDiagnosis(
+                summary,
+                detected,
+                "The graphics driver reported a GPU reset or lost context; Java is the trigger process, not the root graphics failure.",
+                "Try Settings → Graphics mode → Safe graphics. Use Software fallback only if the hardware-safe path still resets the GPU, then attach latest-launch.log and the graphics diagnostics."
             );
         }
         if (detected.contains("ClassNotFoundException") || detected.contains("NoClassDefFoundError")) {
@@ -6108,6 +6217,8 @@ public class Main {
         username.setEnabled(!busy && !running);
         memoryGb.setEnabled(!busy && !running);
         javaArgs.setEnabled(!busy && !running);
+        graphicsMode.setEnabled(!busy && !running);
+        gpuSelector.setEnabled(!busy && !running);
     }
 
     private boolean sponsoredAccessActiveFor(Build build) {

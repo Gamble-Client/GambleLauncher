@@ -15,7 +15,7 @@ use std::{
     io::{self, Cursor, Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc, Mutex,
@@ -28,6 +28,8 @@ use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
 use zip::ZipArchive;
 
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -112,7 +114,48 @@ const ANTISCREENSHARE_VISUAL_OFF: &[&str] = &[
     "block-update-finder",
 ];
 static MINECRAFT_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
+static LAST_MINECRAFT_EXIT: Mutex<Option<MinecraftExit>> = Mutex::new(None);
+static LAST_MINECRAFT_GRAPHICS_MODE: Mutex<String> = Mutex::new(String::new());
 static LAUNCH_LOCK: Mutex<()> = Mutex::new(());
+
+const DEFAULT_GRAPHICS_MODE: &str = "automatic";
+const GRAPHICS_ENV_KEYS: &[&str] = &[
+    "DRI_PRIME",
+    "LIBGL_ALWAYS_SOFTWARE",
+    "MESA_GLTHREAD",
+    "AMD_DEBUG",
+    "AMD_FORCE_SHADER_USE_ACO",
+    "MESA_LOADER_DRIVER_OVERRIDE",
+    "VK_ICD_FILENAMES",
+    "MESA_VK_DEVICE_SELECT",
+    "WEBKIT_DISABLE_DMABUF_RENDERER",
+];
+const GPU_FAULT_MARKERS: &[&str] = &[
+    "amdgpu",
+    "gpuvm",
+    "page fault",
+    "ring gfx timeout",
+    "gpu reset",
+    "vram is lost",
+    "device wedged",
+    "context is lost",
+    "gl_context_lost",
+    "vk_error_device_lost",
+];
+
+#[derive(Clone, Serialize)]
+struct MinecraftExit {
+    #[serde(rename = "exitCode")]
+    exit_code: Option<i32>,
+    crashed: bool,
+    #[serde(rename = "gpuFault")]
+    gpu_fault: bool,
+    message: String,
+    #[serde(rename = "logPath")]
+    log_path: String,
+    #[serde(rename = "graphicsMode")]
+    graphics_mode: String,
+}
 
 #[derive(Serialize)]
 struct LauncherInfo {
@@ -151,6 +194,16 @@ struct LoaderProvenance {
 struct MinecraftStatus {
     running: bool,
     pid: Option<u32>,
+    #[serde(rename = "exitCode")]
+    exit_code: Option<i32>,
+    crashed: bool,
+    #[serde(rename = "gpuFault")]
+    gpu_fault: bool,
+    message: String,
+    #[serde(rename = "logPath")]
+    log_path: String,
+    #[serde(rename = "graphicsMode")]
+    graphics_mode: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -417,6 +470,10 @@ struct LaunchRequest {
     anti_screenshare: bool,
     #[serde(default, rename = "clientDisplayName")]
     client_display_name: String,
+    #[serde(default, rename = "graphicsMode")]
+    graphics_mode: String,
+    #[serde(default, rename = "gpuSelector")]
+    gpu_selector: String,
 }
 
 #[derive(Default)]
@@ -1100,6 +1157,133 @@ fn open_profile_folder(profile: String, kind: String) -> Result<String, String> 
     Ok(label.to_string())
 }
 
+fn normalize_graphics_mode(value: &str) -> Result<String, String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    let mode = match normalized.as_str() {
+        "" | "auto" | "automatic" => DEFAULT_GRAPHICS_MODE,
+        "safe" | "safe-graphics" | "safe_graphics" => "safe",
+        "software" | "software-rendering" | "software_rendering" => "software",
+        _ => {
+            return Err("Graphics mode must be automatic, safe, or software.".to_string());
+        }
+    };
+    Ok(mode.to_string())
+}
+
+fn validate_gpu_selector(value: &str) -> Result<String, String> {
+    let selector = value.trim();
+    if selector.is_empty() {
+        return Ok(String::new());
+    }
+    if selector.len() > 128
+        || !selector
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-!".contains(&byte))
+    {
+        return Err(
+            "GPU selector may only contain letters, numbers, '.', '_', ':', '-', or '!'."
+                .to_string(),
+        );
+    }
+    Ok(selector.to_string())
+}
+
+fn safe_environment_value(key: &str) -> String {
+    env::var(key)
+        .ok()
+        .map(|value| {
+            value
+                .chars()
+                .filter(|character| !character.is_control())
+                .take(512)
+                .collect::<String>()
+        })
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "<unset>".to_string())
+}
+
+fn first_line_from_file(path: &Path) -> String {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| contents.lines().next().map(str::trim))
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| "<unknown>".to_string())
+}
+
+fn graphics_device_report() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        let root = Path::new("/sys/class/drm");
+        let mut cards = fs::read_dir(root)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.strip_prefix("card").is_some_and(|suffix| {
+                            !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit())
+                        })
+                    })
+            })
+            .collect::<Vec<_>>();
+        cards.sort();
+        if cards.is_empty() {
+            return "<no DRM cards detected>".to_string();
+        }
+        return cards
+            .into_iter()
+            .map(|card| {
+                let name = card
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("card?");
+                let vendor = first_line_from_file(&card.join("device/vendor"));
+                let driver = fs::read_to_string(card.join("device/uevent"))
+                    .ok()
+                    .and_then(|contents| {
+                        contents.lines().find_map(|line| {
+                            line.strip_prefix("DRIVER=")
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                        })
+                    })
+                    .unwrap_or("<unknown>");
+                format!("{name}: vendor={vendor}, driver={driver}")
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+    }
+
+    "<DRM inventory is only available on Linux>".to_string()
+}
+
+fn graphics_environment_report() -> String {
+    let kernel = first_line_from_file(Path::new("/proc/sys/kernel/osrelease"));
+    let mut lines = vec![
+        format!(
+            "OS: {} / {} / kernel {}",
+            env::consts::OS,
+            env::consts::ARCH,
+            kernel
+        ),
+        format!(
+            "Session: XDG_SESSION_TYPE={}",
+            safe_environment_value("XDG_SESSION_TYPE")
+        ),
+        format!("GPU devices: {}", graphics_device_report()),
+    ];
+    for key in GRAPHICS_ENV_KEYS {
+        lines.push(format!("{key}={}", safe_environment_value(key)));
+    }
+    lines.push("OpenGL/Mesa/Vulkan renderer: emitted by the client after Minecraft creates its graphics context.".to_string());
+    lines.join("\n")
+}
+
 #[tauri::command]
 fn diagnostics(profile: String) -> Result<Diagnostics, String> {
     let profile = profile_id(&profile);
@@ -1231,8 +1415,16 @@ fn diagnostics(profile: String) -> Result<Diagnostics, String> {
         }
         .to_string(),
     );
+    let process_report = LAST_MINECRAFT_EXIT
+        .lock()
+        .ok()
+        .and_then(|exit| {
+            exit.as_ref()
+                .map(|value| format!("\nLast Minecraft exit: {}", value.message))
+        })
+        .unwrap_or_default();
     let report = format!(
-        "Launcher files: {}\nProfile: {}\nMods: {}\nResource packs: {}\nLauncher session: {}\nMicrosoft accounts: {}\nJava: {}\nLatest launch log: {}{}",
+        "Launcher files: {}\nProfile: {}\nMods: {}\nResource packs: {}\nLauncher session: {}\nMicrosoft accounts: {}\nJava: {}\nLatest launch log: {}{}{}\n\nGraphics diagnostics:\n{}",
         display_path(&root),
         display_path(&profile_folder),
         display_path(&mods),
@@ -1241,7 +1433,9 @@ fn diagnostics(profile: String) -> Result<Diagnostics, String> {
         display_path(&accounts),
         java_technical,
         display_path(&launch_log),
-        if launch_log_last.is_empty() { String::new() } else { format!("\nLast log line: {launch_log_last}") }
+        if launch_log_last.is_empty() { String::new() } else { format!("\nLast log line: {launch_log_last}") },
+        process_report,
+        graphics_environment_report()
     );
     if let Some(parent) = diagnostics_report_file().parent() {
         fs::create_dir_all(parent).map_err(error_text)?;
@@ -1496,6 +1690,8 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
     let _launch_guard = LAUNCH_LOCK
         .try_lock()
         .map_err(|_| "A launch operation is already in progress.".to_string())?;
+    let graphics_mode = normalize_graphics_mode(&input.graphics_mode)?;
+    let gpu_selector = validate_gpu_selector(&input.gpu_selector)?;
     {
         let mut running = MINECRAFT_PROCESS.lock().map_err(error_text)?;
         if let Some(child) = running.as_mut() {
@@ -1504,9 +1700,15 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
                 child.kill().map_err(error_text)?;
                 child.wait().map_err(error_text)?;
                 *running = None;
+                if let Ok(mut exit) = LAST_MINECRAFT_EXIT.lock() {
+                    *exit = None;
+                }
                 return Ok("Minecraft stop signal sent.".to_string());
             }
             *running = None;
+        }
+        if let Ok(mut exit) = LAST_MINECRAFT_EXIT.lock() {
+            *exit = None;
         }
     }
 
@@ -1602,6 +1804,8 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         &input.java_args,
         input.anti_screenshare,
         &input.client_display_name,
+        &graphics_mode,
+        &gpu_selector,
         &java,
     ) {
         Ok(command) => command,
@@ -1615,7 +1819,13 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         fs::write(
             &log_file,
             format!(
-                "Gamble Client Launcher {VERSION}\n{}\n\n",
+                "Gamble Client Launcher {VERSION}\nGraphics mode: {graphics_mode}\nGPU selector: {}\n{}\n\n{}\n\n",
+                if gpu_selector.is_empty() {
+                    "automatic"
+                } else {
+                    gpu_selector.as_str()
+                },
+                graphics_environment_report(),
                 redacted_command(&command)
             ),
         )
@@ -1636,6 +1846,7 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
             .current_dir(&profile_dir)
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
+        apply_game_graphics_environment(&mut process, &graphics_mode, &gpu_selector);
         #[cfg(target_os = "windows")]
         process.creation_flags(CREATE_NO_WINDOW);
         process.spawn().map_err(|error| {
@@ -1655,6 +1866,9 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         }
     };
     *running = Some(child);
+    if let Ok(mut mode) = LAST_MINECRAFT_GRAPHICS_MODE.lock() {
+        *mode = graphics_mode;
+    }
     Ok("Minecraft process started.".to_string())
 }
 
@@ -1662,18 +1876,149 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
 fn minecraft_status() -> Result<MinecraftStatus, String> {
     let mut running = MINECRAFT_PROCESS.lock().map_err(error_text)?;
     if let Some(child) = running.as_mut() {
-        if child.try_wait().map_err(error_text)?.is_none() {
+        let exit_status = child.try_wait().map_err(error_text)?;
+        if exit_status.is_none() {
             return Ok(MinecraftStatus {
                 running: true,
                 pid: Some(child.id()),
+                exit_code: None,
+                crashed: false,
+                gpu_fault: false,
+                message: String::new(),
+                log_path: String::new(),
+                graphics_mode: current_graphics_mode(),
             });
+        }
+        if let Some(status) = exit_status {
+            record_minecraft_exit(&status);
         }
         *running = None;
     }
-    Ok(MinecraftStatus {
-        running: false,
-        pid: None,
+    let exit = LAST_MINECRAFT_EXIT.lock().map_err(error_text)?.clone();
+    Ok(match exit {
+        Some(exit) => MinecraftStatus {
+            running: false,
+            pid: None,
+            exit_code: exit.exit_code,
+            crashed: exit.crashed,
+            gpu_fault: exit.gpu_fault,
+            message: exit.message,
+            log_path: exit.log_path,
+            graphics_mode: exit.graphics_mode,
+        },
+        None => MinecraftStatus {
+            running: false,
+            pid: None,
+            exit_code: None,
+            crashed: false,
+            gpu_fault: false,
+            message: String::new(),
+            log_path: String::new(),
+            graphics_mode: current_graphics_mode(),
+        },
     })
+}
+
+fn current_graphics_mode() -> String {
+    LAST_MINECRAFT_GRAPHICS_MODE
+        .lock()
+        .ok()
+        .map(|mode| {
+            if mode.is_empty() {
+                DEFAULT_GRAPHICS_MODE.to_string()
+            } else {
+                mode.clone()
+            }
+        })
+        .unwrap_or_else(|| DEFAULT_GRAPHICS_MODE.to_string())
+}
+
+fn apply_game_graphics_environment(command: &mut Command, graphics_mode: &str, gpu_selector: &str) {
+    // The launcher UI may need WebKit's DMABUF workaround, but Minecraft must
+    // never inherit it. It is a WebKit process setting, not a Java/OpenGL
+    // setting, and leaking it into the game made the two failure domains hard
+    // to distinguish.
+    for key in [
+        "WEBKIT_DISABLE_DMABUF_RENDERER",
+        "GAMBLE_WEBKIT_SAFE_MODE",
+        "LIBGL_ALWAYS_SOFTWARE",
+        "MESA_GLTHREAD",
+        "mesa_glthread",
+        "AMD_DEBUG",
+        "AMD_FORCE_SHADER_USE_ACO",
+        "DRI_PRIME",
+        "GAMBLE_GRAPHICS_MODE",
+        "GAMBLE_DRI_PRIME",
+    ] {
+        command.env_remove(key);
+    }
+    command.env("GAMBLE_GRAPHICS_MODE", graphics_mode);
+    if !gpu_selector.is_empty() {
+        command.env("DRI_PRIME", gpu_selector);
+        command.env("GAMBLE_DRI_PRIME", gpu_selector);
+    }
+
+    if graphics_mode == "safe" || graphics_mode == "software" {
+        command.env("MESA_GLTHREAD", "0");
+        command.env(
+            "AMD_DEBUG",
+            "usellvm,nodcc,nodpbb,nofmask,nooutoforder,nongg",
+        );
+        command.env("AMD_FORCE_SHADER_USE_ACO", "0");
+    }
+    if graphics_mode == "software" {
+        command.env("LIBGL_ALWAYS_SOFTWARE", "1");
+    }
+}
+
+fn tail_of_launch_log() -> String {
+    let contents = fs::read_to_string(latest_launch_log_file()).unwrap_or_default();
+    let mut tail = contents
+        .chars()
+        .rev()
+        .take(24_000)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    if tail.is_empty() {
+        tail = "<launch log is empty>".to_string();
+    }
+    tail
+}
+
+fn record_minecraft_exit(status: &ExitStatus) {
+    let tail = tail_of_launch_log();
+    let lower = tail.to_ascii_lowercase();
+    let gpu_fault = GPU_FAULT_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker));
+    #[cfg(unix)]
+    let signal = status.signal();
+    #[cfg(not(unix))]
+    let signal: Option<i32> = None;
+    let exit_code = status.code().or_else(|| signal.map(|value| 128 + value));
+    let crashed = gpu_fault || signal.is_some() || exit_code.is_some_and(|code| code != 0);
+    let message = if gpu_fault {
+        "Minecraft exited after a graphics-driver reset or GPU context loss. The launcher kept running; attach the launch log and gpu-diagnostics.log to support.".to_string()
+    } else if let Some(signal) = signal {
+        format!("Minecraft terminated by signal {signal}. The launcher did not restart it.")
+    } else if let Some(code) = exit_code.filter(|code| *code != 0) {
+        format!("Minecraft exited with code {code}. The launcher did not restart it.")
+    } else {
+        "Minecraft exited normally.".to_string()
+    };
+    let exit = MinecraftExit {
+        exit_code,
+        crashed,
+        gpu_fault,
+        message,
+        log_path: display_path(&latest_launch_log_file()),
+        graphics_mode: current_graphics_mode(),
+    };
+    if let Ok(mut last_exit) = LAST_MINECRAFT_EXIT.lock() {
+        *last_exit = Some(exit);
+    }
 }
 
 fn refresh_minecraft_identity(account: MicrosoftAccount) -> Result<MinecraftProfile, String> {
@@ -2798,8 +3143,12 @@ fn build_minecraft_command(
     extra_java_args: &str,
     anti_screenshare: bool,
     client_display_name: &str,
+    graphics_mode: &str,
+    gpu_selector: &str,
     java: &str,
 ) -> Result<Vec<String>, String> {
+    let graphics_mode = normalize_graphics_mode(graphics_mode)?;
+    let gpu_selector = validate_gpu_selector(gpu_selector)?;
     let mut command = Vec::new();
     command.push(java.to_string());
     command.push(format!("-Xmx{memory}G"));
@@ -2811,6 +3160,8 @@ fn build_minecraft_command(
         "-Dgamble.displayName={}",
         sanitize_display_name(client_display_name, "Gamble Client")
     ));
+    command.push(format!("-Dgamble.graphics.mode={graphics_mode}"));
+    command.push(format!("-Dgamble.graphics.gpu={gpu_selector}"));
     if profile_installs_client(profile_id) && !build.is_empty() {
         command.push(format!("-Dgamble.launchBuild={build}"));
         command.push(format!("-Dgamble.loader.build={build}"));
@@ -3522,7 +3873,46 @@ fn open_url(url: String) -> Result<(), String> {
     open_external(&url)
 }
 
+fn configure_launcher_webkit_environment() {
+    #[cfg(target_os = "linux")]
+    {
+        let explicitly_disabled = env::var("GAMBLE_WEBKIT_SAFE_MODE")
+            .ok()
+            .is_some_and(|value| value.trim() == "0");
+        if !explicitly_disabled {
+            // Keep the launcher UI's WebKit renderer isolated from Minecraft.
+            // apply_game_graphics_environment removes this variable from the
+            // Java child before it is spawned.
+            env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+    }
+}
+
+fn write_launcher_startup_diagnostics() {
+    if fs::create_dir_all(launcher_data_folder()).is_err() {
+        return;
+    }
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    let report = format!(
+        "Gamble Client Launcher {VERSION}\nStartup timestamp: {timestamp}\nWebKit DMABUF safe mode: {}\n{}\n\n",
+        safe_environment_value("WEBKIT_DISABLE_DMABUF_RENDERER"),
+        graphics_environment_report()
+    );
+    if let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(launcher_data_folder().join("launcher-startup.log"))
+    {
+        let _ = file.write_all(report.as_bytes());
+    }
+}
+
 fn main() {
+    configure_launcher_webkit_environment();
+    write_launcher_startup_diagnostics();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -5313,10 +5703,10 @@ mod tests {
     use super::{
         has_launcher_managed_enrollment, is_browser_url, is_expected_loader_fabric_metadata,
         is_required_mod_for_profile, java_feature_from_text, loader_core_sha256,
-        microsoft_refresh_error, quarantine_duplicate_loader_jars, random_base64_url,
-        replace_file_with_rollback, safe_file_name, verify_fabric_mod_id,
-        verify_fabric_mod_identity, write_private_file, MANAGED_CLIENT_MOD_ID,
-        MICROSOFT_REAUTH_REQUIRED,
+        microsoft_refresh_error, normalize_graphics_mode, quarantine_duplicate_loader_jars,
+        random_base64_url, replace_file_with_rollback, safe_file_name, validate_gpu_selector,
+        verify_fabric_mod_id, verify_fabric_mod_identity, write_private_file,
+        MANAGED_CLIENT_MOD_ID, MICROSOFT_REAUTH_REQUIRED,
     };
     use serde_json::json;
     use std::{env, fs, fs::File, io::Cursor, io::Write, path::PathBuf};
@@ -5404,6 +5794,20 @@ mod tests {
             25
         );
         assert_eq!(java_feature_from_text("java version \"1.8.0_412\""), 8);
+    }
+
+    #[test]
+    fn graphics_mode_and_gpu_selector_inputs_are_normalized_and_bounded() {
+        assert_eq!(normalize_graphics_mode("auto").unwrap(), "automatic");
+        assert_eq!(normalize_graphics_mode("safe-graphics").unwrap(), "safe");
+        assert_eq!(
+            normalize_graphics_mode("software_rendering").unwrap(),
+            "software"
+        );
+        assert!(normalize_graphics_mode("vulkan").is_err());
+        assert_eq!(validate_gpu_selector(" 1! ").unwrap(), "1!");
+        assert!(validate_gpu_selector("1; rm -rf /").is_err());
+        assert!(validate_gpu_selector(&"a".repeat(129)).is_err());
     }
 
     #[cfg(unix)]

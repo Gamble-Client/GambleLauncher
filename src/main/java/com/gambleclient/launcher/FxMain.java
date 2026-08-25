@@ -98,10 +98,12 @@ public class FxMain extends Application {
     private ComboBox<String> profileBox;
     private ComboBox<String> buildBox;
     private ComboBox<String> memoryBox;
+    private ComboBox<String> graphicsMode;
     private TextField username;
     private VBox usernameBox;
     private Label buildLockedLabel;
     private TextField javaArgs;
+    private TextField gpuSelector;
     private Button launchButton;
     private Button updateButton;
     private Button signInButton;
@@ -216,6 +218,9 @@ public class FxMain extends Application {
         buildBox = combo(BUILD_LABELS);
         memoryBox = combo(MEMORY_LABELS);
         memoryBox.getSelectionModel().select("4");
+        graphicsMode = combo(new String[] {"Automatic", "Safe graphics", "Software fallback"});
+        gpuSelector = new TextField();
+        gpuSelector.setPromptText("Optional DRI_PRIME selector");
         username = new TextField(defaultUsername());
         javaArgs = new TextField();
         javaArgs.setPromptText("Optional JVM arguments");
@@ -346,7 +351,7 @@ public class FxMain extends Application {
                 label("Visible names only; managed folders and update identifiers stay canonical.", "muted"),
                 controlField("Launcher name", launcherName), controlField("Client name", clientName)),
             section("Versions", chip("Minecraft", "1.21.11"), chip("Fabric Loader", "0.19.3+ (profile selectable)")),
-            section("Runtime", controlField("Memory", memoryBox), controlField("Java Args", javaArgs)),
+            section("Runtime", controlField("Memory", memoryBox), controlField("Java Args", javaArgs), controlField("Graphics mode", graphicsMode), controlField("GPU selector (DRI_PRIME)", gpuSelector)),
             section("Updates", label("Launcher and client update checks", "muted"), buttonRow(autoCheck, checkUpdatesButton())),
             section("Slots", label("Slot sounds are quiet reel ticks. Win sounds are separate.", "muted"), buttonRow(slotSoundToggle, slotWinSoundToggle)),
             section("Links", buttonRow(review, website, credits)),
@@ -769,6 +774,8 @@ public class FxMain extends Application {
             ((JComboBox<?>) field("memoryGb")).setSelectedItem(Integer.parseInt(memoryBox.getValue()));
             ((JTextField) field("username")).setText(username.getText());
             ((JTextField) field("javaArgs")).setText(javaArgs.getText());
+            ((JComboBox<?>) field("graphicsMode")).setSelectedItem(graphicsMode.getValue());
+            ((JTextField) field("gpuSelector")).setText(gpuSelector.getText());
         });
     }
 
@@ -808,6 +815,8 @@ public class FxMain extends Application {
             Object backendMemory = ((JComboBox<?>) field("memoryGb")).getSelectedItem();
             String backendJavaArgs = ((JTextField) field("javaArgs")).getText();
             String backendUsername = ((JTextField) field("username")).getText();
+            String backendGraphicsMode = String.valueOf(((JComboBox<?>) field("graphicsMode")).getSelectedItem());
+            String backendGpuSelector = ((JTextField) field("gpuSelector")).getText();
 
             if (profileBox != null && profileBox.getSelectionModel().getSelectedIndex() != backendProfile && backendProfile < profileBox.getItems().size()) {
                 profileBox.getSelectionModel().select(backendProfile);
@@ -823,6 +832,12 @@ public class FxMain extends Application {
             }
             if (username != null && backendUsername != null && !backendUsername.equals(username.getText())) {
                 username.setText(backendUsername);
+            }
+            if (graphicsMode != null && backendGraphicsMode != null && !backendGraphicsMode.equals(graphicsMode.getValue())) {
+                graphicsMode.getSelectionModel().select(backendGraphicsMode);
+            }
+            if (gpuSelector != null && backendGpuSelector != null && !backendGpuSelector.equals(gpuSelector.getText())) {
+                gpuSelector.setText(backendGpuSelector);
             }
         } finally {
             syncingFromBackend = false;

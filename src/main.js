@@ -17,7 +17,9 @@ const ADVANCED_SETTINGS_KEY = "gamble.launcher.showAdvancedSettings";
 const ANIMATIONS_KEY = "gamble.launcher.animations";
 const LAUNCHER_DISPLAY_NAME_KEY = "gamble.launcher.displayName";
 const CLIENT_DISPLAY_NAME_KEY = "gamble.client.displayName";
-const LAUNCHER_VERSION = "0.1.120";
+const GRAPHICS_MODE_KEY = "gamble.launcher.graphicsMode";
+const GPU_SELECTOR_KEY = "gamble.launcher.gpuSelector";
+const LAUNCHER_VERSION = "0.1.121";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 // Browser mocks are a development-only visual harness. Vite removes this branch
@@ -68,6 +70,8 @@ const state = {
   memory: defaultMemory(),
   username: defaultUsername(),
   javaArgs: defaultJavaArgs(),
+  graphicsMode: defaultGraphicsMode(),
+  gpuSelector: defaultGpuSelector(),
   antiScreenshare: defaultAntiScreenshare(),
   showAdvancedSettings: defaultAdvancedSettings(),
   animationsEnabled: defaultAnimationsEnabled(),
@@ -91,6 +95,7 @@ const state = {
   clientStatus: null,
   minecraftRunning: false,
   minecraftPid: null,
+  minecraftExit: null,
   popup: null,
   launchProgress: null,
   spotify: null,
@@ -140,6 +145,26 @@ function defaultMemory() {
 
 function defaultJavaArgs() {
   return readStorage("gamble.launcher.javaArgs");
+}
+
+function normalizeGraphicsMode(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["safe", "safe-graphics", "safe_graphics"].includes(normalized)) return "safe";
+  if (["software", "software-rendering", "software_rendering"].includes(normalized)) return "software";
+  return "automatic";
+}
+
+function defaultGraphicsMode() {
+  return normalizeGraphicsMode(readStorage(GRAPHICS_MODE_KEY, "automatic"));
+}
+
+function sanitizeGpuSelector(value) {
+  const selector = String(value || "").trim().slice(0, 128);
+  return /^[A-Za-z0-9._:!\-]*$/.test(selector) ? selector : selector.replace(/[^A-Za-z0-9._:!\-]/g, "");
+}
+
+function defaultGpuSelector() {
+  return sanitizeGpuSelector(readStorage(GPU_SELECTOR_KEY));
 }
 
 function defaultAntiScreenshare() {
@@ -352,10 +377,18 @@ async function mockInvoke(command, args = {}) {
   if (command === "launch_game") {
     state.minecraftRunning = !state.minecraftRunning;
     state.minecraftPid = state.minecraftRunning ? 4242 : null;
+    if (state.minecraftRunning) state.minecraftExit = null;
     if (!state.minecraftRunning) return "Minecraft stop signal sent.";
     return "Minecraft process started.";
   }
-  if (command === "minecraft_status") return { running: state.minecraftRunning, pid: state.minecraftPid };
+  if (command === "minecraft_status") {
+    return {
+      running: state.minecraftRunning,
+      pid: state.minecraftPid,
+      ...(state.minecraftExit || {}),
+      graphicsMode: state.graphicsMode
+    };
+  }
   return null;
 }
 
@@ -937,6 +970,28 @@ function settingsView(profile, selectedBuild) {
           </label>
         </div>
       </section>
+      <section class="identity-settings wide-field" aria-labelledby="graphics-settings-title">
+        <div>
+          <span class="eyebrow">Graphics safety</span>
+          <strong id="graphics-settings-title">Game rendering path</strong>
+          <small>Automatic keeps normal acceleration and applies the client’s AMD compatibility guard. Safe disables the risky threaded/ACO paths without forcing software rendering. Software is an emergency fallback and may be slow.</small>
+        </div>
+        <div class="identity-fields">
+          <label>
+            <span>Graphics mode</span>
+            <select data-field="graphicsMode">
+              <option value="automatic" ${state.graphicsMode === "automatic" ? "selected" : ""}>Automatic</option>
+              <option value="safe" ${state.graphicsMode === "safe" ? "selected" : ""}>Safe graphics</option>
+              <option value="software" ${state.graphicsMode === "software" ? "selected" : ""}>Software fallback</option>
+            </select>
+          </label>
+          <label>
+            <span>GPU selector (DRI_PRIME)</span>
+            <input data-field="gpuSelector" maxlength="128" value="${escapeAttr(state.gpuSelector)}" placeholder="Blank = default GPU" autocomplete="off" spellcheck="false">
+          </label>
+        </div>
+        <small class="setting-help">Examples: <code>1</code>, <code>1!</code>, or a Mesa PCI selector. Leave blank unless this computer has more than one GPU.</small>
+      </section>
       ${state.microsoft ? `
         <div class="setting-note">
           <span>Offline username</span>
@@ -1290,7 +1345,7 @@ function diagnosticsPanel() {
           <strong>${escapeHtml(check.label)}</strong>
           <span>${escapeHtml(check.detail)}</span>
         </article>
-      `).join("") : `<p class="empty">Run diagnostics to check folders, session files, Microsoft cache, Java, and latest launch log.</p>`}
+      `).join("") : `<p class="empty">Run diagnostics to check folders, session files, Microsoft cache, Java, GPU inventory, and the latest launch log.</p>`}
     </section>
     ${logView()}
   `;
@@ -1523,6 +1578,9 @@ async function setupLaunchProgressListener() {
 function knownLaunchMessage(error) {
   const text = publicMessage(error, "Minecraft could not launch.");
   const lower = text.toLowerCase();
+  if (lower.includes("amdgpu") || lower.includes("gpuvm") || lower.includes("gpu reset") || lower.includes("context is lost")) {
+    return "The graphics driver reported a GPU reset while starting Minecraft. Open Settings → Graphics safety and try Safe graphics; use Software fallback only if Safe graphics still crashes. The launcher will keep its UI alive and will not auto-restart the game.";
+  }
   if (lower.includes("update") || lower.includes("outdated")) return "Update the client or launcher, then launch again.";
   if (lower.includes("429") || lower.includes("rate limit") || lower.includes("too many requests")) {
     return "Microsoft or Minecraft auth is temporarily rate limited. Wait a minute, then launch again; the launcher will reuse cached Minecraft tokens after a successful sign-in.";
@@ -1684,12 +1742,27 @@ async function refreshMinecraftStatus(options = {}) {
     const status = await invoke("minecraft_status");
     const wasRunning = state.minecraftRunning;
     const oldPid = state.minecraftPid;
+    const oldExitKey = JSON.stringify(state.minecraftExit || null);
     state.minecraftRunning = Boolean(status?.running);
     state.minecraftPid = status?.pid || null;
+    state.minecraftExit = status?.message ? {
+      exitCode: status.exitCode ?? null,
+      crashed: Boolean(status.crashed),
+      gpuFault: Boolean(status.gpuFault),
+      message: String(status.message),
+      logPath: String(status.logPath || ""),
+      graphicsMode: String(status.graphicsMode || state.graphicsMode)
+    } : null;
     if (wasRunning && !state.minecraftRunning && options.logExit !== false) {
-      log("Minecraft is no longer running.");
+      if (state.minecraftExit?.gpuFault) {
+        log("Minecraft stopped after a graphics-driver reset or GPU context loss. The launcher stayed open and did not restart it; attach the launch log and GPU diagnostics to support.");
+      } else {
+        log(state.minecraftExit?.message || "Minecraft is no longer running.");
+      }
     }
-    const changed = wasRunning !== state.minecraftRunning || oldPid !== state.minecraftPid;
+    const changed = wasRunning !== state.minecraftRunning
+      || oldPid !== state.minecraftPid
+      || oldExitKey !== JSON.stringify(state.minecraftExit || null);
     if (options.render !== false && changed) render();
   } catch (error) {
     if (options.logError) log(`Process status failed: ${error.message || error}`);
@@ -2425,7 +2498,9 @@ app.addEventListener("click", async (event) => {
           memory: Number(state.memory) || 4,
           javaArgs: state.javaArgs,
           antiScreenshare: state.antiScreenshare,
-          clientDisplayName: state.clientDisplayName
+          clientDisplayName: state.clientDisplayName,
+          graphicsMode: state.graphicsMode,
+          gpuSelector: state.gpuSelector
         }
       });
       if (String(message).toLowerCase().includes("stop signal")) {
@@ -2434,6 +2509,7 @@ app.addEventListener("click", async (event) => {
       } else if (String(message).toLowerCase().includes("process started")) {
         state.minecraftRunning = true;
         state.minecraftPid = state.minecraftPid || null;
+        state.minecraftExit = null;
       }
       log(message);
       await refreshMinecraftStatus({ render: false, logExit: false });
@@ -2725,6 +2801,14 @@ app.addEventListener("change", async (event) => {
   if (field === "username") localStorage.setItem("gamble.launcher.username", state.username);
   if (field === "javaArgs") localStorage.setItem("gamble.launcher.javaArgs", state.javaArgs);
   if (field === "memory") localStorage.setItem("gamble.launcher.memory", state.memory);
+  if (field === "graphicsMode") {
+    state.graphicsMode = normalizeGraphicsMode(state.graphicsMode);
+    localStorage.setItem(GRAPHICS_MODE_KEY, state.graphicsMode);
+  }
+  if (field === "gpuSelector") {
+    state.gpuSelector = sanitizeGpuSelector(state.gpuSelector);
+    localStorage.setItem(GPU_SELECTOR_KEY, state.gpuSelector);
+  }
   if (field === "selectedProfile") {
     state.clientStatus = null;
     state.manifest = null;
@@ -2753,6 +2837,14 @@ app.addEventListener("input", (event) => {
   state[field] = event.target.value;
   if (field === "username") localStorage.setItem("gamble.launcher.username", state.username);
   if (field === "javaArgs") localStorage.setItem("gamble.launcher.javaArgs", state.javaArgs);
+  if (field === "graphicsMode") {
+    state.graphicsMode = normalizeGraphicsMode(state.graphicsMode);
+    localStorage.setItem(GRAPHICS_MODE_KEY, state.graphicsMode);
+  }
+  if (field === "gpuSelector") {
+    state.gpuSelector = sanitizeGpuSelector(state.gpuSelector);
+    localStorage.setItem(GPU_SELECTOR_KEY, state.gpuSelector);
+  }
   if (field === "launcherDisplayName" || field === "clientDisplayName") {
     const fallback = field === "launcherDisplayName" ? "Gamble Client Launcher" : "Gamble Client";
     state[field] = sanitizeDisplayName(event.target.value, fallback);
