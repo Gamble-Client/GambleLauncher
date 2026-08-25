@@ -19,7 +19,7 @@ const LAUNCHER_DISPLAY_NAME_KEY = "gamble.launcher.displayName";
 const CLIENT_DISPLAY_NAME_KEY = "gamble.client.displayName";
 const GRAPHICS_MODE_KEY = "gamble.launcher.graphicsMode";
 const GPU_SELECTOR_KEY = "gamble.launcher.gpuSelector";
-const LAUNCHER_VERSION = "0.1.124";
+const LAUNCHER_VERSION = "0.1.125";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 // Browser mocks are a development-only visual harness. Vite removes this branch
