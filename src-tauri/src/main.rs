@@ -1264,6 +1264,50 @@ fn graphics_device_report() -> String {
     }
 }
 
+fn host_has_amd_drm() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let root = Path::new("/sys/class/drm");
+        return fs::read_dir(root)
+            .ok()
+            .into_iter()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.strip_prefix("card").is_some_and(|suffix| {
+                            !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit())
+                        })
+                    })
+            })
+            .any(|card| {
+                let vendor = first_line_from_file(&card.join("device/vendor"));
+                let driver = fs::read_to_string(card.join("device/uevent"))
+                    .ok()
+                    .and_then(|contents| {
+                        contents.lines().find_map(|line| {
+                            line.strip_prefix("DRIVER=")
+                                .map(|value| value.trim().to_ascii_lowercase())
+                        })
+                    })
+                    .unwrap_or_default();
+                vendor.eq_ignore_ascii_case("0x1002") || driver == "amdgpu"
+            });
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+fn should_apply_amd_guard(graphics_mode: &str, has_amd_drm: bool) -> bool {
+    matches!(graphics_mode, "safe" | "software")
+        || (graphics_mode == DEFAULT_GRAPHICS_MODE && has_amd_drm)
+}
+
 fn graphics_environment_report() -> String {
     let kernel = first_line_from_file(Path::new("/proc/sys/kernel/osrelease"));
     let mut lines = vec![
@@ -1821,13 +1865,14 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         fs::write(
             &log_file,
             format!(
-                "Gamble Client Launcher {VERSION}\nGraphics mode: {graphics_mode}\nGPU selector: {}\n{}\n\n{}\n\n",
+                "Gamble Client Launcher {VERSION}\nGraphics mode: {graphics_mode}\nGPU selector: {}\n{}\n{}\n\n{}\n\n",
                 if gpu_selector.is_empty() {
                     "automatic"
                 } else {
                     gpu_selector.as_str()
                 },
                 graphics_environment_report(),
+                game_graphics_environment_report(&graphics_mode, &gpu_selector),
                 redacted_command(&command)
             ),
         )
@@ -1960,7 +2005,11 @@ fn apply_game_graphics_environment(command: &mut Command, graphics_mode: &str, g
         command.env("GAMBLE_DRI_PRIME", gpu_selector);
     }
 
-    if graphics_mode == "safe" || graphics_mode == "software" {
+    // These variables must be present before Java/LWJGL/Mesa starts. The
+    // client also records them, but setting them from a Java pre-launch hook
+    // is too late for Mesa's process initialization and did not prevent the
+    // RX 6800 GPUVM fault.
+    if should_apply_amd_guard(graphics_mode, host_has_amd_drm()) {
         command.env("MESA_GLTHREAD", "0");
         command.env(
             "AMD_DEBUG",
@@ -1971,6 +2020,31 @@ fn apply_game_graphics_environment(command: &mut Command, graphics_mode: &str, g
     if graphics_mode == "software" {
         command.env("LIBGL_ALWAYS_SOFTWARE", "1");
     }
+}
+
+fn game_graphics_environment_report(graphics_mode: &str, gpu_selector: &str) -> String {
+    let amd_guard = should_apply_amd_guard(graphics_mode, host_has_amd_drm());
+    format!(
+        "Game environment: GAMBLE_GRAPHICS_MODE={graphics_mode}, DRI_PRIME={}, AMD guard pre-JVM={}, MESA_GLTHREAD={}, AMD_DEBUG={}, AMD_FORCE_SHADER_USE_ACO={}, LIBGL_ALWAYS_SOFTWARE={}",
+        if gpu_selector.is_empty() {
+            "<unset>"
+        } else {
+            gpu_selector
+        },
+        if amd_guard { "enabled" } else { "disabled" },
+        if amd_guard { "0" } else { "<unset>" },
+        if amd_guard {
+            "usellvm,nodcc,nodpbb,nofmask,nooutoforder,nongg"
+        } else {
+            "<unset>"
+        },
+        if amd_guard { "0" } else { "<unset>" },
+        if graphics_mode == "software" {
+            "1"
+        } else {
+            "<unset>"
+        },
+    )
 }
 
 fn tail_of_launch_log() -> String {
@@ -3878,16 +3952,26 @@ fn open_url(url: String) -> Result<(), String> {
 fn configure_launcher_webkit_environment() {
     #[cfg(target_os = "linux")]
     {
-        let explicitly_disabled = env::var("GAMBLE_WEBKIT_SAFE_MODE")
+        let safe_mode = env::var("GAMBLE_WEBKIT_SAFE_MODE")
             .ok()
-            .is_some_and(|value| value.trim() == "0");
-        if !explicitly_disabled {
-            // Keep the launcher UI's WebKit renderer isolated from Minecraft.
-            // apply_game_graphics_environment removes this variable from the
-            // Java child before it is spawned.
+            .is_some_and(|value| webkit_safe_mode_enabled(&value));
+        if safe_mode {
+            // This is a launcher-UI-only fallback for systems where WebKit's
+            // DMA-BUF renderer itself is unstable. Keep it opt-in: setting it
+            // for every Linux launch makes the normal launcher UI needlessly
+            // slow and does not protect the Minecraft Java process.
             env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        } else {
+            env::remove_var("WEBKIT_DISABLE_DMABUF_RENDERER");
         }
     }
+}
+
+fn webkit_safe_mode_enabled(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 fn write_launcher_startup_diagnostics() {
@@ -3955,9 +4039,11 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Gamble Client Launcher");
-    app.run(|app_handle, _event| {
+    app.run(|app_handle, event| {
+        #[cfg(not(target_os = "windows"))]
+        let _ = &event;
         #[cfg(target_os = "windows")]
-        if matches!(_event, tauri::RunEvent::Ready) {
+        if matches!(event, tauri::RunEvent::Ready) {
             if let Some(window) = app_handle.get_webview_window("main") {
                 let app_url = tauri::Url::parse("https://tauri.localhost/index.html")
                     .expect("the embedded Windows app URL is valid");
@@ -5706,9 +5792,10 @@ mod tests {
         has_launcher_managed_enrollment, is_browser_url, is_expected_loader_fabric_metadata,
         is_required_mod_for_profile, java_feature_from_text, loader_core_sha256,
         microsoft_refresh_error, normalize_graphics_mode, quarantine_duplicate_loader_jars,
-        random_base64_url, replace_file_with_rollback, safe_file_name, validate_gpu_selector,
-        verify_fabric_mod_id, verify_fabric_mod_identity, write_private_file,
-        MANAGED_CLIENT_MOD_ID, MICROSOFT_REAUTH_REQUIRED,
+        random_base64_url, replace_file_with_rollback, safe_file_name, should_apply_amd_guard,
+        validate_gpu_selector, verify_fabric_mod_id, verify_fabric_mod_identity,
+        webkit_safe_mode_enabled, write_private_file, MANAGED_CLIENT_MOD_ID,
+        MICROSOFT_REAUTH_REQUIRED,
     };
     use serde_json::json;
     use std::{env, fs, fs::File, io::Cursor, io::Write, path::PathBuf};
@@ -5810,6 +5897,24 @@ mod tests {
         assert_eq!(validate_gpu_selector(" 1! ").unwrap(), "1!");
         assert!(validate_gpu_selector("1; rm -rf /").is_err());
         assert!(validate_gpu_selector(&"a".repeat(129)).is_err());
+    }
+
+    #[test]
+    fn automatic_amd_guard_is_enabled_before_java_starts() {
+        assert!(should_apply_amd_guard("automatic", true));
+        assert!(!should_apply_amd_guard("automatic", false));
+        assert!(should_apply_amd_guard("safe", false));
+        assert!(should_apply_amd_guard("software", false));
+    }
+
+    #[test]
+    fn webkit_safe_mode_is_explicitly_opt_in() {
+        assert!(webkit_safe_mode_enabled("1"));
+        assert!(webkit_safe_mode_enabled(" true "));
+        assert!(webkit_safe_mode_enabled("ON"));
+        assert!(!webkit_safe_mode_enabled("0"));
+        assert!(!webkit_safe_mode_enabled("automatic"));
+        assert!(!webkit_safe_mode_enabled(""));
     }
 
     #[cfg(unix)]

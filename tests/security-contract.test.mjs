@@ -271,7 +271,12 @@ test("graphics safety settings stay scoped to Minecraft and retain GPU crash evi
     assert.match(frontend, /data-field="graphicsMode"/);
     assert.match(frontend, /data-field="gpuSelector"/);
     assert.match(rust, /fn configure_launcher_webkit_environment\(\)/);
+    assert.match(rust, /fn webkit_safe_mode_enabled\(value: &str\)/);
+    assert.match(rust, /env::remove_var\("WEBKIT_DISABLE_DMABUF_RENDERER"\)/);
     assert.match(rust, /fn apply_game_graphics_environment\(/);
+    assert.match(rust, /fn host_has_amd_drm\(\)/);
+    assert.match(rust, /fn should_apply_amd_guard\(/);
+    assert.match(rust, /AMD guard pre-JVM/);
     assert.match(rust, /WEBKIT_DISABLE_DMABUF_RENDERER/);
     assert.match(rust, /command\.env_remove\(key\)/);
     assert.match(rust, /fn record_minecraft_exit\(/);

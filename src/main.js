@@ -19,7 +19,7 @@ const LAUNCHER_DISPLAY_NAME_KEY = "gamble.launcher.displayName";
 const CLIENT_DISPLAY_NAME_KEY = "gamble.client.displayName";
 const GRAPHICS_MODE_KEY = "gamble.launcher.graphicsMode";
 const GPU_SELECTOR_KEY = "gamble.launcher.gpuSelector";
-const LAUNCHER_VERSION = "0.1.121";
+const LAUNCHER_VERSION = "0.1.122";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 // Browser mocks are a development-only visual harness. Vite removes this branch
@@ -974,7 +974,7 @@ function settingsView(profile, selectedBuild) {
         <div>
           <span class="eyebrow">Graphics safety</span>
           <strong id="graphics-settings-title">Game rendering path</strong>
-          <small>Automatic keeps normal acceleration and applies the client’s AMD compatibility guard. Safe disables the risky threaded/ACO paths without forcing software rendering. Software is an emergency fallback and may be slow.</small>
+          <small>Automatic keeps the launcher UI hardware-accelerated and applies the client’s AMD compatibility guard before Minecraft starts. Safe disables the risky threaded/ACO paths without forcing software rendering. Software is an emergency fallback and may be slow.</small>
         </div>
         <div class="identity-fields">
           <label>
