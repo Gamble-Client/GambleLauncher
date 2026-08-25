@@ -183,7 +183,13 @@ public class Main {
         "libraries.minecraft.net",
         "resources.download.minecraft.net",
         "repo1.maven.org",
-        "repo.maven.apache.org"
+        "repo.maven.apache.org",
+        // Adoptium currently redirects managed Windows Java downloads through GitHub.
+        "api.adoptium.net",
+        "github.com",
+        "release-assets.githubusercontent.com",
+        "objects.githubusercontent.com",
+        "github-releases.githubusercontent.com"
     );
     private static final long MAX_LOADER_BYTES = 16L * 1024L * 1024L;
     private static final long MAX_FABRIC_METADATA_BYTES = 1024L * 1024L;
@@ -5253,7 +5259,10 @@ public class Main {
             && (uri.getPort() == -1 || uri.getPort() == 18765);
         boolean trustedHttps = "https".equals(scheme)
             && uri.getPort() == -1
-            && (TRUSTED_NETWORK_HOSTS.contains(host) || host.endsWith(".gamble-client.store"));
+            // Keep the Java fallback's trust boundary identical to the native
+            // launcher. A DNS-controlled or future dangling subdomain must not
+            // become an accepted artifact/update origin.
+            && TRUSTED_NETWORK_HOSTS.contains(host);
         if (uri.getUserInfo() != null || host.isEmpty() || (!localBridge && !trustedHttps)) {
             throw new IOException("Blocked untrusted network origin: " + host);
         }

@@ -76,6 +76,32 @@ const MAX_NATIVE_FILES: usize = 2048;
 const MAX_NATIVE_EXPANDED_BYTES: u64 = 512 * 1024 * 1024;
 const TEMURIN_21_WINDOWS_URL: &str =
     "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
+const TRUSTED_NETWORK_HOSTS: &[&str] = &[
+    "gamble-client.store",
+    "dash.gamble-client.store",
+    "login.microsoftonline.com",
+    "user.auth.xboxlive.com",
+    "xsts.auth.xboxlive.com",
+    "api.minecraftservices.com",
+    "api.modrinth.com",
+    "cdn.modrinth.com",
+    "meta.fabricmc.net",
+    "maven.fabricmc.net",
+    "launchermeta.mojang.com",
+    "piston-meta.mojang.com",
+    "piston-data.mojang.com",
+    "libraries.minecraft.net",
+    "resources.download.minecraft.net",
+    "repo1.maven.org",
+    "repo.maven.apache.org",
+    // Adoptium currently redirects managed Windows Java downloads through GitHub.
+    "api.adoptium.net",
+    "github.com",
+    "release-assets.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "github-releases.githubusercontent.com",
+];
+const MAX_DOWNLOAD_REDIRECTS: usize = 4;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const MINECRAFT_TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
@@ -131,7 +157,6 @@ const GRAPHICS_ENV_KEYS: &[&str] = &[
     "WEBKIT_DISABLE_DMABUF_RENDERER",
 ];
 const GPU_FAULT_MARKERS: &[&str] = &[
-    "amdgpu",
     "gpuvm",
     "page fault",
     "ring gfx timeout",
@@ -141,6 +166,8 @@ const GPU_FAULT_MARKERS: &[&str] = &[
     "context is lost",
     "gl_context_lost",
     "vk_error_device_lost",
+    "the cs has cancelled",
+    "device lost",
 ];
 
 #[derive(Clone, Serialize)]
@@ -532,6 +559,7 @@ fn launcher_api(input: ApiCommandBody) -> Result<serde_json::Value, String> {
 
     let client = reqwest::blocking::Client::builder()
         .user_agent(format!("GambleClientLauncher/{VERSION}"))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(error_text)?;
     let url = format!("{SITE_URL}{path}");
@@ -1304,9 +1332,65 @@ fn host_has_amd_drm() -> bool {
     }
 }
 
+fn host_has_non_amd_drm() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        let root = Path::new("/sys/class/drm");
+        return fs::read_dir(root)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.strip_prefix("card").is_some_and(|suffix| {
+                            !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit())
+                        })
+                    })
+            })
+            .any(|card| {
+                let vendor = first_line_from_file(&card.join("device/vendor"));
+                !vendor.is_empty()
+                    && vendor != "<unknown>"
+                    && !vendor.eq_ignore_ascii_case("0x1002")
+            });
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
 fn should_apply_amd_guard(graphics_mode: &str, has_amd_drm: bool) -> bool {
     matches!(graphics_mode, "safe" | "software")
         || (graphics_mode == DEFAULT_GRAPHICS_MODE && has_amd_drm)
+}
+
+fn launch_log_has_gpu_fault(contents: &str) -> bool {
+    let lower = contents.to_ascii_lowercase();
+    GPU_FAULT_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
+}
+
+fn resolve_gpu_selector(graphics_mode: &str, requested_selector: &str) -> (String, bool) {
+    if !requested_selector.is_empty()
+        || graphics_mode != DEFAULT_GRAPHICS_MODE
+        || !host_has_amd_drm()
+        || !host_has_non_amd_drm()
+        || !launch_log_has_gpu_fault(&tail_of_launch_log())
+    {
+        return (requested_selector.to_string(), false);
+    }
+
+    // Mesa's DRI_PRIME=1 selects the first alternate GPU. Only use it after a
+    // real fault and only when this machine exposes a non-AMD DRM device; on
+    // AMD-only hosts the explicit software mode remains the safe fallback.
+    ("1".to_string(), true)
 }
 
 fn graphics_environment_report() -> String {
@@ -1637,9 +1721,10 @@ fn download_launcher_update_blocking() -> Result<LauncherUpdateResult, String> {
         return Err("Launcher update download is not configured for this platform.".to_string());
     }
 
+    let update_url = trusted_launcher_update_url(&download.download_url)?;
     let safe_name = safe_file_name(&download.file_name)?;
     let target = downloads_folder().join(safe_name);
-    download_file(&download.download_url, &target)?;
+    download_file(update_url.as_str(), &target)?;
     verify_file(&target, download.size, &download.sha256)?;
     let target_text = display_path(&target);
     if let Some(parent) = target.parent() {
@@ -1738,7 +1823,9 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         .try_lock()
         .map_err(|_| "A launch operation is already in progress.".to_string())?;
     let graphics_mode = normalize_graphics_mode(&input.graphics_mode)?;
-    let gpu_selector = validate_gpu_selector(&input.gpu_selector)?;
+    let requested_gpu_selector = validate_gpu_selector(&input.gpu_selector)?;
+    let (gpu_selector, gpu_recovered) =
+        resolve_gpu_selector(&graphics_mode, &requested_gpu_selector);
     {
         let mut running = MINECRAFT_PROCESS.lock().map_err(error_text)?;
         if let Some(child) = running.as_mut() {
@@ -1866,11 +1953,16 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         fs::write(
             &log_file,
             format!(
-                "Gamble Client Launcher {VERSION}\nGraphics mode: {graphics_mode}\nGPU selector: {}\n{}\n{}\n\n{}\n\n",
+                "Gamble Client Launcher {VERSION}\nGraphics mode: {graphics_mode}\nGPU selector: {}\nGraphics recovery: {}\n{}\n{}\n\n{}\n\n",
                 if gpu_selector.is_empty() {
                     "automatic"
                 } else {
                     gpu_selector.as_str()
+                },
+                if gpu_recovered {
+                    "automatic AMD fault recovery selected alternate GPU (DRI_PRIME=1)"
+                } else {
+                    "not used"
                 },
                 graphics_environment_report(),
                 game_graphics_environment_report(&graphics_mode, &gpu_selector),
@@ -2066,10 +2158,7 @@ fn tail_of_launch_log() -> String {
 
 fn record_minecraft_exit(status: &ExitStatus) {
     let tail = tail_of_launch_log();
-    let lower = tail.to_ascii_lowercase();
-    let gpu_fault = GPU_FAULT_MARKERS
-        .iter()
-        .any(|marker| lower.contains(marker));
+    let gpu_fault = launch_log_has_gpu_fault(&tail);
     #[cfg(unix)]
     let signal = status.signal();
     #[cfg(not(unix))]
@@ -3364,8 +3453,9 @@ fn download_file_once(url: &str, path: &Path) -> Result<(), String> {
             .unwrap_or("download")
     ));
     let _ = fs::remove_file(&temp);
-    let response = http_client()?
-        .get(url)
+    let parsed_url = trusted_network_url(url)?;
+    let response = trusted_download_http_client()?
+        .get(parsed_url)
         .send()
         .map_err(error_text)?
         .error_for_status()
@@ -5609,8 +5699,66 @@ fn http_client() -> Result<reqwest::blocking::Client, String> {
         .user_agent(format!("GambleClientLauncher/{VERSION}"))
         .connect_timeout(Duration::from_secs(HTTP_CONNECT_TIMEOUT_SECONDS))
         .timeout(Duration::from_secs(HTTP_REQUEST_TIMEOUT_SECONDS))
+        // API calls include bearer tokens and must never move them to a redirect target.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(error_text)
+}
+
+fn trusted_download_http_client() -> Result<reqwest::blocking::Client, String> {
+    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= MAX_DOWNLOAD_REDIRECTS {
+            return attempt.stop();
+        }
+        if is_trusted_network_url(attempt.url()) {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    });
+    reqwest::blocking::Client::builder()
+        .user_agent(format!("GambleClientLauncher/{VERSION}"))
+        .connect_timeout(Duration::from_secs(HTTP_CONNECT_TIMEOUT_SECONDS))
+        .timeout(Duration::from_secs(HTTP_REQUEST_TIMEOUT_SECONDS))
+        .redirect(redirect_policy)
+        .build()
+        .map_err(error_text)
+}
+
+fn trusted_network_url(raw_url: &str) -> Result<reqwest::Url, String> {
+    let parsed =
+        reqwest::Url::parse(raw_url.trim()).map_err(|_| "Download URL is invalid.".to_string())?;
+    if !is_trusted_network_url(&parsed) {
+        return Err(format!(
+            "Download origin is not trusted: {}",
+            parsed.host_str().unwrap_or("unknown")
+        ));
+    }
+    Ok(parsed)
+}
+
+fn is_trusted_network_url(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url
+            .host_str()
+            .is_some_and(|host| TRUSTED_NETWORK_HOSTS.contains(&host))
+}
+
+fn trusted_launcher_update_url(raw_url: &str) -> Result<reqwest::Url, String> {
+    let parsed = trusted_network_url(raw_url)?;
+    let first_party = matches!(
+        parsed.host_str(),
+        Some("gamble-client.store" | "dash.gamble-client.store")
+    );
+    if !first_party {
+        return Err(
+            "Launcher updates must be downloaded from Gamble Client infrastructure.".to_string(),
+        );
+    }
+    Ok(parsed)
 }
 
 fn json_string(body: &serde_json::Value, key: &str) -> String {
@@ -5794,12 +5942,13 @@ fn open_external(target: &str) -> Result<(), String> {
 mod tests {
     use super::{
         has_launcher_managed_enrollment, is_browser_url, is_expected_loader_fabric_metadata,
-        is_required_mod_for_profile, java_feature_from_text, loader_core_sha256,
-        microsoft_refresh_error, normalize_graphics_mode, quarantine_duplicate_loader_jars,
-        random_base64_url, replace_file_with_rollback, replace_path_with_rollback, safe_file_name,
-        should_apply_amd_guard, validate_gpu_selector, verify_fabric_mod_id,
-        verify_fabric_mod_identity, webkit_safe_mode_enabled, write_private_file,
-        MANAGED_CLIENT_MOD_ID, MICROSOFT_REAUTH_REQUIRED,
+        is_required_mod_for_profile, java_feature_from_text, launch_log_has_gpu_fault,
+        loader_core_sha256, microsoft_refresh_error, normalize_graphics_mode,
+        quarantine_duplicate_loader_jars, random_base64_url, replace_file_with_rollback,
+        replace_path_with_rollback, safe_file_name, should_apply_amd_guard,
+        trusted_launcher_update_url, trusted_network_url, validate_gpu_selector,
+        verify_fabric_mod_id, verify_fabric_mod_identity, webkit_safe_mode_enabled,
+        write_private_file, MANAGED_CLIENT_MOD_ID, MICROSOFT_REAUTH_REQUIRED,
     };
     use serde_json::json;
     use std::{env, fs, fs::File, io::Cursor, io::Write, path::PathBuf};
@@ -5816,6 +5965,42 @@ mod tests {
         ));
         assert!(!is_browser_url("/home/player/.gambleclient"));
         assert!(!is_browser_url("javascript:alert(1)"));
+    }
+
+    #[test]
+    fn network_downloads_require_known_https_origins_without_credentials_or_ports() {
+        assert!(trusted_network_url("https://meta.fabricmc.net/v2/versions/loader").is_ok());
+        assert!(trusted_network_url("https://api.adoptium.net/v3/binary/latest/21").is_ok());
+        assert!(
+            trusted_network_url("https://release-assets.githubusercontent.com/file.zip").is_ok()
+        );
+        for value in [
+            "http://meta.fabricmc.net/file",
+            "https://evil.example/file",
+            "https://user:password@meta.fabricmc.net/file",
+            "https://meta.fabricmc.net:443/file",
+        ] {
+            assert!(
+                trusted_network_url(value).is_err(),
+                "{value} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn launcher_updates_are_first_party_only() {
+        assert!(trusted_launcher_update_url(
+            "https://gamble-client.store/api/launcher/download/windows"
+        )
+        .is_ok());
+        assert!(trusted_launcher_update_url(
+            "https://dash.gamble-client.store/releases/launcher.jar"
+        )
+        .is_ok());
+        assert!(
+            trusted_launcher_update_url("https://github.com/example/launcher/releases/latest")
+                .is_err()
+        );
     }
 
     #[test]
@@ -5909,6 +6094,19 @@ mod tests {
         assert!(!should_apply_amd_guard("automatic", false));
         assert!(should_apply_amd_guard("safe", false));
         assert!(should_apply_amd_guard("software", false));
+    }
+
+    #[test]
+    fn gpu_fault_detection_ignores_normal_amd_device_inventory() {
+        assert!(!launch_log_has_gpu_fault(
+            "GPU devices: card2: vendor=0x1002, driver=amdgpu\n"
+        ));
+        assert!(launch_log_has_gpu_fault(
+            "amdgpu: [gfxhub] page fault\namdgpu: ring gfx timeout\n"
+        ));
+        assert!(launch_log_has_gpu_fault(
+            "The CS has cancelled because the context is lost."
+        ));
     }
 
     #[test]
