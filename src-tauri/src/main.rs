@@ -5726,8 +5726,12 @@ fn trusted_download_http_client() -> Result<reqwest::blocking::Client, String> {
 }
 
 fn trusted_network_url(raw_url: &str) -> Result<reqwest::Url, String> {
+    let raw_url = raw_url.trim();
+    if raw_url_has_explicit_port(raw_url) {
+        return Err("Download URL must not specify a port.".to_string());
+    }
     let parsed =
-        reqwest::Url::parse(raw_url.trim()).map_err(|_| "Download URL is invalid.".to_string())?;
+        reqwest::Url::parse(raw_url).map_err(|_| "Download URL is invalid.".to_string())?;
     if !is_trusted_network_url(&parsed) {
         return Err(format!(
             "Download origin is not trusted: {}",
@@ -5735,6 +5739,25 @@ fn trusted_network_url(raw_url: &str) -> Result<reqwest::Url, String> {
         ));
     }
     Ok(parsed)
+}
+
+fn raw_url_has_explicit_port(raw_url: &str) -> bool {
+    let Some((_, authority_and_path)) = raw_url.split_once("://") else {
+        return false;
+    };
+    let authority = authority_and_path
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("");
+    let host_port = authority
+        .rsplit_once('@')
+        .map(|(_, host_port)| host_port)
+        .unwrap_or(authority);
+
+    if let Some(end) = host_port.find(']') {
+        return host_port[end + 1..].starts_with(':');
+    }
+    host_port.contains(':')
 }
 
 fn is_trusted_network_url(url: &reqwest::Url) -> bool {
