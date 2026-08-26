@@ -3457,10 +3457,25 @@ fn download_file_once(url: &str, path: &Path) -> Result<(), String> {
     ));
     let _ = fs::remove_file(&temp);
     let parsed_url = trusted_network_url(url)?;
-    let response = trusted_download_http_client()?
-        .get(parsed_url)
-        .send()
-        .map_err(error_text)?
+    let request_urls = if is_first_party_backend_url(&parsed_url) {
+        first_party_request_urls(url)?
+    } else {
+        vec![parsed_url]
+    };
+    let client = trusted_download_http_client()?;
+    let mut last_kind = "network request failed";
+    let mut response = None;
+    for request_url in request_urls {
+        match client.get(request_url).send() {
+            Ok(value) => {
+                response = Some(value);
+                break;
+            }
+            Err(error) => last_kind = network_error_kind(&error),
+        }
+    }
+    let response = response
+        .ok_or_else(|| format!("Could not reach the download service. ({last_kind})"))?
         .error_for_status()
         .map_err(error_text)?;
     if response
