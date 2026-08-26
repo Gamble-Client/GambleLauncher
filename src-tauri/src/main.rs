@@ -5462,7 +5462,7 @@ fn send_first_party_request<F>(
     build_request: F,
 ) -> Result<reqwest::blocking::Response, String>
 where
-    F: Fn(&reqwest::blocking::Client, &reqwest::Url) -> reqwest::blocking::RequestBuilder,
+    F: Fn(&reqwest::blocking::Client, reqwest::Url) -> reqwest::blocking::RequestBuilder,
 {
     let urls = first_party_request_urls(raw_url)?;
     let client = http_client()?;
@@ -5470,7 +5470,7 @@ where
 
     for (origin_index, url) in urls.iter().enumerate() {
         for attempt in 0..HTTP_API_ATTEMPTS {
-            match build_request(&client, url).send() {
+            match build_request(&client, url.clone()).send() {
                 Ok(response) => return Ok(response),
                 Err(error) => {
                     last_kind = network_error_kind(&error);
