@@ -58,8 +58,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          & $env:LAUNCHER_EXE --network-self-test
-          if ($LASTEXITCODE -ne 0) { throw "The public Windows launcher's network self-test failed." }
+          # Release builds use the Windows GUI subsystem; wait on the process
+          # object so this check reads the executable's real exit code.
+          $selfTest = Start-Process -FilePath $env:LAUNCHER_EXE -ArgumentList "--network-self-test" -Wait -PassThru
+          if ($selfTest.ExitCode -ne 0) { throw "The public Windows launcher's network self-test failed with exit code $($selfTest.ExitCode)." }
 
       - name: Launch and reject a blank WebView
         shell: pwsh
