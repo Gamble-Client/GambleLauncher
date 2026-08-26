@@ -1,6 +1,6 @@
 [package]
 name = "gamble-client-launcher"
-version = "0.1.127"
+version = "0.1.128"
 description = "Gamble Client Launcher"
 authors = ["Gamble Client"]
 edition = "2021"
