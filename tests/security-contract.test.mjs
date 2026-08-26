@@ -153,6 +153,11 @@ test("native production assets use relative URLs inside the embedded WebView", a
     assert.equal(packageJson.scripts.build, "vite build --base ./");
 });
 
+test("native sponsor media is allowed by the embedded WebView policy", async () => {
+    const config = JSON.parse(await source("src-tauri/tauri.conf.json"));
+    assert.match(config.app.security.csp, /media-src 'self' https:\/\/gambleclient\.org https:\/\/\*\.gambleclient\.org/);
+});
+
 test("the native window retries embedded navigation only after the Windows event loop is ready", async () => {
     const rust = await source("src-tauri/src/main.rs");
 
