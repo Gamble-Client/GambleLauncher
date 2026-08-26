@@ -19,7 +19,6 @@ import java.util.logging.Logger;
 public final class FxLauncher {
     private static final Set<String> SELF_TEST_HOSTS = Set.of(
         "gambleclient.org",
-        "gamble-client.store",
         "launchermeta.mojang.com",
         "meta.fabricmc.net",
         "resources.download.minecraft.net"
@@ -135,8 +134,7 @@ public final class FxLauncher {
                 || uri.getPort() != -1
                 || uri.getUserInfo() != null
                 || (!SELF_TEST_HOSTS.contains(host)
-                    && !host.endsWith(".gambleclient.org")
-                    && !host.endsWith(".gamble-client.store"))) {
+                    && !host.endsWith(".gambleclient.org"))) {
                 throw new IOException("Self-test URL is not trusted.");
             }
             HttpURLConnection connection = (HttpURLConnection) uri.toURL().openConnection();

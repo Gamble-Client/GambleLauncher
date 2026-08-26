@@ -79,8 +79,6 @@ const TEMURIN_21_WINDOWS_URL: &str =
 const TRUSTED_NETWORK_HOSTS: &[&str] = &[
     "gambleclient.org",
     "dash.gambleclient.org",
-    "gamble-client.store",
-    "dash.gamble-client.store",
     "login.microsoftonline.com",
     "user.auth.xboxlive.com",
     "xsts.auth.xboxlive.com",
@@ -4026,10 +4024,6 @@ fn open_url(url: String) -> Result<(), String> {
         "dash.gambleclient.org",
         "admin.gambleclient.org",
         "profile.gambleclient.org",
-        "gamble-client.store",
-        "dash.gamble-client.store",
-        "admin.gamble-client.store",
-        "profile.gamble-client.store",
         "discord.gg",
         "login.microsoftonline.com",
         "www.microsoft.com",
@@ -5780,7 +5774,7 @@ fn trusted_launcher_update_url(raw_url: &str) -> Result<reqwest::Url, String> {
     let parsed = trusted_network_url(raw_url)?;
     let first_party = matches!(
         parsed.host_str(),
-        Some("gambleclient.org" | "dash.gambleclient.org" | "gamble-client.store" | "dash.gamble-client.store")
+        Some("gambleclient.org" | "dash.gambleclient.org")
     );
     if !first_party {
         return Err(
@@ -6259,9 +6253,9 @@ mod tests {
             random_base64_url(24)
         ));
         fs::create_dir_all(&root).unwrap();
-        let target = root.join("Gamble Client Launcher_0.1.126_x64-setup.exe");
-        let staging = root.join("Gamble Client Launcher_0.1.126_x64-setup.exe.part");
-        let backup = root.join("Gamble Client Launcher_0.1.126_x64-setup.download.previous");
+        let target = root.join("Gamble Client Launcher_0.1.127_x64-setup.exe");
+        let staging = root.join("Gamble Client Launcher_0.1.127_x64-setup.exe.part");
+        let backup = root.join("Gamble Client Launcher_0.1.127_x64-setup.download.previous");
         fs::write(&target, b"old installer").unwrap();
         fs::write(&staging, b"new installer").unwrap();
 

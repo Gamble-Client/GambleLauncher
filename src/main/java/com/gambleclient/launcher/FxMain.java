@@ -1439,8 +1439,7 @@ public class FxMain extends Application {
             URI uri = URI.create(text.startsWith("http://") || text.startsWith("https://") ? text : base.replaceAll("/+$", "") + (text.startsWith("/") ? text : "/" + text));
             String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
             if (!"https".equalsIgnoreCase(uri.getScheme())
-                || (!host.equals("gambleclient.org") && !host.endsWith(".gambleclient.org")
-                    && !host.equals("gamble-client.store") && !host.endsWith(".gamble-client.store"))
+                || (!host.equals("gambleclient.org") && !host.endsWith(".gambleclient.org"))
                 || uri.getUserInfo() != null || uri.getPort() != -1) {
                 throw new IllegalArgumentException("Sponsor media host is not allowed.");
             }
@@ -2501,10 +2500,6 @@ public class FxMain extends Application {
                 "dash.gambleclient.org",
                 "admin.gambleclient.org",
                 "profile.gambleclient.org",
-                "gamble-client.store",
-                "dash.gamble-client.store",
-                "admin.gamble-client.store",
-                "profile.gamble-client.store",
                 "login.microsoftonline.com",
                 "microsoft.com",
                 "www.microsoft.com",

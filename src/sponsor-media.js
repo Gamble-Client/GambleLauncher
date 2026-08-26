@@ -9,9 +9,7 @@ export function resolveSponsorMediaUrl(value, site = DEFAULT_SITE) {
     const resolved = new URL(raw, base);
     const host = resolved.hostname.toLowerCase();
     const allowedHost = host === "gambleclient.org"
-      || host.endsWith(".gambleclient.org")
-      || host === "gamble-client.store"
-      || host.endsWith(".gamble-client.store");
+      || host.endsWith(".gambleclient.org");
     if (resolved.protocol !== "https:" || !allowedHost || resolved.username || resolved.password || resolved.port) {
       return "";
     }

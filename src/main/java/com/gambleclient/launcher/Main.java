@@ -132,7 +132,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.126";
+    private static final String LAUNCHER_VERSION = "0.1.127";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -169,8 +169,6 @@ public class Main {
     private static final Set<String> TRUSTED_NETWORK_HOSTS = Set.of(
         "gambleclient.org",
         "dash.gambleclient.org",
-        "gamble-client.store",
-        "dash.gamble-client.store",
         "login.microsoftonline.com",
         "user.auth.xboxlive.com",
         "xsts.auth.xboxlive.com",
@@ -6654,10 +6652,6 @@ public class Main {
                 "dash.gambleclient.org",
                 "admin.gambleclient.org",
                 "profile.gambleclient.org",
-                "gamble-client.store",
-                "dash.gamble-client.store",
-                "admin.gamble-client.store",
-                "profile.gamble-client.store",
                 "login.microsoftonline.com",
                 "microsoft.com",
                 "www.microsoft.com",
