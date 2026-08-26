@@ -6480,9 +6480,9 @@ mod tests {
             random_base64_url(24)
         ));
         fs::create_dir_all(&root).unwrap();
-        let target = root.join("Gamble Client Launcher_0.1.129_x64-setup.exe");
-        let staging = root.join("Gamble Client Launcher_0.1.129_x64-setup.exe.part");
-        let backup = root.join("Gamble Client Launcher_0.1.129_x64-setup.download.previous");
+        let target = root.join("Gamble Client Launcher_0.1.130_x64-setup.exe");
+        let staging = root.join("Gamble Client Launcher_0.1.130_x64-setup.exe.part");
+        let backup = root.join("Gamble Client Launcher_0.1.130_x64-setup.download.previous");
         fs::write(&target, b"old installer").unwrap();
         fs::write(&staging, b"new installer").unwrap();
 
