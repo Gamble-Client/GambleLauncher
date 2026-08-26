@@ -124,6 +124,8 @@ test("production launcher UI omits owner-specific preview data and sanitizes vis
     assert.doesNotMatch(frontend, /\/home\/theac|BaseToucher|8667ba71b85a4004af54457a9734eed7|preview-token/);
     assert.doesNotMatch(java, /BaseToucher/);
     assert.match(frontend, /function publicMessage\(/);
+    assert.match(frontend, /error sending request/);
+    assert.match(frontend, /Could not reach the Gamble Client backend/);
     assert.doesNotMatch(frontend, /log\(`Managed root:/);
     assert.match(java, /diagnosticLog\("  Full command:/);
     assert.doesNotMatch(java, /log\("  Full command:/);

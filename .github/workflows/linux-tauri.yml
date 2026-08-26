@@ -72,6 +72,9 @@ jobs:
           RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/src/gamble-client-launcher --remap-path-prefix=/home/runner/.cargo=/rust/cargo
         run: npm run tauri -- build --bundles rpm,deb
 
+      - name: Test packaged Linux network path
+        run: ./src-tauri/target/release/gamble-client-launcher --network-self-test
+
       - name: Install upload tooling
         run: npm install --no-save --package-lock=false --ignore-scripts wrangler@4
 

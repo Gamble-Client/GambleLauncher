@@ -54,6 +54,13 @@ jobs:
           }
           Write-Host "Windows installer overwrite passed: $($before.Length) -> $($after.Length) bytes."
 
+      - name: Exercise packaged launcher network path
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & $env:LAUNCHER_EXE --network-self-test
+          if ($LASTEXITCODE -ne 0) { throw "The public Windows launcher's network self-test failed." }
+
       - name: Launch and reject a blank WebView
         shell: pwsh
         run: |

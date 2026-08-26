@@ -1561,6 +1561,10 @@ function showPopup(title, message, kind = "notice") {
 function publicMessage(value, fallback = "The launcher could not complete that action.") {
   let text = String(value?.message || value || "").replaceAll("\u0000", " ").trim();
   if (!text) return fallback;
+  const lower = text.toLowerCase();
+  if (lower.includes("error sending request")) {
+    return "Could not reach the Gamble Client backend. Check your internet connection, VPN/firewall, and system clock, then try again.";
+  }
   text = text
     .replace(/([?&](?:token|code|ticket|session|signature)=)[^&\s]+/gi, "$1[private]")
     .replace(/https?:\/\/[^\s<>'\"]+/gi, "[secure link]")

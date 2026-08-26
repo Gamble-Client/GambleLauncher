@@ -55,6 +55,8 @@ const MICROSOFT_REAUTH_REQUIRED: &str =
     "Microsoft sign-in expired or was revoked. Reconnect Microsoft to continue.";
 const HTTP_CONNECT_TIMEOUT_SECONDS: u64 = 15;
 const HTTP_REQUEST_TIMEOUT_SECONDS: u64 = 300;
+const HTTP_API_ATTEMPTS: usize = 2;
+const HTTP_RETRY_DELAY_MILLIS: u64 = 350;
 const HTTP_DOWNLOAD_ATTEMPTS: usize = 3;
 const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_MANAGED_CLIENT_BYTES: u64 = 64 * 1024 * 1024;
@@ -557,25 +559,26 @@ fn launcher_api(input: ApiCommandBody) -> Result<serde_json::Value, String> {
         return Err("Launcher API path is not allowed.".to_string());
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .user_agent(format!("GambleClientLauncher/{VERSION}"))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(error_text)?;
     let url = format!("{SITE_URL}{path}");
-    let mut request = match method.as_str() {
-        "GET" => client.get(&url),
-        "POST" => client.post(&url),
-        _ => return Err("Launcher API method is not allowed.".to_string()),
-    };
-    if !input.token.trim().is_empty() {
-        request = request.bearer_auth(input.token.trim());
+    if !matches!(method.as_str(), "GET" | "POST") {
+        return Err("Launcher API method is not allowed.".to_string());
     }
-    if method == "POST" {
-        request = request.json(&input.body);
-    }
-
-    let response = request.send().map_err(error_text)?;
+    let token = input.token.trim().to_string();
+    let body = input.body.clone();
+    let response = send_first_party_request(&url, |client, target| {
+        let mut request = match method.as_str() {
+            "GET" => client.get(target),
+            "POST" => client.post(target),
+            _ => unreachable!("method was checked above"),
+        };
+        if !token.is_empty() {
+            request = request.bearer_auth(&token);
+        }
+        if method == "POST" {
+            request = request.json(&body);
+        }
+        request
+    })?;
     let status = response.status();
     let text = response.text().map_err(error_text)?;
     let body = if text.trim().is_empty() {
@@ -4088,7 +4091,37 @@ fn write_launcher_startup_diagnostics() {
     }
 }
 
+fn network_self_test() -> Result<(), String> {
+    for (label, path) in [
+        ("Backend health", "/api/health"),
+        ("Launcher metadata", "/api/launcher/version"),
+        ("Standalone-loader metadata", "/api/standalone/version"),
+    ] {
+        let url = format!("{SITE_URL}{path}");
+        let response = send_first_party_request(&url, |client, target| client.get(target))?;
+        let status = response.status();
+        let _ = response.text().map_err(error_text)?;
+        if !status.is_success() {
+            return Err(format!("{label} returned HTTP {}.", status.as_u16()));
+        }
+        println!("OK {label} - HTTP {}", status.as_u16());
+    }
+    Ok(())
+}
+
 fn main() {
+    if env::args()
+        .skip(1)
+        .any(|argument| argument == "--network-self-test")
+    {
+        match network_self_test() {
+            Ok(()) => std::process::exit(0),
+            Err(error) => {
+                eprintln!("Network self-test failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
     configure_launcher_webkit_environment();
     write_launcher_startup_diagnostics();
     let app = tauri::Builder::default()
@@ -4543,12 +4576,11 @@ fn ensure_loader_jar(profile: &str, token: &str) -> Result<(), String> {
             },
             "launcherManaged": true
         });
-        let response = http_client()?
-            .post(format!("{SITE_URL}/api/standalone/loader"))
-            .bearer_auth(token.trim())
-            .json(&body)
-            .send()
-            .map_err(error_text)?;
+        let loader_url = format!("{SITE_URL}/api/standalone/loader");
+        let launcher_token = token.trim().to_string();
+        let response = send_first_party_request(&loader_url, |client, target| {
+            client.post(target).bearer_auth(&launcher_token).json(&body)
+        })?;
         let status = response.status();
         if !status.is_success() {
             let message = response.text().unwrap_or_default();
@@ -5425,16 +5457,114 @@ fn request_minecraft_profile(minecraft_access_token: &str) -> Result<MinecraftPr
     })
 }
 
+fn send_first_party_request<F>(
+    raw_url: &str,
+    build_request: F,
+) -> Result<reqwest::blocking::Response, String>
+where
+    F: Fn(&reqwest::blocking::Client, &reqwest::Url) -> reqwest::blocking::RequestBuilder,
+{
+    let urls = first_party_request_urls(raw_url)?;
+    let client = http_client()?;
+    let mut last_kind = "network request failed";
+
+    for (origin_index, url) in urls.iter().enumerate() {
+        for attempt in 0..HTTP_API_ATTEMPTS {
+            match build_request(&client, url).send() {
+                Ok(response) => return Ok(response),
+                Err(error) => {
+                    last_kind = network_error_kind(&error);
+                    if attempt + 1 < HTTP_API_ATTEMPTS {
+                        let delay = HTTP_RETRY_DELAY_MILLIS.saturating_mul((attempt + 1) as u64);
+                        std::thread::sleep(Duration::from_millis(delay));
+                    }
+                }
+            }
+        }
+
+        if origin_index + 1 < urls.len() {
+            std::thread::sleep(Duration::from_millis(HTTP_RETRY_DELAY_MILLIS));
+        }
+    }
+
+    Err(format!(
+        "Could not reach the Gamble Client backend. Check your internet connection, VPN/firewall, and system clock, then try again. ({last_kind})"
+    ))
+}
+
+fn first_party_request_urls(raw_url: &str) -> Result<Vec<reqwest::Url>, String> {
+    let parsed = reqwest::Url::parse(raw_url.trim())
+        .map_err(|_| "Backend request URL is invalid.".to_string())?;
+    if !is_first_party_backend_url(&parsed) {
+        return Err("Backend request URL is not a trusted Gamble Client origin.".to_string());
+    }
+
+    let mut urls = vec![parsed.clone()];
+    let alternate_host = if parsed.host_str() == Some("gambleclient.org") {
+        "dash.gambleclient.org"
+    } else {
+        "gambleclient.org"
+    };
+    let mut alternate = parsed;
+    alternate
+        .set_host(Some(alternate_host))
+        .map_err(|_| "Backend request URL is invalid.".to_string())?;
+    urls.push(alternate);
+    Ok(urls)
+}
+
+fn is_first_party_backend_url(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && matches!(
+            url.host_str(),
+            Some("gambleclient.org" | "dash.gambleclient.org")
+        )
+}
+
+fn network_error_kind(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "request timed out"
+    } else if error.is_connect() {
+        "connection or TLS handshake failed"
+    } else if error.is_request() {
+        "request could not be created"
+    } else {
+        "network request failed"
+    }
+}
+
 fn post_json(
     url: &str,
     body: &serde_json::Value,
     bearer_token: &str,
 ) -> Result<serde_json::Value, String> {
-    let mut request = http_client()?.post(url).json(body);
-    if !bearer_token.trim().is_empty() {
-        request = request.bearer_auth(bearer_token.trim());
-    }
-    let response = request.send().map_err(error_text)?;
+    let parsed_url = reqwest::Url::parse(url.trim())
+        .map_err(|_| "Network request URL is invalid.".to_string())?;
+    let bearer = bearer_token.trim().to_string();
+    let response = if is_first_party_backend_url(&parsed_url) {
+        send_first_party_request(url, |client, target| {
+            let mut request = client.post(target).json(body);
+            if !bearer.is_empty() {
+                request = request.bearer_auth(&bearer);
+            }
+            request
+        })?
+    } else {
+        let client = http_client()?;
+        let mut request = client.post(parsed_url).json(body);
+        if !bearer.is_empty() {
+            request = request.bearer_auth(&bearer);
+        }
+        request.send().map_err(|error| {
+            format!(
+                "Could not reach the remote authentication service. ({})",
+                network_error_kind(&error)
+            )
+        })?
+    };
     let status = response.status();
     let text = response.text().map_err(error_text)?;
     let body = if text.trim().is_empty() {
@@ -5506,23 +5636,29 @@ fn fetch_client_manifest(build: &str, token: &str) -> Result<ManifestResponse, S
 }
 
 fn fetch_launcher_version_info() -> Result<LauncherVersionResponse, String> {
-    http_client()?
-        .get(format!("{SITE_URL}/api/launcher/version"))
-        .send()
-        .map_err(error_text)?
-        .error_for_status()
-        .map_err(error_text)?
+    let url = format!("{SITE_URL}/api/launcher/version");
+    let response = send_first_party_request(&url, |client, target| client.get(target))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Gamble Client launcher update metadata returned HTTP {}.",
+            response.status().as_u16()
+        ));
+    }
+    response
         .json::<LauncherVersionResponse>()
         .map_err(error_text)
 }
 
 fn fetch_standalone_loader_version() -> Result<String, String> {
-    let response = http_client()?
-        .get(format!("{SITE_URL}/api/standalone/version"))
-        .send()
-        .map_err(error_text)?
-        .error_for_status()
-        .map_err(error_text)?
+    let url = format!("{SITE_URL}/api/standalone/version");
+    let response = send_first_party_request(&url, |client, target| client.get(target))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Gamble Client standalone-loader metadata returned HTTP {}.",
+            response.status().as_u16()
+        ));
+    }
+    let response = response
         .json::<StandaloneLoaderVersionResponse>()
         .map_err(error_text)?;
     if response.version.trim().is_empty() {
@@ -5916,7 +6052,12 @@ fn display_path(path: &Path) -> String {
 }
 
 fn error_text<E: std::fmt::Display>(error: E) -> String {
-    error.to_string()
+    let text = error.to_string();
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("error sending request") {
+        return "Could not reach the network service. Check your internet connection, VPN/firewall, and system clock, then try again.".to_string();
+    }
+    text
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -5964,14 +6105,15 @@ fn open_external(target: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        has_launcher_managed_enrollment, is_browser_url, is_expected_loader_fabric_metadata,
-        is_required_mod_for_profile, java_feature_from_text, launch_log_has_gpu_fault,
-        loader_core_sha256, microsoft_refresh_error, normalize_graphics_mode,
-        quarantine_duplicate_loader_jars, random_base64_url, replace_file_with_rollback,
-        replace_path_with_rollback, safe_file_name, should_apply_amd_guard,
-        trusted_launcher_update_url, trusted_network_url, validate_gpu_selector,
-        verify_fabric_mod_id, verify_fabric_mod_identity, webkit_safe_mode_enabled,
-        write_private_file, MANAGED_CLIENT_MOD_ID, MICROSOFT_REAUTH_REQUIRED,
+        first_party_request_urls, has_launcher_managed_enrollment, is_browser_url,
+        is_expected_loader_fabric_metadata, is_required_mod_for_profile, java_feature_from_text,
+        launch_log_has_gpu_fault, loader_core_sha256, microsoft_refresh_error,
+        normalize_graphics_mode, quarantine_duplicate_loader_jars, random_base64_url,
+        replace_file_with_rollback, replace_path_with_rollback, safe_file_name,
+        should_apply_amd_guard, trusted_launcher_update_url, trusted_network_url,
+        validate_gpu_selector, verify_fabric_mod_id, verify_fabric_mod_identity,
+        webkit_safe_mode_enabled, write_private_file, MANAGED_CLIENT_MOD_ID,
+        MICROSOFT_REAUTH_REQUIRED,
     };
     use serde_json::json;
     use std::{env, fs, fs::File, io::Cursor, io::Write, path::PathBuf};
@@ -6016,14 +6158,39 @@ mod tests {
             "https://gambleclient.org/api/launcher/download/windows"
         )
         .is_ok());
-        assert!(trusted_launcher_update_url(
-            "https://dash.gambleclient.org/releases/launcher.jar"
-        )
-        .is_ok());
+        assert!(
+            trusted_launcher_update_url("https://dash.gambleclient.org/releases/launcher.jar")
+                .is_ok()
+        );
         assert!(
             trusted_launcher_update_url("https://github.com/example/launcher/releases/latest")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn backend_requests_have_a_first_party_origin_fallback_without_changing_private_query_data() {
+        let urls = first_party_request_urls(
+            "https://gambleclient.org/api/launcher/poll?code=private-code&state=one",
+        )
+        .unwrap();
+        assert_eq!(urls.len(), 2);
+        assert_eq!(urls[0].host_str(), Some("gambleclient.org"));
+        assert_eq!(urls[1].host_str(), Some("dash.gambleclient.org"));
+        assert_eq!(urls[0].path(), "/api/launcher/poll");
+        assert_eq!(urls[1].path(), "/api/launcher/poll");
+        assert_eq!(urls[0].query(), urls[1].query());
+        assert!(first_party_request_urls("https://evil.example/api/launcher/poll").is_err());
+        assert!(first_party_request_urls("http://gambleclient.org/api/launcher/poll").is_err());
+    }
+
+    #[test]
+    fn raw_reqwest_transport_errors_are_not_shown_to_launcher_users() {
+        let message = super::error_text(
+            "error sending request for url (https://gambleclient.org/api/launcher/session): connection failed",
+        );
+        assert!(message.starts_with("Could not reach the network service."));
+        assert!(!message.contains("gambleclient.org"));
     }
 
     #[test]
