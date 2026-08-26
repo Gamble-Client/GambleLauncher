@@ -2147,7 +2147,12 @@ async function startMicrosoftSignIn() {
     render();
     return result.account;
   } catch (error) {
-    state.microsoftError = String(error?.message || error);
+    const message = String(error?.message || error);
+    if (message.toLowerCase().includes("microsoft sign-in cancelled")) {
+      log("Microsoft sign-in cancelled.");
+      return null;
+    }
+    state.microsoftError = message;
     log(`Microsoft sign-in failed: ${state.microsoftError}`);
     showPopup("Microsoft sign-in failed", microsoftAuthMessage(state.microsoftError), "account");
     render();
@@ -2497,7 +2502,8 @@ app.addEventListener("click", async (event) => {
         return;
       }
       if (!state.minecraftRunning && !selectedAccount) {
-        showPopup("Microsoft account needed", "Link a Microsoft account before launching this profile.", "account");
+        state.popup = null;
+        state.launchProgress = null;
         setBusy(false);
         await startMicrosoftSignIn();
         return;
@@ -2623,8 +2629,10 @@ app.addEventListener("click", async (event) => {
     if (url) await invoke("open_url", { url }).catch((error) => log(`Open failed: ${error}`));
   } else if (action === "cancel-microsoft") {
     state.microsoftPollCancelled = true;
+    await invoke("cancel_microsoft_browser_sign_in").catch((error) => log(`Microsoft sign-in cancellation failed: ${error.message || error}`));
     state.microsoftSignIn = null;
     state.microsoftError = "";
+    state.launchProgress = null;
     state.busy = false;
     log("Microsoft sign-in cancelled.");
     render();

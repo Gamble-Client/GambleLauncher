@@ -207,6 +207,19 @@ test("expired Microsoft refresh tokens reopen sign-in instead of exposing an HTT
     assert.doesNotMatch(rust, /fn refresh_microsoft_token\([\s\S]{0,900}\.error_for_status\(\)/);
 });
 
+test("browser Microsoft sign-in can be cancelled without leaving launch progress stuck", async () => {
+    const frontend = await source("src/main.js");
+    const rust = await source("src-tauri/src/main.rs");
+
+    assert.match(frontend, /cancel_microsoft_browser_sign_in/);
+    assert.match(frontend, /state\.launchProgress = null;[\s\S]*await startMicrosoftSignIn\(\)/);
+    assert.match(frontend, /message\.toLowerCase\(\)\.includes\("microsoft sign-in cancelled"\)/);
+    assert.match(rust, /static MICROSOFT_BROWSER_SIGNIN_GENERATION: AtomicU32/);
+    assert.match(rust, /fn cancel_microsoft_browser_sign_in\(\)/);
+    assert.match(rust, /wait_for_microsoft_callback\(&listener, generation\)/);
+    assert.match(rust, /microsoft_browser_sign_in_cancelled\(generation\)/);
+});
+
 test("default-size launcher keeps account sign-in controls inside the visible content column", async () => {
     const css = await source("src/styles.css");
     const rust = await source("src-tauri/src/main.rs");

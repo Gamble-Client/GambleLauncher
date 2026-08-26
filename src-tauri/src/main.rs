@@ -145,6 +145,7 @@ static MINECRAFT_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
 static LAST_MINECRAFT_EXIT: Mutex<Option<MinecraftExit>> = Mutex::new(None);
 static LAST_MINECRAFT_GRAPHICS_MODE: Mutex<String> = Mutex::new(String::new());
 static LAUNCH_LOCK: Mutex<()> = Mutex::new(());
+static MICROSOFT_BROWSER_SIGNIN_GENERATION: AtomicU32 = AtomicU32::new(0);
 
 const DEFAULT_GRAPHICS_MODE: &str = "automatic";
 const GRAPHICS_ENV_KEYS: &[&str] = &[
@@ -708,11 +709,21 @@ fn delete_microsoft_account_by_uuid(uuid: String) -> Result<MicrosoftAccountStat
 async fn microsoft_browser_sign_in(
     force_account_picker: bool,
 ) -> Result<serde_json::Value, String> {
-    run_blocking(move || microsoft_browser_sign_in_blocking(force_account_picker)).await
+    let generation = MICROSOFT_BROWSER_SIGNIN_GENERATION
+        .fetch_add(1, Ordering::SeqCst)
+        .wrapping_add(1);
+    run_blocking(move || microsoft_browser_sign_in_blocking(force_account_picker, generation)).await
+}
+
+#[tauri::command]
+fn cancel_microsoft_browser_sign_in() -> Result<(), String> {
+    MICROSOFT_BROWSER_SIGNIN_GENERATION.fetch_add(1, Ordering::SeqCst);
+    Ok(())
 }
 
 fn microsoft_browser_sign_in_blocking(
     force_account_picker: bool,
+    generation: u32,
 ) -> Result<serde_json::Value, String> {
     let state = random_base64_url(24);
     let code_verifier = random_base64_url(48);
@@ -725,7 +736,7 @@ fn microsoft_browser_sign_in_blocking(
     open_external(&auth_url)?;
 
     let result = loop {
-        let mut stream = wait_for_microsoft_callback(&listener)?;
+        let mut stream = wait_for_microsoft_callback(&listener, generation)?;
         let callback = read_microsoft_callback(&mut stream)?;
         if callback.get("state").map(String::as_str) != Some(state.as_str()) {
             let _ = write_microsoft_callback_response(
@@ -761,6 +772,9 @@ fn microsoft_browser_sign_in_blocking(
     drop(listener);
 
     let code = result?;
+    if microsoft_browser_sign_in_cancelled(generation) {
+        return Err("Microsoft sign-in cancelled.".to_string());
+    }
     let token = exchange_microsoft_authorization_code(&code, &code_verifier)?;
     let profile = exchange_microsoft_for_minecraft(&token.access_token)?;
     let account = MicrosoftAccount {
@@ -2344,10 +2358,16 @@ fn exchange_microsoft_authorization_code(
     parse_microsoft_token(&body)
 }
 
-fn wait_for_microsoft_callback(listener: &TcpListener) -> Result<TcpStream, String> {
+fn wait_for_microsoft_callback(
+    listener: &TcpListener,
+    generation: u32,
+) -> Result<TcpStream, String> {
     let deadline = SystemTime::now() + Duration::from_secs(180);
 
     loop {
+        if microsoft_browser_sign_in_cancelled(generation) {
+            return Err("Microsoft sign-in cancelled.".to_string());
+        }
         match listener.accept() {
             Ok((stream, _)) => return Ok(stream),
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -2359,6 +2379,10 @@ fn wait_for_microsoft_callback(listener: &TcpListener) -> Result<TcpStream, Stri
             Err(error) => return Err(error_text(error)),
         }
     }
+}
+
+fn microsoft_browser_sign_in_cancelled(generation: u32) -> bool {
+    MICROSOFT_BROWSER_SIGNIN_GENERATION.load(Ordering::SeqCst) != generation
 }
 
 fn microsoft_authorize_url(
@@ -4173,6 +4197,7 @@ fn main() {
             delete_microsoft_account,
             delete_microsoft_account_by_uuid,
             microsoft_browser_sign_in,
+            cancel_microsoft_browser_sign_in,
             microsoft_device_start,
             microsoft_device_poll,
             ensure_profile,
