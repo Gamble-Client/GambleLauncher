@@ -295,6 +295,13 @@ test("profile launches use their account without rewriting the launcher default"
     assert.match(rust, /fn microsoft_account_for_launch\(requested_uuid: &str\)/);
 });
 
+test("Microsoft browser and device authentication do not block the launcher UI thread", async () => {
+  const rust = await source("src-tauri/src/main.rs");
+  assert.match(rust, /async fn microsoft_browser_sign_in\([\s\S]*?run_blocking\(move \|\| microsoft_browser_sign_in_blocking/);
+  assert.match(rust, /async fn microsoft_device_start\([\s\S]*?run_blocking\(move \|\| microsoft_device_start_blocking/);
+  assert.match(rust, /async fn microsoft_device_poll\([\s\S]*?run_blocking\(move \|\| microsoft_device_poll_blocking/);
+});
+
 test("graphics safety settings stay scoped to Minecraft and retain GPU crash evidence", async () => {
     const frontend = await source("src/main.js");
     const rust = await source("src-tauri/src/main.rs");

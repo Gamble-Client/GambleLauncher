@@ -91,7 +91,7 @@ Universal JAR macOS smoke check:
 
 ```bash
 ./gradlew hardenedLauncherJar
-./scripts/merge-macos-javafx-natives.sh build/libs/gamble-client-launcher-0.1.128.jar
+./scripts/merge-macos-javafx-natives.sh build/libs/gamble-client-launcher-0.1.129.jar
 ```
 
 The release workflow combines the Intel and Apple Silicon JavaFX binaries in

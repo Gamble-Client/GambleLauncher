@@ -705,7 +705,15 @@ fn delete_microsoft_account_by_uuid(uuid: String) -> Result<MicrosoftAccountStat
 }
 
 #[tauri::command]
-fn microsoft_browser_sign_in(force_account_picker: bool) -> Result<serde_json::Value, String> {
+async fn microsoft_browser_sign_in(
+    force_account_picker: bool,
+) -> Result<serde_json::Value, String> {
+    run_blocking(move || microsoft_browser_sign_in_blocking(force_account_picker)).await
+}
+
+fn microsoft_browser_sign_in_blocking(
+    force_account_picker: bool,
+) -> Result<serde_json::Value, String> {
     let state = random_base64_url(24);
     let code_verifier = random_base64_url(48);
     let code_challenge = sha256_base64_url(&code_verifier);
@@ -768,7 +776,15 @@ fn microsoft_browser_sign_in(force_account_picker: bool) -> Result<serde_json::V
 }
 
 #[tauri::command]
-fn microsoft_device_start(_force_account_picker: bool) -> Result<MicrosoftDeviceStart, String> {
+async fn microsoft_device_start(
+    force_account_picker: bool,
+) -> Result<MicrosoftDeviceStart, String> {
+    run_blocking(move || microsoft_device_start_blocking(force_account_picker)).await
+}
+
+fn microsoft_device_start_blocking(
+    _force_account_picker: bool,
+) -> Result<MicrosoftDeviceStart, String> {
     let params = vec![
         ("client_id", MICROSOFT_CLIENT_ID.to_string()),
         ("scope", MICROSOFT_SCOPE.to_string()),
@@ -824,7 +840,11 @@ fn microsoft_device_start(_force_account_picker: bool) -> Result<MicrosoftDevice
 }
 
 #[tauri::command]
-fn microsoft_device_poll(device_code: String) -> Result<serde_json::Value, String> {
+async fn microsoft_device_poll(device_code: String) -> Result<serde_json::Value, String> {
+    run_blocking(move || microsoft_device_poll_blocking(device_code)).await
+}
+
+fn microsoft_device_poll_blocking(device_code: String) -> Result<serde_json::Value, String> {
     let device_code = device_code.trim().to_string();
     if device_code.is_empty() {
         return Err(
@@ -6435,9 +6455,9 @@ mod tests {
             random_base64_url(24)
         ));
         fs::create_dir_all(&root).unwrap();
-        let target = root.join("Gamble Client Launcher_0.1.128_x64-setup.exe");
-        let staging = root.join("Gamble Client Launcher_0.1.128_x64-setup.exe.part");
-        let backup = root.join("Gamble Client Launcher_0.1.128_x64-setup.download.previous");
+        let target = root.join("Gamble Client Launcher_0.1.129_x64-setup.exe");
+        let staging = root.join("Gamble Client Launcher_0.1.129_x64-setup.exe.part");
+        let backup = root.join("Gamble Client Launcher_0.1.129_x64-setup.download.previous");
         fs::write(&target, b"old installer").unwrap();
         fs::write(&staging, b"new installer").unwrap();
 
