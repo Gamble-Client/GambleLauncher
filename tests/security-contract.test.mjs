@@ -22,15 +22,15 @@ test("sponsor rewards use launcher-only API routes", async () => {
 test("sponsor media resolves against the production site instead of the embedded app origin", () => {
     assert.equal(
         resolveSponsorMediaUrl("/assets/placeholder-ad.mp4"),
-        "https://gamble-client.store/assets/placeholder-ad.mp4"
+        "https://gambleclient.org/assets/placeholder-ad.mp4"
     );
     assert.equal(
         resolveSponsorMediaUrl("/api/launcherads/demo"),
-        "https://gamble-client.store/api/launcherads/demo"
+        "https://gambleclient.org/api/launcherads/demo"
     );
-    assert.equal(resolveSponsorMediaUrl("http://gamble-client.store/assets/ad.mp4"), "");
+    assert.equal(resolveSponsorMediaUrl("http://gambleclient.org/assets/ad.mp4"), "");
     assert.equal(resolveSponsorMediaUrl("https://example.com/ad.mp4"), "");
-    assert.equal(resolveSponsorMediaUrl("https://user@gamble-client.store/ad.mp4"), "");
+    assert.equal(resolveSponsorMediaUrl("https://user@gambleclient.org/ad.mp4"), "");
 });
 
 test("JavaFX sponsor fallback advances only while media is actually playing", async () => {

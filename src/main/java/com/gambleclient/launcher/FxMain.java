@@ -321,11 +321,11 @@ public class FxMain extends Application {
         Button folder = secondary("Game Folder");
         folder.setOnAction(e -> openBackendFile("getMinecraftFolder"));
         Button review = secondary("Review");
-        review.setOnAction(e -> openUrl("https://gamble-client.store/dashboard.html?section=community&tab=reviews"));
+        review.setOnAction(e -> openUrl("https://gambleclient.org/dashboard.html?section=community&tab=reviews"));
         Button website = secondary("Website");
-        website.setOnAction(e -> openUrl("https://gamble-client.store"));
+        website.setOnAction(e -> openUrl("https://gambleclient.org"));
         Button credits = secondary("Credits");
-        credits.setOnAction(e -> openUrl("https://gamble-client.store/credits"));
+        credits.setOnAction(e -> openUrl("https://gambleclient.org/credits"));
 
         TextField launcherName = new TextField(swingText("launcherDisplayName"));
         TextField clientName = new TextField(swingText("clientDisplayName"));
@@ -970,7 +970,7 @@ public class FxMain extends Application {
         VBox body = new VBox(12);
         body.getStyleClass().addAll("content", "screen");
         body.getChildren().add(label("Browse Configs", "heading"));
-        Label note = label("Approved configs from gamble-client.store.", "muted");
+        Label note = label("Approved configs from gambleclient.org.", "muted");
         note.setWrapText(true);
         body.getChildren().add(note);
 
@@ -985,7 +985,7 @@ public class FxMain extends Application {
         }
 
         Button dashboard = secondary("Open Dashboard");
-        dashboard.setOnAction(e -> openUrl("https://gamble-client.store/dashboard"));
+        dashboard.setOnAction(e -> openUrl("https://gambleclient.org/dashboard"));
         body.getChildren().addAll(list, buttonRow(dashboard));
 
         ScrollPane scroll = scrollScreen(body);
@@ -1434,11 +1434,14 @@ public class FxMain extends Application {
     private String resolveAdUrl(String value) {
         String text = value == null ? "" : value.trim();
         String base = backendString("siteUrl");
-        if (base.isBlank()) base = "https://gamble-client.store";
+        if (base.isBlank()) base = "https://gambleclient.org";
         try {
             URI uri = URI.create(text.startsWith("http://") || text.startsWith("https://") ? text : base.replaceAll("/+$", "") + (text.startsWith("/") ? text : "/" + text));
             String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
-            if (!"https".equalsIgnoreCase(uri.getScheme()) || (!host.equals("gamble-client.store") && !host.endsWith(".gamble-client.store")) || uri.getUserInfo() != null || uri.getPort() != -1) {
+            if (!"https".equalsIgnoreCase(uri.getScheme())
+                || (!host.equals("gambleclient.org") && !host.endsWith(".gambleclient.org")
+                    && !host.equals("gamble-client.store") && !host.endsWith(".gamble-client.store"))
+                || uri.getUserInfo() != null || uri.getPort() != -1) {
                 throw new IllegalArgumentException("Sponsor media host is not allowed.");
             }
             return uri.toString();
@@ -2494,6 +2497,10 @@ public class FxMain extends Application {
             String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
             if (!"https".equals(scheme) || uri.getUserInfo() != null || host.isEmpty() || uri.getPort() != -1) return false;
             return Set.of(
+                "gambleclient.org",
+                "dash.gambleclient.org",
+                "admin.gambleclient.org",
+                "profile.gambleclient.org",
                 "gamble-client.store",
                 "dash.gamble-client.store",
                 "admin.gamble-client.store",

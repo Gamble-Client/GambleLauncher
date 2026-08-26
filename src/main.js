@@ -6,8 +6,8 @@ import "./styles.css";
 import logoUrl from "./assets/cg-mod-icon.png";
 import { resolveSponsorMediaUrl } from "./sponsor-media.js";
 
-const SITE = "https://gamble-client.store";
-const DASH = "https://dash.gamble-client.store";
+const SITE = "https://gambleclient.org";
+const DASH = "https://dash.gambleclient.org";
 const LAUNCHER_DISMISS_KEY = "gamble.launcher.dismissedLauncherVersion";
 const CLIENT_DISMISS_KEY = "gamble.launcher.dismissedClientVersion";
 const CUSTOM_PROFILES_KEY = "gamble.launcher.customProfiles";
@@ -291,7 +291,7 @@ async function mockInvoke(command, args = {}) {
       };
     }
     if (path === "/api/launcher/start") {
-      return { loginUrl: "https://gamble-client.store/login", expiresAt: Math.floor(Date.now() / 1000) + 120, code: "preview" };
+      return { loginUrl: "https://gambleclient.org/login", expiresAt: Math.floor(Date.now() / 1000) + 120, code: "preview" };
     }
   }
   if (command === "client_install_status") {

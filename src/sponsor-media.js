@@ -1,4 +1,4 @@
-const DEFAULT_SITE = "https://gamble-client.store";
+const DEFAULT_SITE = "https://gambleclient.org";
 
 export function resolveSponsorMediaUrl(value, site = DEFAULT_SITE) {
   const raw = String(value || "").trim();
@@ -8,7 +8,10 @@ export function resolveSponsorMediaUrl(value, site = DEFAULT_SITE) {
     const base = new URL(site);
     const resolved = new URL(raw, base);
     const host = resolved.hostname.toLowerCase();
-    const allowedHost = host === "gamble-client.store" || host.endsWith(".gamble-client.store");
+    const allowedHost = host === "gambleclient.org"
+      || host.endsWith(".gambleclient.org")
+      || host === "gamble-client.store"
+      || host.endsWith(".gamble-client.store");
     if (resolved.protocol !== "https:" || !allowedHost || resolved.username || resolved.password || resolved.port) {
       return "";
     }

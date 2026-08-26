@@ -132,7 +132,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.125";
+    private static final String LAUNCHER_VERSION = "0.1.126";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -155,7 +155,7 @@ public class Main {
         "block-debug-finder", "block-update-finder"
     };
 
-    private static final String DEFAULT_SITE_URL = "https://gamble-client.store";
+    private static final String DEFAULT_SITE_URL = "https://gambleclient.org";
     private static final String CAPE_OWNERS_PATH = "/api/capes/owners.txt";
     private static final String CAPES_PATH = "/api/capes/capes.txt";
     private static final String MINECRAFT_VERSION = "1.21.11";
@@ -167,6 +167,8 @@ public class Main {
     private static final long MAX_TEXT_RESPONSE_BYTES = 4L * 1024L * 1024L;
     private static final int MAX_DOWNLOAD_REDIRECTS = 4;
     private static final Set<String> TRUSTED_NETWORK_HOSTS = Set.of(
+        "gambleclient.org",
+        "dash.gambleclient.org",
         "gamble-client.store",
         "dash.gamble-client.store",
         "login.microsoftonline.com",
@@ -6648,6 +6650,10 @@ public class Main {
             if ("http".equals(scheme) && ("localhost".equals(host) || "127.0.0.1".equals(host) || "::1".equals(host))) return true;
             if (!"https".equals(scheme)) return false;
             return Set.of(
+                "gambleclient.org",
+                "dash.gambleclient.org",
+                "admin.gambleclient.org",
+                "profile.gambleclient.org",
                 "gamble-client.store",
                 "dash.gamble-client.store",
                 "admin.gamble-client.store",

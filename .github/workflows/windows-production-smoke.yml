@@ -21,7 +21,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $installer = Join-Path $env:RUNNER_TEMP "gamble-client-launcher-setup.exe"
-          Invoke-WebRequest -Uri "https://gamble-client.store/api/launcher/download/windows" -OutFile $installer
+          Invoke-WebRequest -Uri "https://gambleclient.org/api/launcher/download/windows" -OutFile $installer
           $install = Start-Process -FilePath $installer -ArgumentList "/S" -Wait -PassThru
           if ($install.ExitCode -ne 0) {
             throw "The public Windows installer exited with code $($install.ExitCode)."

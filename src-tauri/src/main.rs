@@ -34,7 +34,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::os::windows::process::CommandExt;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const SITE_URL: &str = "https://gamble-client.store";
+const SITE_URL: &str = "https://gambleclient.org";
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
 const FABRIC_LOADER_VERSION: &str = "0.19.3";
@@ -77,6 +77,8 @@ const MAX_NATIVE_EXPANDED_BYTES: u64 = 512 * 1024 * 1024;
 const TEMURIN_21_WINDOWS_URL: &str =
     "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
 const TRUSTED_NETWORK_HOSTS: &[&str] = &[
+    "gambleclient.org",
+    "dash.gambleclient.org",
     "gamble-client.store",
     "dash.gamble-client.store",
     "login.microsoftonline.com",
@@ -4020,6 +4022,10 @@ fn emit_launch_progress(
 fn open_url(url: String) -> Result<(), String> {
     let parsed = reqwest::Url::parse(&url).map_err(|_| "URL is invalid.".to_string())?;
     let allowed = [
+        "gambleclient.org",
+        "dash.gambleclient.org",
+        "admin.gambleclient.org",
+        "profile.gambleclient.org",
         "gamble-client.store",
         "dash.gamble-client.store",
         "admin.gamble-client.store",
@@ -5470,7 +5476,7 @@ fn post_json_error_message(url: &str, status: u16, message: &str) -> String {
 
 fn service_label_for_url(url: &str) -> &'static str {
     let lower = url.to_lowercase();
-    if lower.contains("gamble-client.store") {
+    if lower.contains("gambleclient.org") {
         "Backend"
     } else if lower.contains("minecraftservices.com") {
         "Minecraft auth"
@@ -5774,7 +5780,7 @@ fn trusted_launcher_update_url(raw_url: &str) -> Result<reqwest::Url, String> {
     let parsed = trusted_network_url(raw_url)?;
     let first_party = matches!(
         parsed.host_str(),
-        Some("gamble-client.store" | "dash.gamble-client.store")
+        Some("gambleclient.org" | "dash.gambleclient.org" | "gamble-client.store" | "dash.gamble-client.store")
     );
     if !first_party {
         return Err(
@@ -6013,11 +6019,11 @@ mod tests {
     #[test]
     fn launcher_updates_are_first_party_only() {
         assert!(trusted_launcher_update_url(
-            "https://gamble-client.store/api/launcher/download/windows"
+            "https://gambleclient.org/api/launcher/download/windows"
         )
         .is_ok());
         assert!(trusted_launcher_update_url(
-            "https://dash.gamble-client.store/releases/launcher.jar"
+            "https://dash.gambleclient.org/releases/launcher.jar"
         )
         .is_ok());
         assert!(
@@ -6253,9 +6259,9 @@ mod tests {
             random_base64_url(24)
         ));
         fs::create_dir_all(&root).unwrap();
-        let target = root.join("Gamble Client Launcher_0.1.125_x64-setup.exe");
-        let staging = root.join("Gamble Client Launcher_0.1.125_x64-setup.exe.part");
-        let backup = root.join("Gamble Client Launcher_0.1.125_x64-setup.download.previous");
+        let target = root.join("Gamble Client Launcher_0.1.126_x64-setup.exe");
+        let staging = root.join("Gamble Client Launcher_0.1.126_x64-setup.exe.part");
+        let backup = root.join("Gamble Client Launcher_0.1.126_x64-setup.download.previous");
         fs::write(&target, b"old installer").unwrap();
         fs::write(&staging, b"new installer").unwrap();
 
