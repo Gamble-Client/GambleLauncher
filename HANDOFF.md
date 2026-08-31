@@ -9,9 +9,9 @@ This document covers the launcher repository only. Client behavior is in `/home/
 - GitHub: [Gamble-Client/GambleLauncher](https://github.com/Gamble-Client/GambleLauncher)
 - Repository: `/home/theac/Desktop/gamble-client-launcher`
 - Current working branch: `codex/launcher-ui-security-pass-20260821`
-- Current source commit: `3e43b81` (`Bump launcher for sponsor media fix`)
-- Current public launcher version: `0.1.130`; the dashboard-reward migration is prepared as source version `0.1.131` and is not published yet.
-- Native workflow runs: Windows `33019785990`; Linux `33019785988`
+- Current source commit: `d91805a` (`Move sponsor verification to Dashboard`)
+- Current public launcher version: `0.1.131`; the Dashboard sponsor migration is live.
+- Native workflow runs: Windows `33437745051`; Linux `33437744351`
 - Universal JAR and the Windows/Linux native packages are the current immutable artifacts. Versions `0.1.113` through `0.1.129` are superseded.
 
 The launcher supports the managed native workflow, the universal JavaFX JAR, and the Swing fallback. The owner uses this standard Gamble Client launcher flow; old Prism directories are not current runtime evidence.
@@ -62,11 +62,11 @@ Completed for `0.1.130`:
 - Physical Linux GUI smoke: Play reached the Minecraft title screen; an empty profile remained responsive through Play/sign-in/Cancel. A second stored session returned HTTP 401, so a second authenticated-account launch was not available.
 - Sponsor-media 200/range checks and public artifact metadata/byte/hash/provenance checks.
 
-Working-tree fix, not yet published (2026-08-31):
+Published launcher release `0.1.131` (2026-08-31):
 
 - Native offline launch fallback, startup-exit popup, dashboard-only sponsor verification, updated account copy, and 23 launcher contract tests are implemented.
-- Launcher Vite build, Gradle tests, Rust formatting, and `git diff --check` pass. Site/API checks pass all 195 tests plus the release audit, and the Pages build passes.
-- Full `cargo test --manifest-path src-tauri/Cargo.toml` is currently blocked before test execution because this host lacks GTK/WebKit development packages (`gdk-3.0`, `pango`, `libsoup-3.0`, and related `.pc` files). Native Windows/Linux artifacts still require the hosted workflows and matching manifests before publication.
+- Launcher Vite build, Gradle tests, Rust formatting, and `git diff --check` pass. The clean release tree passed 194 Site/API tests plus the release audit, and the Pages build passed.
+- Hosted Windows and Linux native tests/builds, packaged network self-tests, R2 uploads, and matching manifest checks passed. Local `cargo test --manifest-path src-tauri/Cargo.toml` remains unavailable on this host because GTK/WebKit development packages (`gdk-3.0`, `pango`, `libsoup-3.0`, and related `.pc` files) are missing.
 
 Useful live checks still worth repeating after launcher changes:
 
