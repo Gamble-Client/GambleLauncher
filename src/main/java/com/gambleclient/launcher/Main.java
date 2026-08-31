@@ -132,7 +132,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.130";
+    private static final String LAUNCHER_VERSION = "0.1.131";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -226,7 +226,6 @@ public class Main {
     private static final String DEFAULT_MICROSOFT_CLIENT_ID = "8eea0ae2-d0a9-4af1-88b9-f66bd96c94bd";
     private static final String MICROSOFT_REAUTH_REQUIRED =
         "Microsoft sign-in expired or was revoked. Reconnect Microsoft to continue.";
-    private static final int AD_REWARD_SECONDS_FALLBACK = 30;
     private static final int MICROSOFT_REDIRECT_PORT = 39062;
     private static final String MICROSOFT_REDIRECT_URI = "http://localhost:" + MICROSOFT_REDIRECT_PORT + "/";
     private static final String XBOX_AUTH_URL = "https://user.auth.xboxlive.com/user/authenticate";
@@ -265,9 +264,9 @@ public class Main {
     private final JTextArea runtimeInfo = new JTextArea();
     private final JLabel accountName = new JLabel("Not signed in");
     private final JLabel accountStatus = new JLabel("Launcher account required");
-    private final JLabel adTitle = new JLabel("Sponsor Break");
-    private final JLabel adStatus = new JLabel("Sign in to check access.");
-    private final JLabel adMeta = new JLabel("Paid accounts skip launcher ads.");
+    private final JLabel adTitle = new JLabel("Dashboard Access");
+    private final JLabel adStatus = new JLabel("Open the Dashboard to check access.");
+    private final JLabel adMeta = new JLabel("Paid accounts skip sponsor verification.");
     private final JButton adButton = new JButton("Check");
     private final JPanel signInPromptPanel = new RoundedPanel(new BorderLayout(14, 0), new Color(26, 25, 34, 235), new Color(255, 255, 255, 18), 8);
     private final JLabel signInPromptTitle = new JLabel("Sign in to continue");
@@ -314,7 +313,6 @@ public class Main {
     private final Deque<String> recentLaunchLines = new ArrayDeque<>();
     private LauncherUser launcherUser;
     private LauncherAds launcherAds;
-    private String sponsorChallenge = "";
     private SwingWorker<LauncherSession, Void> launcherSignInWorker;
     private SwingWorker<MicrosoftAccount, Void> microsoftSignInWorker;
     private volatile Runnable microsoftSignInCancel;
@@ -410,7 +408,7 @@ public class Main {
         chips.add(versionChip("Client", clientInstalledVersion, clientReleasedVersion), chip);
 
         JPanel sidebarBottom = transparentPanel(new BorderLayout(0, 14));
-        sidebarBottom.add(createSponsorPanel(), BorderLayout.CENTER);
+        sidebarBottom.add(createDashboardAccessPanel(), BorderLayout.CENTER);
         sidebarBottom.add(createSidebarActionsPanel(), BorderLayout.SOUTH);
 
         hero.add(copy, BorderLayout.NORTH);
@@ -527,7 +525,7 @@ public class Main {
         return panel;
     }
 
-    private JPanel createSponsorPanel() {
+    private JPanel createDashboardAccessPanel() {
         JPanel panel = new RoundedPanel(new BorderLayout(0, 10), new Color(26, 25, 34, 235), new Color(255, 255, 255, 18), 8);
         panel.setPreferredSize(new Dimension(252, 132));
         panel.setBorder(BorderFactory.createCompoundBorder(
@@ -868,7 +866,7 @@ public class Main {
             signInPromptDismissed = true;
             updateAccountUi();
         });
-        adButton.addActionListener(e -> startSponsorBreak());
+        adButton.addActionListener(e -> openDashboardForAds());
         installButton.addActionListener(e -> installSelectedBuild(false));
         autoCheckUpdates.addActionListener(e -> saveAutoCheckUpdates(autoCheckUpdates.isSelected()));
         profileBox.addActionListener(e -> updateProfileUi(true));
@@ -3115,75 +3113,18 @@ public class Main {
         }.execute();
     }
 
-    private void startSponsorBreak() {
-        if (launcherToken == null || launcherToken.trim().isEmpty()) {
-            startSignIn();
+    private void openDashboardForAds() {
+        String url = siteUrl() + "/dashboard.html?section=free";
+        if (open(url)) {
+            log("Opened the Dashboard sponsor check. Watch the 30-second ad there, then return to the launcher.");
             return;
         }
-
-        setBusy(true);
-        adButton.setEnabled(false);
-        setProgress(0, "Sponsor");
-
-        new SwingWorker<LauncherAccount, Void>() {
-            @Override
-            protected LauncherAccount doInBackground() throws Exception {
-                ApiResponse start = apiRequest("POST", "/api/launcher/ad-reward/start", "{}", launcherToken, 200);
-                LauncherAds ads = parseLauncherAds(start.body.get("ads"));
-                int seconds = ads.adSeconds > 0 ? ads.adSeconds : 30;
-                if (ads.adUrl == null || ads.adUrl.isBlank()) {
-                    throw new IOException("Sponsor media is unavailable, so no reward can be granted.");
-                }
-                throw new IOException("Sponsor rewards require the JavaFX or native launcher so playback can be verified.");
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    LauncherAccount account = get();
-                    launcherUser = account.user;
-                    launcherAds = account.ads;
-                    selectBestBuildForUser(account.user);
-                    updateAccountUi();
-                    updateAdUi();
-                    Main.this.setProgress(100, "Sponsored");
-                    log("Sponsored access refreshed.");
-                } catch (Exception e) {
-                    setProgressStatus("Ad failed");
-                    log("Sponsor break failed: " + rootMessage(e));
-                    JOptionPane.showMessageDialog(frame, rootMessage(e), "Sponsor break failed", JOptionPane.ERROR_MESSAGE);
-                } finally {
-                    setBusy(false);
-                }
-            }
-        }.execute();
-    }
-
-    private Map<String, Object> beginSponsorBreakForOverlay() throws IOException {
-        ensureSignedIn();
-        ApiResponse start = apiRequest("POST", "/api/launcher/ad-reward/start", "{}", launcherToken, 200);
-        LauncherAds ads = parseLauncherAds(start.body.get("ads"));
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("adUrl", ads.adUrl);
-        out.put("adSeconds", ads.adSeconds > 0 ? ads.adSeconds : AD_REWARD_SECONDS_FALLBACK);
-        out.put("message", Json.string(start.body.get("message")));
-        sponsorChallenge = Json.string(start.body.get("challenge"));
-        log("Sponsor break started: " + out.get("adSeconds") + " seconds.");
-        return out;
-    }
-
-    private String completeSponsorBreakForOverlay() throws IOException {
-        ensureSignedIn();
-        ApiResponse complete = apiRequest("POST", "/api/launcher/ad-reward/complete", "{\"challenge\":\"" + jsonEscape(sponsorChallenge) + "\"}", launcherToken, 200);
-        sponsorChallenge = "";
-        LauncherAccount account = parseLauncherAccount(complete.body);
-        launcherUser = account.user;
-        launcherAds = account.ads;
-        selectBestBuildForUser(account.user);
-        updateAccountUi();
-        updateAdUi();
-        log("Sponsored access refreshed.");
-        return Json.string(complete.body.get("message"));
+        JOptionPane.showMessageDialog(
+            frame,
+            "Open " + url + " in a browser, watch the 30-second sponsor break, then return to the launcher.",
+            "Open Dashboard",
+            JOptionPane.INFORMATION_MESSAGE
+        );
     }
 
     private void updateAccountUi() {
@@ -3217,10 +3158,10 @@ public class Main {
         }
 
         if (launcherUser == null || launcherToken.isEmpty()) {
-            adTitle.setText("Sponsor Break");
-            adStatus.setText("Sign in to check access.");
-            adMeta.setText("Paid accounts skip launcher ads.");
-            adButton.setText("Sign In");
+            adTitle.setText("Dashboard Access");
+            adStatus.setText("Open the Dashboard to sign in and check access.");
+            adMeta.setText("Sponsor verification runs in your browser.");
+            adButton.setText("Open Dashboard");
             adButton.setEnabled(true);
             adButton.setBackground(SURFACE_2);
             adButton.setForeground(TEXT);
@@ -3228,10 +3169,10 @@ public class Main {
         }
 
         if (launcherAds == null) {
-            adTitle.setText("Access Check");
+            adTitle.setText("Dashboard Access");
             adStatus.setText("Checking account status.");
-            adMeta.setText("Backend account needed.");
-            adButton.setText("Refresh");
+            adMeta.setText("Open the Dashboard if this does not finish.");
+            adButton.setText("Open Dashboard");
             adButton.setEnabled(true);
             adButton.setBackground(SURFACE_2);
             adButton.setForeground(TEXT);
@@ -3240,7 +3181,7 @@ public class Main {
 
         if (!launcherAds.required) {
             adTitle.setText("Paid Access");
-            adStatus.setText("Ads are off for this account.");
+            adStatus.setText("No sponsor verification is needed.");
             adMeta.setText(accountStatusText(launcherUser));
             adButton.setText("Ads Off");
             adButton.setEnabled(false);
@@ -3249,12 +3190,12 @@ public class Main {
             return;
         }
 
-        adTitle.setText("Sponsor Break");
+        adTitle.setText("Dashboard Sponsor");
         adStatus.setText(launcherAds.message.isEmpty() ? "Sponsored access available." : compactText(launcherAds.message, 34));
         adMeta.setText(launcherAds.remainingSeconds > 0
             ? "Remaining: " + compactDuration(launcherAds.remainingSeconds)
-            : "Refresh Ad Tier here.");
-        adButton.setText(launcherAds.canWatch ? "Watch" : "Capped");
+            : "Watch 30 seconds in Dashboard, then return.");
+        adButton.setText(launcherAds.canWatch ? "Open Dashboard" : "Capped");
         adButton.setEnabled(launcherAds.canWatch);
         adButton.setBackground(launcherAds.canWatch ? GOLD : SURFACE_2);
         adButton.setForeground(launcherAds.canWatch ? BACKGROUND : TEXT);
@@ -3499,11 +3440,12 @@ public class Main {
             return;
         }
         if (!sponsoredAccessActiveFor(build)) {
-            setProgressStatus("Sponsor required");
+            setProgressStatus("Dashboard sponsor required");
             log("Launch blocked: Ad Tier sponsored access is not active.");
             JOptionPane.showMessageDialog(frame,
-                "Watch the sponsor break in Gamble Client Launcher before launching Ad Tier.",
-                "Sponsor break required", JOptionPane.WARNING_MESSAGE);
+                "Open the Gamble Client Dashboard, watch the 30-second sponsor break, then return to the launcher.",
+                "Dashboard sponsor check required", JOptionPane.WARNING_MESSAGE);
+            openDashboardForAds();
             return;
         }
 
@@ -5073,8 +5015,7 @@ public class Main {
             Json.string(ads.get("tier")),
             Json.string(ads.get("message")),
             (int) jsonLong(ads.get("adSeconds")),
-            jsonLong(ads.get("remainingSeconds")),
-            Json.string(ads.get("adUrl"))
+            jsonLong(ads.get("remainingSeconds"))
         );
     }
 
@@ -6205,15 +6146,16 @@ public class Main {
         boolean sponsoredAccess = sponsoredAccessActiveFor(selectedBuild);
         installButton.setEnabled(!busy && !running && gambleProfile && signedIn && sponsoredAccess);
         accountManagerButton.setEnabled(!busy && !running);
-        launchButton.setText(running ? "Kill" : sponsoredAccess ? "Play" : "Watch Sponsor First");
-        launchButton.setEnabled(running || (!busy && signedIn && sponsoredAccess));
+        boolean dashboardSponsorRequired = selectedBuild != null && "ad_tier".equals(selectedBuild.id) && !sponsoredAccess;
+        launchButton.setText(running ? "Kill" : sponsoredAccess ? "Play" : dashboardSponsorRequired ? "Open Dashboard" : "Play");
+        launchButton.setEnabled(running || (!busy && signedIn && (sponsoredAccess || dashboardSponsorRequired)));
         signInButton.setText(signingIn ? "Cancel" : "Sign In");
         promptSignInButton.setText(signingIn ? "Cancel" : "Sign In");
         signInButton.setEnabled(!busy || signingIn);
         signOutButton.setEnabled(!busy && !running && launcherUser != null && !launcherToken.isEmpty());
         promptSignInButton.setEnabled(!busy || signingIn);
         promptLaterButton.setEnabled(!busy);
-        adButton.setEnabled(!busy && !running && (launcherUser == null || launcherToken.isEmpty() || launcherAds == null || launcherAds.canWatch));
+        adButton.setEnabled(!busy && !running && (launcherUser == null || launcherToken.isEmpty() || launcherAds == null || launcherAds.required && launcherAds.canWatch));
         profileBox.setEnabled(!busy && !running);
         buildBox.setEnabled(!busy && !running && gambleProfile);
         settingsButton.setEnabled(!busy);
@@ -6984,9 +6926,8 @@ public class Main {
         final String message;
         final int adSeconds;
         final long remainingSeconds;
-        final String adUrl;
 
-        LauncherAds(boolean required, boolean paid, boolean canWatch, boolean active, String tier, String message, int adSeconds, long remainingSeconds, String adUrl) {
+        LauncherAds(boolean required, boolean paid, boolean canWatch, boolean active, String tier, String message, int adSeconds, long remainingSeconds) {
             this.required = required;
             this.paid = paid;
             this.canWatch = canWatch;
@@ -6995,7 +6936,6 @@ public class Main {
             this.message = message;
             this.adSeconds = adSeconds;
             this.remainingSeconds = remainingSeconds;
-            this.adUrl = adUrl == null ? "" : adUrl;
         }
     }
 

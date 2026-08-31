@@ -12,7 +12,7 @@ Current flow:
 - Stores a launcher session token locally after browser sign-in succeeds.
 - Requests the selected build manifest from the backend instead of asking for a URL or license key.
 - Keeps the license in the shared managed `cg-mod` folder and mirrors it into the active profile for older builds.
-- Ad-Tier free access is launcher-only and requires a completed in-launcher sponsor break before install or launch.
+- Ad-Tier free access is launcher-only and requires a completed 30-second sponsor check in the Dashboard before install or launch.
 - Installs or updates the selected Gamble Client jar in the managed game folder, not the user's main `.minecraft`.
 - Installs managed Fabric helper mods for Fabric profiles: Fabric API and Mod Menu.
 - Downloads Minecraft/Fabric runtime files when missing.
@@ -91,7 +91,7 @@ Universal JAR macOS smoke check:
 
 ```bash
 ./gradlew hardenedLauncherJar
-./scripts/merge-macos-javafx-natives.sh build/libs/gamble-client-launcher-0.1.130.jar
+./scripts/merge-macos-javafx-natives.sh build/libs/gamble-client-launcher-0.1.131.jar
 ```
 
 The release workflow combines the Intel and Apple Silicon JavaFX binaries in

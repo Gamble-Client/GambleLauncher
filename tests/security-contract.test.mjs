@@ -1,44 +1,32 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { resolveSponsorMediaUrl } from "../src/sponsor-media.js";
 
 const source = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("sponsor rewards use launcher-only API routes", async () => {
+test("Ad Tier launchers send users to the Dashboard instead of embedding sponsor playback", async () => {
     const frontend = await source("src/main.js");
     const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
+    const javaFx = await source("src/main/java/com/gambleclient/launcher/FxMain.java");
 
-    assert.match(frontend, /\/api\/launcher\/ad-reward\/start/);
-    assert.match(frontend, /\/api\/launcher\/ad-reward\/complete/);
-    assert.doesNotMatch(frontend, /\/api\/license\/ad-reward\//);
+    assert.doesNotMatch(frontend, /\/api\/launcher\/ad-reward\//);
+    assert.doesNotMatch(java, /\/api\/launcher\/ad-reward\//);
+    assert.doesNotMatch(javaFx, /\/api\/launcher\/ad-reward\//);
     assert.match(frontend, /selectedBuild\.id === "ad_tier" && !state\.ads\?\.active/);
-    assert.match(java, /sponsoredAccessActiveFor\(build\)/);
-    assert.match(java, /Watch Sponsor First/);
-    assert.match(frontend, /muted loop playsinline/);
-    assert.match(frontend, /Sponsor media did not begin playing/);
+    assert.match(frontend, /DASHBOARD_FREE_URL/);
+    assert.match(frontend, /data-action="open-dashboard"/);
+    assert.match(java, /openDashboardForAds\(\)/);
+    assert.match(java, /30-second sponsor break/);
+    assert.doesNotMatch(java, /Watch Sponsor First/);
+    assert.match(java, /dashboardSponsorRequired/);
+    assert.match(javaFx, /openDashboardForAds\(\)/);
+    assert.doesNotMatch(frontend, /<video|sponsor-media|resolveSponsorMediaUrl/);
+    assert.doesNotMatch(javaFx, /MediaPlayer|MediaView|WebView|<video|cacheSponsorMedia/);
 });
 
-test("sponsor media resolves against the production site instead of the embedded app origin", () => {
-    assert.equal(
-        resolveSponsorMediaUrl("/assets/placeholder-ad.mp4"),
-        "https://gambleclient.org/assets/placeholder-ad.mp4"
-    );
-    assert.equal(
-        resolveSponsorMediaUrl("/api/launcherads/demo"),
-        "https://gambleclient.org/api/launcherads/demo"
-    );
-    assert.equal(resolveSponsorMediaUrl("http://gambleclient.org/assets/ad.mp4"), "");
-    assert.equal(resolveSponsorMediaUrl("https://example.com/ad.mp4"), "");
-    assert.equal(resolveSponsorMediaUrl("https://user@gambleclient.org/ad.mp4"), "");
-});
-
-test("JavaFX sponsor fallback advances only while media is actually playing", async () => {
-    const fx = await source("src/main/java/com/gambleclient/launcher/FxMain.java");
-    assert.match(fx, /SponsorPlaybackState playback = sponsorPlaybackState\(\)/);
-    assert.match(fx, /document\.querySelector\('video, audio'\)/);
-    assert.match(fx, /waitingSeconds\[0\] >= 15/);
-    assert.match(fx, /Media unavailable/);
+test("the native launcher security policy no longer grants embedded media access", async () => {
+    const config = JSON.parse(await source("src-tauri/tauri.conf.json"));
+    assert.doesNotMatch(config.app.security.csp, /media-src/);
 });
 
 test("both launcher implementations bind manifests to the requested tier and install the memory loader", async () => {
@@ -151,11 +139,6 @@ test("launcher settings survive unavailable WebView storage", async () => {
 test("native production assets use relative URLs inside the embedded WebView", async () => {
     const packageJson = JSON.parse(await source("package.json"));
     assert.equal(packageJson.scripts.build, "vite build --base ./");
-});
-
-test("native sponsor media is allowed by the embedded WebView policy", async () => {
-    const config = JSON.parse(await source("src-tauri/tauri.conf.json"));
-    assert.match(config.app.security.csp, /media-src 'self' https:\/\/gambleclient\.org https:\/\/\*\.gambleclient\.org/);
 });
 
 test("the native window retries embedded navigation only after the Windows event loop is ready", async () => {
@@ -311,6 +294,19 @@ test("profile launches use their account without rewriting the launcher default"
     assert.doesNotMatch(launchBranch, /message: "Switching Microsoft account"/);
     assert.match(rust, /microsoft_account_for_launch\(&input\.account_uuid\)/);
     assert.match(rust, /fn microsoft_account_for_launch\(requested_uuid: &str\)/);
+});
+
+test("native launches support offline Minecraft sessions and explain startup exits", async () => {
+    const frontend = await source("src/main.js");
+    const rust = await source("src-tauri/src/main.rs");
+    const launchBranch = frontend.slice(frontend.indexOf('action === "launch"'), frontend.indexOf('action === "microsoft"'));
+
+    assert.doesNotMatch(launchBranch, /!selectedAccount\)[\s\S]*startMicrosoftSignIn\(\)/);
+    assert.match(frontend, /Launching an offline session/);
+    assert.match(frontend, /showExitPopup/);
+    assert.match(rust, /fn offline_minecraft_identity\(username: &str\)/);
+    assert.match(rust, /offline_minecraft_identity\(&input\.username\)/);
+    assert.match(rust, /replace\("\$\{user_type\}", &identity\.user_type\)/);
 });
 
 test("Microsoft browser and device authentication do not block the launcher UI thread", async () => {

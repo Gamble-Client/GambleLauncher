@@ -4,6 +4,7 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine as _,
 };
+use md5::{Digest as Md5Digest, Md5};
 use ring::signature::{UnparsedPublicKey, ED25519};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -459,6 +460,7 @@ struct MinecraftProfile {
     xuid: String,
     access_token: String,
     expires_at: u64,
+    user_type: String,
 }
 
 #[derive(Deserialize)]
@@ -1523,11 +1525,11 @@ fn diagnostics(profile: String) -> Result<Diagnostics, String> {
     push_check(
         &mut checks,
         "Microsoft account",
-        microsoft_saved,
+        true,
         if microsoft_saved {
             "Connected"
         } else {
-            "Not connected"
+            "Optional; offline launch available"
         }
         .to_string(),
     );
@@ -1895,11 +1897,20 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
     emit_launch_progress(&app, "Runtime", "Checking managed Java 21 runtime", 1, 13);
     let java = ensure_java_runtime(Some(&app))?;
 
-    emit_launch_progress(&app, "Account", "Refreshing Microsoft session", 2, 13);
-    let account = microsoft_account_for_launch(&input.account_uuid)?.ok_or_else(|| {
-        "Microsoft is linked on the site, but this launcher does not have a local Minecraft token yet. Connect Microsoft in the launcher first.".to_string()
-    })?;
-    let mut identity = refresh_minecraft_identity(account)?;
+    let account = microsoft_account_for_launch(&input.account_uuid)?;
+    let mut identity = if let Some(account) = account {
+        emit_launch_progress(&app, "Account", "Refreshing Microsoft session", 2, 13);
+        refresh_minecraft_identity(account)?
+    } else {
+        emit_launch_progress(
+            &app,
+            "Account",
+            "Preparing offline Minecraft session",
+            2,
+            13,
+        );
+        offline_minecraft_identity(&input.username)?
+    };
     if identity.name.trim().is_empty() && !input.username.trim().is_empty() {
         identity.name = input.username.trim().to_string();
     }
@@ -2269,6 +2280,7 @@ fn refresh_minecraft_identity(account: MicrosoftAccount) -> Result<MinecraftProf
         xuid: profile.xuid,
         access_token: profile.access_token,
         expires_at: profile.expires_at,
+        user_type: profile.user_type,
     })
 }
 
@@ -2291,7 +2303,38 @@ fn cached_minecraft_identity(
         xuid: account.xuid.clone(),
         access_token: account.minecraft_access_token.clone(),
         expires_at: account.minecraft_expires_at,
+        user_type: "msa".to_string(),
     })
+}
+
+fn offline_minecraft_identity(username: &str) -> Result<MinecraftProfile, String> {
+    let name = username
+        .trim()
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || *character == '_')
+        .take(16)
+        .collect::<String>();
+    if name.is_empty() {
+        return Err("Enter a username before launching Minecraft.".to_string());
+    }
+    Ok(MinecraftProfile {
+        uuid: offline_minecraft_uuid(&name),
+        name,
+        xuid: String::new(),
+        access_token: "0".to_string(),
+        expires_at: 0,
+        user_type: "legacy".to_string(),
+    })
+}
+
+fn offline_minecraft_uuid(player_name: &str) -> String {
+    // Keep native launches compatible with the universal Java launcher's
+    // OfflinePlayer UUIDs so worlds and offline-mode servers see the same
+    // player identity regardless of which launcher surface was used.
+    let mut digest = <Md5 as Md5Digest>::digest(format!("OfflinePlayer:{player_name}").as_bytes());
+    digest[6] = (digest[6] & 0x0f) | 0x30;
+    digest[8] = (digest[8] & 0x3f) | 0x80;
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn is_rate_limited_error(error: &str) -> bool {
@@ -3429,7 +3472,7 @@ fn build_minecraft_command(
                 .replace("${auth_access_token}", &identity.access_token)
                 .replace("${clientid}", MICROSOFT_CLIENT_ID)
                 .replace("${auth_xuid}", &identity.xuid)
-                .replace("${user_type}", "msa")
+                .replace("${user_type}", &identity.user_type)
                 .replace("${version_type}", "release")
                 .replace("${user_properties}", "{}")
                 .replace("${profile_properties}", "{}")
@@ -5514,6 +5557,7 @@ fn request_minecraft_profile(minecraft_access_token: &str) -> Result<MinecraftPr
         xuid: String::new(),
         access_token: String::new(),
         expires_at: 0,
+        user_type: "msa".to_string(),
     })
 }
 
@@ -6168,8 +6212,8 @@ mod tests {
         first_party_request_urls, has_launcher_managed_enrollment, is_browser_url,
         is_expected_loader_fabric_metadata, is_required_mod_for_profile, java_feature_from_text,
         launch_log_has_gpu_fault, loader_core_sha256, microsoft_refresh_error,
-        normalize_graphics_mode, quarantine_duplicate_loader_jars, random_base64_url,
-        replace_file_with_rollback, replace_path_with_rollback, safe_file_name,
+        normalize_graphics_mode, offline_minecraft_identity, quarantine_duplicate_loader_jars,
+        random_base64_url, replace_file_with_rollback, replace_path_with_rollback, safe_file_name,
         should_apply_amd_guard, trusted_launcher_update_url, trusted_network_url,
         validate_gpu_selector, verify_fabric_mod_id, verify_fabric_mod_identity,
         webkit_safe_mode_enabled, write_private_file, MANAGED_CLIENT_MOD_ID,
@@ -6336,6 +6380,16 @@ mod tests {
         assert_eq!(validate_gpu_selector(" 1! ").unwrap(), "1!");
         assert!(validate_gpu_selector("1; rm -rf /").is_err());
         assert!(validate_gpu_selector(&"a".repeat(129)).is_err());
+    }
+
+    #[test]
+    fn offline_identity_matches_the_universal_launcher_contract() {
+        let identity = offline_minecraft_identity(" Notch ").unwrap();
+        assert_eq!(identity.name, "Notch");
+        assert_eq!(identity.uuid, "b50ad385829d3141a2167e7d7539ba7f");
+        assert_eq!(identity.access_token, "0");
+        assert_eq!(identity.user_type, "legacy");
+        assert!(offline_minecraft_identity("!!!").is_err());
     }
 
     #[test]

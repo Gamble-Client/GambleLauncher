@@ -1,6 +1,6 @@
 # Gamble Client Launcher — Launcher Handoff
 
-Last updated: 2026-08-27 UTC
+Last updated: 2026-08-31 UTC
 
 This document covers the launcher repository only. Client behavior is in `/home/theac/Desktop/GambleClient/HANDOFF.md`; Site/API and publishing are in `/home/theac/Desktop/cg-mod-release/HANDOFF.md` and `/home/theac/Desktop/RELEASE_HANDOFF.md`.
 
@@ -10,7 +10,7 @@ This document covers the launcher repository only. Client behavior is in `/home/
 - Repository: `/home/theac/Desktop/gamble-client-launcher`
 - Current working branch: `codex/launcher-ui-security-pass-20260821`
 - Current source commit: `3e43b81` (`Bump launcher for sponsor media fix`)
-- Current public launcher version: `0.1.130`
+- Current public launcher version: `0.1.130`; the dashboard-reward migration is prepared as source version `0.1.131` and is not published yet.
 - Native workflow runs: Windows `33019785990`; Linux `33019785988`
 - Universal JAR and the Windows/Linux native packages are the current immutable artifacts. Versions `0.1.113` through `0.1.129` are superseded.
 
@@ -24,6 +24,8 @@ The launcher supports the managed native workflow, the universal JavaFX JAR, and
 - Windows same-name replacement uses a rollback-safe remove/rename sequence because Windows rename does not overwrite an existing target. The same helper protects launcher installer updates.
 - First-party API and download calls use bounded retries and failover between `https://gambleclient.org` and `https://dash.gambleclient.org`. Transport errors are mapped to recovery guidance, not opaque Java stack traces. The packaged binary exposes `--network-self-test`.
 - Browser Microsoft sign-in runs off the UI thread and has a real cancellation path. Play/Cancel leaves the UI rendered and does not leave a stale callback worker or dead launch modal.
+- Native Play permits a launcher-authenticated offline Minecraft session when no Microsoft account is saved, using the same deterministic `OfflinePlayer` UUID and `legacy` auth type as the universal Java launcher. Microsoft authentication remains required for online servers; launcher/client authorization is unchanged.
+- If Minecraft exits before its window appears, the native UI now shows the exit reason and points to Settings → Diagnostics instead of silently returning to idle.
 
 ## Graphics and crash containment
 
@@ -37,9 +39,11 @@ Launcher settings expose four separate choices: `Automatic`, `Safe graphics`, `S
 
 The known RX 6800 incident is a Mesa/AMDGPU GPUVM page fault triggered by Java rendering, followed by a ring timeout, reset, lost VRAM, and context loss in KDE/Xwayland/WebKit. It is not a normal launcher Java exception. The client-side report and current fix are documented in `/home/theac/Desktop/GambleClient/HANDOFF.md`.
 
-## Sponsor media fix
+## Dashboard sponsor verification
 
-The native WebView previously blocked trusted sponsor MP4s because its CSP had no `media-src`. The current source explicitly permits the trusted first-party media origin while keeping the rest of the policy restricted. Release `0.1.130` was verified against live 200 and byte-range MP4 responses; the browser/native sponsor-media “failed to load on this device” path is covered by the current artifact.
+- Ad Tier sponsor playback is no longer embedded in the launcher. The Tauri frontend and universal Java Swing/JavaFX paths receive access state only and send users to `https://dash.gambleclient.org/dashboard.html?section=free` when sponsored time is missing.
+- The Dashboard owns the normal-browser media session. The backend issues a one-use challenge with a 30-second not-before time, a five-minute expiry window, a 60-second per-account start cooldown, and a 72-hour bank cap. The page tracks forward visible playback and the server remains authoritative at completion.
+- Source version `0.1.131` removes the launcher media resolver, embedded video/player fallback, media CSP grant, sponsor overlay, and old launcher reward calls. The old launcher reward routes return `410` with Dashboard guidance.
 
 ## Security and platform notes
 
@@ -57,6 +61,12 @@ Completed for `0.1.130`:
 - Hosted Windows and Linux native tests/builds, including Windows fresh install, same-version reinstall/update, accelerated WebView/render smoke, and source-matched diagnostic DOM checks.
 - Physical Linux GUI smoke: Play reached the Minecraft title screen; an empty profile remained responsive through Play/sign-in/Cancel. A second stored session returned HTTP 401, so a second authenticated-account launch was not available.
 - Sponsor-media 200/range checks and public artifact metadata/byte/hash/provenance checks.
+
+Working-tree fix, not yet published (2026-08-31):
+
+- Native offline launch fallback, startup-exit popup, dashboard-only sponsor verification, updated account copy, and 23 launcher contract tests are implemented.
+- Launcher Vite build, Gradle tests, Rust formatting, and `git diff --check` pass. Site/API checks pass all 195 tests plus the release audit, and the Pages build passes.
+- Full `cargo test --manifest-path src-tauri/Cargo.toml` is currently blocked before test execution because this host lacks GTK/WebKit development packages (`gdk-3.0`, `pango`, `libsoup-3.0`, and related `.pc` files). Native Windows/Linux artifacts still require the hosted workflows and matching manifests before publication.
 
 Useful live checks still worth repeating after launcher changes:
 

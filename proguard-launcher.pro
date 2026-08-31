@@ -85,8 +85,6 @@
     private void cancelLauncherSignIn();
     private void switchLauncherAccount();
     private void startSignIn();
-    private java.util.Map beginSponsorBreakForOverlay();
-    private java.lang.String completeSponsorBreakForOverlay();
     private java.io.File getModsFolder();
     private java.io.File getResourcePacksFolder(com.gambleclient.launcher.Main$LaunchProfile);
     private java.io.File getMinecraftFolder();

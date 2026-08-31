@@ -4,10 +4,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as tauriOpenDialog } from "@tauri-apps/plugin-dialog";
 import "./styles.css";
 import logoUrl from "./assets/cg-mod-icon.png";
-import { resolveSponsorMediaUrl } from "./sponsor-media.js";
 
 const SITE = "https://gambleclient.org";
 const DASH = "https://dash.gambleclient.org";
+const DASHBOARD_FREE_URL = `${DASH}/dashboard.html?section=free`;
 const LAUNCHER_DISMISS_KEY = "gamble.launcher.dismissedLauncherVersion";
 const CLIENT_DISMISS_KEY = "gamble.launcher.dismissedClientVersion";
 const CUSTOM_PROFILES_KEY = "gamble.launcher.customProfiles";
@@ -86,7 +86,6 @@ const state = {
   microsoftSignIn: null,
   microsoftError: "",
   microsoftPollCancelled: false,
-  sponsor: null,
   mods: [],
   packs: [],
   diagnostics: [],
@@ -277,17 +276,8 @@ async function mockInvoke(command, args = {}) {
           ? { displayName: "DemoPlayer", selectedPlan: "ad_tier", accessStatus: "ad_tier", ownerAccess: false }
           : { displayName: "DemoPlayer", selectedPlan: "owner", accessStatus: "owner", ownerAccess: true },
         ads: adTier
-          ? { required: true, canWatch: true, active: false, remainingSeconds: 0, message: "Watch a sponsor break before playing." }
+          ? { required: true, canWatch: true, active: false, remainingSeconds: 0, message: "Open the Dashboard to watch the 30-second sponsor before playing." }
           : { required: false, canWatch: false, active: false, remainingSeconds: 0 }
-      };
-    }
-    if (path === "/api/launcher/ad-reward/start") {
-      return { adSeconds: 1, adUrl: "/assets/placeholder-ad.mp4", challenge: "preview", message: "Preview sponsor break started." };
-    }
-    if (path === "/api/launcher/ad-reward/complete") {
-      return {
-        user: { displayName: "DemoPlayer", selectedPlan: "ad_tier", accessStatus: "ad_tier", ownerAccess: false },
-        ads: { required: true, canWatch: true, active: true, remainingSeconds: 900, message: "Sponsored access active." }
       };
     }
     if (path === "/api/launcher/start") {
@@ -595,7 +585,7 @@ function topbar(signedIn) {
 
 function playView(profile, selectedBuild, canInstall, signedIn) {
   const sponsorBlocked = !state.minecraftRunning && selectedBuild.id === "ad_tier" && !state.ads?.active;
-  const launchLabel = state.minecraftRunning ? "Stop Minecraft" : sponsorBlocked ? "Watch sponsor first" : "Play";
+  const launchLabel = state.minecraftRunning ? "Stop Minecraft" : sponsorBlocked ? "Open Dashboard" : "Play";
   const clientStatus = clientStatusLabel();
   const enabledMods = state.mods.filter((item) => item.enabled).length;
   const enabledPacks = state.packs.filter((item) => item.enabled).length;
@@ -622,9 +612,9 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           </div>
         </div>
         <div class="launch-stack">
-          <button class="launch-button" type="button" data-action="launch" ${state.busy || sponsorBlocked ? "disabled" : ""}>${escapeHtml(launchLabel)}</button>
-          ${sponsorBlocked ? `<p class="launch-warning">Ad Tier needs active sponsored time before each new launch.</p>` : ""}
-          ${activeMicrosoft ? "" : `<p class="launch-warning">No Microsoft account linked. Launch opens Microsoft sign-in first.</p>`}
+          <button class="launch-button" type="button" data-action="launch" ${state.busy ? "disabled" : ""}>${escapeHtml(launchLabel)}</button>
+          ${sponsorBlocked ? `<p class="launch-warning">Watch the 30-second sponsor in the Dashboard, then return here to play.</p>` : ""}
+          ${activeMicrosoft ? "" : `<p class="launch-warning">No Microsoft account linked. Launching an offline session. Online servers require Microsoft authentication.</p>`}
         </div>
       </section>
 
@@ -634,19 +624,19 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           <div>
             <span class="eyebrow">Active identity</span>
             <strong>${escapeHtml(activeMicrosoft?.name || accountTitle())}</strong>
-            <small>${escapeHtml(activeMicrosoft ? `Launching with ${profileAccountLabel(profile)}` : "Connect Microsoft before launching")}</small>
+            <small>${escapeHtml(activeMicrosoft ? `Launching with ${profileAccountLabel(profile)}` : "Offline session · online servers require Microsoft")}</small>
           </div>
         </div>
         ${accountRow("Launcher", accountTitle(), accountMeta(), signedIn ? "Signed in" : "Required", launcherAvatarStyle())}
-        ${accountRow("Minecraft", microsoftTitle(), state.microsoft ? `${state.microsoftAccounts.length || 1} saved account${(state.microsoftAccounts.length || 1) === 1 ? "" : "s"}` : "Required for launch", state.microsoft ? "Linked" : "Required", avatarStyle(state.microsoft), avatarInitials(state.microsoft?.name))}
+        ${accountRow("Minecraft", microsoftTitle(), state.microsoft ? `${state.microsoftAccounts.length || 1} saved account${(state.microsoftAccounts.length || 1) === 1 ? "" : "s"}` : "Offline launch available", state.microsoft ? "Linked" : "Offline", avatarStyle(state.microsoft), avatarInitials(state.microsoft?.name))}
       </aside>
     </section>
 
     <section class="quick-grid main-quick-grid">
       <article class="action-tile">
-        <span>Sponsor</span>
+        <span>Dashboard access</span>
         <strong>${escapeHtml(sponsorTitle())}</strong>
-        <button type="button" data-action="sponsor" ${!signedIn || !state.ads?.canWatch || state.busy ? "disabled" : ""}>Watch</button>
+        <button type="button" data-action="open-dashboard" ${state.busy ? "disabled" : ""}>Open Dashboard</button>
       </article>
       <article class="action-tile">
         <span>Mods</span>
@@ -664,7 +654,6 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
         <button type="button" data-open="${DASH}/dashboard.html#spotify">Open Dashboard</button>
       </article>
     </section>
-    ${state.sponsor ? sponsorOverlay() : ""}
   `;
 }
 
@@ -1363,20 +1352,6 @@ function diagnosticsPanel() {
   `;
 }
 
-function sponsorOverlay() {
-  const url = state.sponsor.adUrl || "";
-  return `
-    <section class="sponsor-panel">
-      <div>
-        <span class="eyebrow">Sponsor break</span>
-        <h2 data-sponsor-countdown>${state.sponsor.remaining}s</h2>
-        <p>${escapeHtml(state.sponsor.message || "Keep the launcher open until the timer finishes.")}</p>
-      </div>
-      ${url ? `<div class="sponsor-media-shell"><video data-sponsor-media src="${escapeAttr(url)}" controls autoplay muted loop playsinline></video><div class="sponsor-media-status" data-sponsor-media-status>Loading sponsor…</div></div>` : `<div class="sponsor-fallback">Sponsor media is unavailable. No reward will be granted.</div>`}
-    </section>
-  `;
-}
-
 function logView() {
   const lines = state.log.slice(-100).map((line) => {
     const severity = logSeverity(line);
@@ -1446,7 +1421,7 @@ function titleWords(value) {
 function microsoftTitle() {
   if (state.microsoft?.name) return state.microsoft.name;
   if (state.microsoftSignIn) return "Sign-in pending";
-  return "Microsoft required";
+  return "Offline session";
 }
 
 function adTierOnly() {
@@ -1776,6 +1751,14 @@ async function refreshMinecraftStatus(options = {}) {
         log(state.minecraftExit?.message || "Minecraft is no longer running.");
       }
     }
+    if (wasRunning && !state.minecraftRunning && options.showExitPopup && state.minecraftExit) {
+      const exitMessage = state.minecraftExit.gpuFault
+        ? knownLaunchMessage(state.minecraftExit.message)
+        : state.minecraftExit.crashed
+          ? `${knownLaunchMessage(state.minecraftExit.message)} Open Settings → Diagnostics for the latest launch log.`
+          : "Minecraft closed before its window appeared. Open Settings → Diagnostics for the latest launch log.";
+      showPopup("Minecraft stopped during startup", exitMessage, "launch");
+    }
     const changed = wasRunning !== state.minecraftRunning
       || oldPid !== state.minecraftPid
       || oldExitKey !== JSON.stringify(state.minecraftExit || null);
@@ -2056,75 +2039,13 @@ async function downloadLauncherUpdate() {
   }
 }
 
-async function startSponsor() {
-  setBusy(true, "Starting sponsor break");
+async function openDashboardForAds() {
   try {
-    const start = await api("/api/launcher/ad-reward/start", { method: "POST", body: "{}" });
-    const ads = start.ads || start.adReward || {};
-    const seconds = Number(ads.adSeconds || start.adSeconds || 30);
-    const adUrl = resolveSponsorMediaUrl(ads.adUrl || start.adUrl || "", SITE);
-    if (!adUrl) throw new Error("Sponsor media URL is missing or invalid.");
-    state.sponsor = {
-      remaining: seconds,
-      adUrl,
-      challenge: start.challenge || "",
-      message: start.message || ads.message || ""
-    };
-    log(`Sponsor break started: ${seconds}s`);
-    render();
-    await runSponsorPlayback(seconds);
-    const complete = await api("/api/launcher/ad-reward/complete", { method: "POST", body: JSON.stringify({ challenge: state.sponsor.challenge }) });
-    applyAccount(complete);
-    state.sponsor = null;
-    log(complete.message || "Sponsored access refreshed.");
+    await invoke("open_url", { url: DASHBOARD_FREE_URL });
+    log("Opened the Dashboard sponsor check. Watch the 30-second ad there, then return to the launcher.");
   } catch (error) {
-    const message = String(error?.message || error || "Sponsor media could not be played.");
-    state.sponsor = null;
-    log(`Sponsor break failed: ${message}`);
-    showPopup("Sponsor unavailable", message, "sponsor");
-  } finally {
-    setBusy(false);
-  }
-}
-
-async function runSponsorPlayback(seconds) {
-  await new Promise((resolve) => requestAnimationFrame(resolve));
-  const video = document.querySelector("[data-sponsor-media]");
-  if (!video) throw new Error("Sponsor media is unavailable; reward was not granted.");
-  const status = document.querySelector("[data-sponsor-media-status]");
-  let mediaError = "";
-  video.addEventListener("error", () => {
-    mediaError = "Sponsor media failed to load on this device.";
-    if (status) status.textContent = mediaError;
-  }, { once: true });
-  video.addEventListener("stalled", () => {
-    if (status) status.textContent = "Sponsor media stalled. Retrying…";
-  });
-
-  try {
-    await video.play();
-  } catch {
-    if (status) status.textContent = "Press play to begin the sponsor break.";
-  }
-
-  const readyDeadline = Date.now() + 15_000;
-  while (video.readyState < 2 || video.paused) {
-    if (!video.isConnected) throw new Error("Sponsor media was closed; reward was not granted.");
-    if (mediaError) throw new Error(mediaError);
-    if (Date.now() >= readyDeadline) throw new Error("Sponsor media did not begin playing. Try again or update the launcher.");
-    await sleep(250);
-  }
-  if (status) status.hidden = true;
-
-  let watched = 0;
-  while (watched < seconds) {
-    await sleep(1000);
-    if (!video.isConnected) throw new Error("Sponsor media was closed; reward was not granted.");
-    if (mediaError) throw new Error(mediaError);
-    if (!video.paused && !video.ended && video.readyState >= 2 && !document.hidden) watched += 1;
-    state.sponsor.remaining = Math.max(0, seconds - watched);
-    const countdown = document.querySelector("[data-sponsor-countdown]");
-    if (countdown) countdown.textContent = `${state.sponsor.remaining}s`;
+    log(`Could not open the Dashboard: ${error.message || error}`);
+    showPopup("Open Dashboard", "Open " + DASHBOARD_FREE_URL + " in a browser, watch the 30-second sponsor break, then return here.", "dashboard");
   }
 }
 
@@ -2438,6 +2359,8 @@ app.addEventListener("click", async (event) => {
     render();
   } else if (action === "download-launcher") {
     await downloadLauncherUpdate();
+  } else if (action === "open-dashboard") {
+    await openDashboardForAds();
   } else if (action === "dismiss-launcher-popup") {
     state.dismissedLauncherVersion = latestLauncherVersion();
     writeStorage(LAUNCHER_DISMISS_KEY, state.dismissedLauncherVersion);
@@ -2482,7 +2405,8 @@ app.addEventListener("click", async (event) => {
         render();
         await refreshAccountForUpdate();
         if (buildForAccount().id === "ad_tier" && !state.ads?.active) {
-          showPopup("Sponsor break needed", "Watch the sponsor break in Gamble Client Launcher before launching Ad Tier.", "sponsor");
+          showPopup("Dashboard sponsor check", "Open the Dashboard and watch the 30-second sponsor break, then return to the launcher.", "dashboard");
+          await openDashboardForAds();
           return;
         }
         state.launchProgress = normalizeLaunchProgress({
@@ -2499,13 +2423,6 @@ app.addEventListener("click", async (event) => {
       const selectedAccount = profileAccount(selectedProfile);
       if (!state.minecraftRunning && clientNeedsUpdate()) {
         showPopup("Client update needed", state.clientStatus?.message || "Install the latest managed client memory loader before launching.", "client");
-        return;
-      }
-      if (!state.minecraftRunning && !selectedAccount) {
-        state.popup = null;
-        state.launchProgress = null;
-        setBusy(false);
-        await startMicrosoftSignIn();
         return;
       }
       setBusy(true, "Preparing Minecraft");
@@ -2534,7 +2451,7 @@ app.addEventListener("click", async (event) => {
         state.minecraftExit = null;
       }
       log(message);
-      await refreshMinecraftStatus({ render: false, logExit: false });
+      await refreshMinecraftStatus({ render: false, logExit: true, showExitPopup: true });
     } catch (error) {
       state.launchProgress = null;
       log(`Launch failed: ${error.message || error}`);
@@ -2636,8 +2553,6 @@ app.addEventListener("click", async (event) => {
     state.busy = false;
     log("Microsoft sign-in cancelled.");
     render();
-  } else if (action === "sponsor") {
-    await startSponsor();
   } else if (action === "toggle-advanced") {
     state.showAdvancedSettings = !state.showAdvancedSettings;
     writeStorage(ADVANCED_SETTINGS_KEY, String(state.showAdvancedSettings));

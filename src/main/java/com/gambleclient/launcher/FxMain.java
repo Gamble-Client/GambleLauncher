@@ -37,10 +37,6 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.TilePane;
 import javafx.scene.layout.VBox;
-import javafx.scene.media.Media;
-import javafx.scene.media.MediaPlayer;
-import javafx.scene.media.MediaView;
-import javafx.scene.web.WebView;
 import javafx.stage.Stage;
 import javafx.stage.FileChooser;
 import javafx.util.Duration;
@@ -52,11 +48,9 @@ import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import java.awt.Desktop;
 import java.io.File;
-import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.URI;
-import java.net.HttpURLConnection;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import javax.sound.sampled.AudioFormat;
@@ -113,8 +107,6 @@ public class FxMain extends Application {
     private Label sidebarAdCopy;
     private Button sidebarAdButton;
     private Timeline hudInfoRefresh;
-    private MediaPlayer sponsorMediaPlayer;
-    private WebView sponsorWebView;
     private String lastLog = "";
     private boolean syncingFromBackend;
     private boolean slotSoundsEnabled = true;
@@ -1083,17 +1075,17 @@ public class FxMain extends Application {
 
     private VBox sidebarAdBox() {
         VBox box = new VBox(6);
-        box.getStyleClass().add("ad-card");
-        Label title = label("Ad Space", "chip-name");
-        Label copy = label("Watch a sponsor break to refresh Ad Tier access.", "ad-copy");
+        box.getStyleClass().add("dashboard-card");
+        Label title = label("Dashboard Access", "chip-name");
+        Label copy = label("Watch the 30-second sponsor in the Dashboard, then return here.", "dashboard-copy");
         copy.setWrapText(true);
-        Button watch = secondary("Watch Ad");
-        watch.setMaxWidth(Double.MAX_VALUE);
-        watch.setOnAction(event -> openSponsorBreak());
+        Button dashboard = secondary("Open Dashboard");
+        dashboard.setMaxWidth(Double.MAX_VALUE);
+        dashboard.setOnAction(event -> openDashboardForAds());
         sidebarAd = box;
         sidebarAdCopy = copy;
-        sidebarAdButton = watch;
-        box.getChildren().addAll(title, copy, watch);
+        sidebarAdButton = dashboard;
+        box.getChildren().addAll(title, copy, dashboard);
         box.setManaged(false);
         box.setVisible(false);
         return box;
@@ -1110,300 +1102,20 @@ public class FxMain extends Application {
         sidebarAd.setManaged(required);
         sidebarAd.setVisible(required);
         sidebarAdButton.setDisable(!canWatch);
-        sidebarAdButton.setText(canWatch ? "Watch Ad" : "Ad Capped");
+        sidebarAdButton.setText(canWatch ? "Open Dashboard" : "Access Capped");
         if (active && remaining > 0) {
             sidebarAdCopy.setText("Sponsored access active for " + compactDuration(remaining) + ".");
         } else if (!message.isBlank()) {
             sidebarAdCopy.setText(message);
         } else {
-            sidebarAdCopy.setText("Watch a sponsor break to refresh Ad Tier access.");
+            sidebarAdCopy.setText("Watch the 30-second sponsor in the Dashboard, then return here.");
         }
     }
 
-    private void openSponsorBreak() {
-        Object ads = field("launcherAds");
-        if (ads == null || !objectFieldBoolean(ads, "required")) return;
-        if (!objectFieldBoolean(ads, "canWatch")) {
-            appendLog("Sponsor break is not available for this account right now.");
-            return;
-        }
-
-        Map<String, Object> start = backendMap("beginSponsorBreakForOverlay");
-        if (start.isEmpty()) return;
-        int seconds = Math.max(5, mapInt(start, "adSeconds"));
-        String adUrl = mapString(start, "adUrl");
-        if (adUrl.isBlank()) adUrl = "/assets/placeholder-ad.mp4";
-        showSponsorOverlay(resolveAdUrl(adUrl), seconds);
-    }
-
-    private void showSponsorOverlay(String adUrl, int seconds) {
-        if (appRoot == null) return;
-        StackPane overlay = new StackPane();
-        overlay.getStyleClass().add("ad-overlay");
-        VBox modal = new VBox(14);
-        modal.getStyleClass().add("ad-modal");
-        modal.setMaxWidth(720);
-        Label title = label("Sponsor Break", "heading");
-        Label copy = label("Keep the launcher open while the ad finishes.", "muted");
-        copy.setWrapText(true);
-        StackPane mediaBox = new StackPane();
-        mediaBox.getStyleClass().add("ad-player");
-        Label fallback = label("Loading sponsor media...", "ad-player-fallback");
-        mediaBox.getChildren().add(fallback);
-        ProgressBar bar = new ProgressBar(0);
-        bar.setMaxWidth(Double.MAX_VALUE);
-        Label countdown = label(seconds + "s left", "ad-copy");
-        Button leave = secondary("Leave");
-        FlowPane controls = buttonRow(leave);
-        HBox confirmLeave = new HBox(10);
-        confirmLeave.setAlignment(Pos.CENTER_LEFT);
-        confirmLeave.getStyleClass().add("ad-leave-confirm");
-        Label confirmCopy = label("Leaving now forfeits the reward.", "muted");
-        Button keepWatching = secondary("Keep Watching");
-        Button leaveAnyway = secondary("Leave Anyway");
-        confirmLeave.getChildren().addAll(confirmCopy, keepWatching, leaveAnyway);
-        confirmLeave.setManaged(false);
-        confirmLeave.setVisible(false);
-
-        loadSponsorMedia(mediaBox, fallback, adUrl);
-
-        final Timeline[] timerRef = new Timeline[1];
-        leave.setOnAction(event -> {
-            confirmLeave.setManaged(true);
-            confirmLeave.setVisible(true);
-            controls.setManaged(false);
-            controls.setVisible(false);
-        });
-        keepWatching.setOnAction(event -> {
-            confirmLeave.setManaged(false);
-            confirmLeave.setVisible(false);
-            controls.setManaged(true);
-            controls.setVisible(true);
-        });
-        leaveAnyway.setOnAction(event -> {
-            if (timerRef[0] != null) timerRef[0].stop();
-            stopSponsorMedia();
-            appRoot.getChildren().remove(overlay);
-            appendLog("Sponsor break closed before completion. No reward was granted.");
-        });
-
-        modal.getChildren().addAll(title, copy, mediaBox, countdown, bar, controls, confirmLeave);
-        overlay.getChildren().add(modal);
-        appRoot.getChildren().add(overlay);
-
-        final int[] watchedSeconds = new int[] {0};
-        final int[] waitingSeconds = new int[] {0};
-        Timeline timer = new Timeline(new KeyFrame(Duration.seconds(1), event -> {
-            SponsorPlaybackState playback = sponsorPlaybackState();
-            if (playback != SponsorPlaybackState.PLAYING) {
-                waitingSeconds[0]++;
-                if (playback == SponsorPlaybackState.FAILED || waitingSeconds[0] >= 15) {
-                    timerRef[0].stop();
-                    stopSponsorMedia();
-                    fallback.setText("Sponsor media could not play on this device. Update the launcher or try again.");
-                    mediaBox.getChildren().setAll(fallback);
-                    countdown.setText("Media unavailable");
-                    appendLog("Sponsor media did not begin playback. No reward was granted.");
-                }
-                return;
-            }
-            waitingSeconds[0] = 0;
-            int tick = Math.min(seconds, ++watchedSeconds[0]);
-            int remaining = Math.max(0, seconds - tick);
-            countdown.setText(remaining == 0 ? "Finishing..." : remaining + "s left");
-            bar.setProgress(Math.min(1.0, tick / (double) Math.max(1, seconds)));
-            if (tick >= seconds) {
-                timerRef[0].stop();
-                stopSponsorMedia();
-                appRoot.getChildren().remove(overlay);
-                String result = backendString("completeSponsorBreakForOverlay");
-                if (!result.isBlank()) appendLog(result);
-            }
-        }));
-        timerRef[0] = timer;
-        timer.setCycleCount(Timeline.INDEFINITE);
-        timer.play();
-    }
-
-    private void stopSponsorMedia() {
-        if (sponsorMediaPlayer != null) {
-            try {
-                sponsorMediaPlayer.stop();
-                sponsorMediaPlayer.dispose();
-            } catch (RuntimeException ignored) {
-            } finally {
-                sponsorMediaPlayer = null;
-            }
-        }
-        sponsorWebView = null;
-    }
-
-    private void loadSponsorMedia(StackPane mediaBox, Label fallback, String adUrl) {
-        if (!isDirectMediaUrl(adUrl)) {
-            fallback.setText("Sponsor media is not playable. Ask staff to upload an MP4 or WebM ad.");
-            return;
-        }
-
-        stopSponsorMedia();
-        Thread loader = new Thread(() -> {
-            try {
-                String mediaSource = cacheSponsorMedia(adUrl);
-                Platform.runLater(() -> playSponsorMedia(mediaBox, fallback, adUrl, mediaSource));
-            } catch (Exception e) {
-                Platform.runLater(() -> appendLog("Sponsor media download failed: " + e.getMessage()));
-                Platform.runLater(() -> showSponsorFallback(mediaBox, fallback));
-            }
-        }, "Sponsor media loader");
-        loader.setDaemon(true);
-        loader.start();
-    }
-
-    private String cacheSponsorMedia(String adUrl) throws IOException {
-        String extension = sponsorMediaExtension(adUrl);
-        java.nio.file.Path temp = Files.createTempFile("gamble-sponsor-", extension);
-        temp.toFile().deleteOnExit();
-        HttpURLConnection connection = (HttpURLConnection) URI.create(adUrl).toURL().openConnection();
-        try {
-            connection.setInstanceFollowRedirects(false);
-            connection.setConnectTimeout(8000);
-            connection.setReadTimeout(20000);
-            connection.setRequestProperty("User-Agent", "GambleClientLauncher/" + backendString("launcherVersion"));
-            int status = connection.getResponseCode();
-            if (status < 200 || status >= 300) throw new IOException("Sponsor media returned HTTP " + status + ".");
-            long declaredSize = connection.getContentLengthLong();
-            long maxBytes = 64L * 1024L * 1024L;
-            if (declaredSize > maxBytes) throw new IOException("Sponsor media exceeds the 64 MiB limit.");
-            try (InputStream input = connection.getInputStream(); java.io.OutputStream output = Files.newOutputStream(temp)) {
-                byte[] buffer = new byte[16384];
-                long total = 0;
-                for (int read; (read = input.read(buffer)) >= 0; ) {
-                    total += read;
-                    if (total > maxBytes) throw new IOException("Sponsor media exceeds the 64 MiB limit.");
-                    output.write(buffer, 0, read);
-                }
-            }
-        } finally {
-            connection.disconnect();
-        }
-        if (Files.size(temp) <= 0) throw new IOException("Sponsor media download was empty.");
-        return temp.toUri().toString();
-    }
-
-    private void playSponsorMedia(StackPane mediaBox, Label fallback, String adUrl, String mediaSource) {
-        try {
-            stopSponsorMedia();
-            Media media = new Media(mediaSource);
-            MediaPlayer player = new MediaPlayer(media);
-            MediaView view = new MediaView(player);
-            view.setPreserveRatio(true);
-            view.setFitWidth(650);
-            view.setFitHeight(330);
-            player.setMute(true);
-            player.setCycleCount(MediaPlayer.INDEFINITE);
-            player.setOnReady(() -> {
-                mediaBox.getChildren().setAll(view);
-                player.play();
-            });
-            player.setOnError(() -> showSponsorWebFallback(mediaBox, fallback, adUrl, mediaSource, player.getError()));
-            media.setOnError(() -> showSponsorWebFallback(mediaBox, fallback, adUrl, mediaSource, media.getError()));
-            sponsorMediaPlayer = player;
-        } catch (RuntimeException e) {
-            showSponsorWebFallback(mediaBox, fallback, adUrl, mediaSource, e);
-        }
-    }
-
-    private void showSponsorWebFallback(StackPane mediaBox, Label fallback, String adUrl, String mediaSource, Throwable error) {
-        stopSponsorMedia();
-        if (error != null && error.getMessage() != null && !error.getMessage().isBlank()) {
-            appendLog("JavaFX media playback failed: " + error.getMessage());
-        } else {
-            appendLog("JavaFX media playback failed; trying embedded web playback.");
-        }
-
-        try {
-            WebView webView = new WebView();
-            webView.setContextMenuEnabled(false);
-            webView.setPrefSize(650, 330);
-            String source = mediaSource == null || mediaSource.isBlank() ? resolveAdUrl(adUrl) : mediaSource;
-            String tag = isAudioMediaUrl(adUrl)
-                ? "<audio controls autoplay loop muted style=\"width:100%;height:100%;background:#050408\" src=\"" + htmlAttr(source) + "\"></audio>"
-                : "<video controls autoplay loop muted playsinline style=\"width:100%;height:100%;object-fit:contain;background:#050408\" src=\"" + htmlAttr(source) + "\"></video>";
-            webView.getEngine().loadContent("<!doctype html><html><body style=\"margin:0;background:#050408;overflow:hidden\">" + tag + "</body></html>");
-            sponsorWebView = webView;
-            mediaBox.getChildren().setAll(webView);
-        } catch (RuntimeException webError) {
-            appendLog("Embedded sponsor media playback failed: " + webError.getMessage());
-            showSponsorFallback(mediaBox, fallback);
-        }
-    }
-
-    private void showSponsorFallback(StackPane mediaBox, Label fallback) {
-        stopSponsorMedia();
-        fallback.setText("Sponsor media could not be displayed on this device. Try uploading an H.264 MP4 ad.");
-        mediaBox.getChildren().setAll(fallback);
-    }
-
-    private SponsorPlaybackState sponsorPlaybackState() {
-        if (sponsorMediaPlayer != null) {
-            if (sponsorMediaPlayer.getError() != null || sponsorMediaPlayer.getStatus() == MediaPlayer.Status.HALTED) {
-                return SponsorPlaybackState.FAILED;
-            }
-            return sponsorMediaPlayer.getStatus() == MediaPlayer.Status.PLAYING
-                ? SponsorPlaybackState.PLAYING
-                : SponsorPlaybackState.WAITING;
-        }
-        if (sponsorWebView == null) return SponsorPlaybackState.WAITING;
-        try {
-            Object result = sponsorWebView.getEngine().executeScript("""
-                (() => {
-                    const media = document.querySelector('video, audio');
-                    if (!media || media.error) return 'failed';
-                    if (!media.paused && !media.ended && media.readyState >= 2) return 'playing';
-                    return 'waiting';
-                })()
-                """);
-            if ("playing".equals(result)) return SponsorPlaybackState.PLAYING;
-            if ("failed".equals(result)) return SponsorPlaybackState.FAILED;
-        } catch (RuntimeException ignored) {
-            return SponsorPlaybackState.FAILED;
-        }
-        return SponsorPlaybackState.WAITING;
-    }
-
-    private enum SponsorPlaybackState {
-        PLAYING,
-        WAITING,
-        FAILED
-    }
-
-    private boolean isDirectMediaUrl(String url) {
-        String lower = mediaUrlPath(url);
-        return lower.endsWith(".mp4") || lower.endsWith(".m4v") || lower.endsWith(".mov") || lower.endsWith(".webm") || lower.endsWith(".m3u8") || lower.endsWith(".mp3") || lower.endsWith(".wav");
-    }
-
-    private boolean isAudioMediaUrl(String url) {
-        String lower = mediaUrlPath(url);
-        return lower.endsWith(".mp3") || lower.endsWith(".wav");
-    }
-
-    private String sponsorMediaExtension(String url) {
-        String lower = mediaUrlPath(url);
-        if (lower.endsWith(".m4v")) return ".m4v";
-        if (lower.endsWith(".mov")) return ".mov";
-        if (lower.endsWith(".webm")) return ".webm";
-        if (lower.endsWith(".m3u8")) return ".m3u8";
-        if (lower.endsWith(".mp3")) return ".mp3";
-        if (lower.endsWith(".wav")) return ".wav";
-        return ".mp4";
-    }
-
-    private String mediaUrlPath(String url) {
-        String lower = String.valueOf(url).toLowerCase(Locale.ROOT);
-        int query = lower.indexOf('?');
-        if (query >= 0) lower = lower.substring(0, query);
-        int hash = lower.indexOf('#');
-        if (hash >= 0) lower = lower.substring(0, hash);
-        return lower;
+    private void openDashboardForAds() {
+        String base = backendString("siteUrl").replaceAll("/+$", "");
+        if (base.isBlank()) base = "https://gambleclient.org";
+        openUrl(base + "/dashboard.html?section=free");
     }
 
     private String accountStatusWithMicrosoft() {
@@ -1421,33 +1133,6 @@ public class FxMain extends Application {
         alert.setHeaderText(title);
         alert.initOwner(stage);
         alert.showAndWait();
-    }
-
-    private String htmlAttr(String value) {
-        return String.valueOf(value == null ? "" : value)
-            .replace("&", "&amp;")
-            .replace("\"", "&quot;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;");
-    }
-
-    private String resolveAdUrl(String value) {
-        String text = value == null ? "" : value.trim();
-        String base = backendString("siteUrl");
-        if (base.isBlank()) base = "https://gambleclient.org";
-        try {
-            URI uri = URI.create(text.startsWith("http://") || text.startsWith("https://") ? text : base.replaceAll("/+$", "") + (text.startsWith("/") ? text : "/" + text));
-            String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
-            if (!"https".equalsIgnoreCase(uri.getScheme())
-                || (!host.equals("gambleclient.org") && !host.endsWith(".gambleclient.org"))
-                || uri.getUserInfo() != null || uri.getPort() != -1) {
-                throw new IllegalArgumentException("Sponsor media host is not allowed.");
-            }
-            return uri.toString();
-        } catch (RuntimeException error) {
-            appendLog("Rejected sponsor media URL: " + error.getMessage());
-            return "";
-        }
     }
 
     private String compactDuration(long seconds) {

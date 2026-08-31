@@ -119,7 +119,7 @@
     -fx-border-color: rgba(104, 141, 187, 0.42);
 }
 
-.ad-card {
+.dashboard-card {
     -fx-background-color: linear-gradient(to right, rgba(104, 141, 187, 0.16), rgba(230, 146, 35, 0.07));
     -fx-background-radius: 8;
     -fx-border-color: rgba(104, 141, 187, 0.34);
@@ -127,39 +127,10 @@
     -fx-padding: 12;
 }
 
-.ad-copy {
+.dashboard-copy {
     -fx-text-fill: #dce8ff;
     -fx-font-size: 12px;
     -fx-font-weight: 700;
-}
-
-.ad-overlay {
-    -fx-background-color: rgba(5, 5, 8, 0.74);
-    -fx-padding: 28;
-}
-
-.ad-modal {
-    -fx-background-color: linear-gradient(to bottom right, rgba(28, 24, 35, 0.98), rgba(13, 13, 18, 0.98));
-    -fx-background-radius: 14;
-    -fx-border-color: rgba(230, 146, 35, 0.38);
-    -fx-border-radius: 14;
-    -fx-padding: 22;
-    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.42), 34, 0.2, 0, 16);
-}
-
-.ad-player {
-    -fx-background-color: #07070a;
-    -fx-background-radius: 10;
-    -fx-border-color: rgba(255, 255, 255, 0.08);
-    -fx-border-radius: 10;
-    -fx-min-height: 330;
-    -fx-pref-height: 330;
-}
-
-.ad-player-fallback {
-    -fx-text-fill: #dce8ff;
-    -fx-font-size: 18px;
-    -fx-font-weight: 900;
 }
 
 .disclaimer-copy {
@@ -609,8 +580,7 @@
 
 .card,
 .log-card,
-.modal,
-.ad-modal {
+.modal {
     -fx-background-color: linear-gradient(to bottom right, #1b2128, #12171c);
     -fx-background-radius: 18;
     -fx-border-color: rgba(255, 255, 255, 0.055);
@@ -622,7 +592,7 @@
 .chip,
 .version-chip,
 .slot-card,
-.ad-card,
+.dashboard-card,
 .selected-build-label,
 .notice,
 .mod-row,

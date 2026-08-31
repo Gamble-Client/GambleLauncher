@@ -192,7 +192,6 @@ nav {
 .log-card,
 .screen-band,
 .friends-panel,
-.sponsor-panel,
 .signin-panel {
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -1164,10 +1163,8 @@ option {
   background: #0d0d0d;
 }
 
-.sponsor-panel,
 .signin-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 330px;
   align-items: center;
   gap: 18px;
   margin-top: 12px;
@@ -1185,47 +1182,6 @@ option {
   color: #d7d7d7;
   font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   font-size: 0.8rem;
-}
-
-.sponsor-media-shell,
-.sponsor-panel video,
-.sponsor-fallback {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  border-radius: 6px;
-  background: #050505;
-}
-
-.sponsor-media-shell {
-  position: relative;
-  overflow: hidden;
-}
-
-.sponsor-media-shell video {
-  display: block;
-  height: 100%;
-  object-fit: contain;
-}
-
-.sponsor-media-status {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 18px;
-  background: rgba(5, 5, 5, .88);
-  color: #f1c56c;
-  text-align: center;
-}
-
-.sponsor-media-status[hidden] { display: none; }
-
-.sponsor-fallback {
-  display: grid;
-  place-items: center;
-  padding: 18px;
-  color: #bac6d8;
-  text-align: center;
 }
 
 .log-card {
@@ -2192,7 +2148,6 @@ nav { gap: 4px; }
 .log-card,
 .screen-band,
 .friends-panel,
-.sponsor-panel,
 .signin-panel,
 .account-card,
 .update-card,
@@ -2478,7 +2433,6 @@ body {
 .action-tile,
 .log-card,
 .friends-panel,
-.sponsor-panel,
 .signin-panel,
 .account-card,
 .update-card,
