@@ -9,7 +9,7 @@ This document covers the launcher repository only. Client behavior is in `/home/
 - GitHub: [Gamble-Client/GambleLauncher](https://github.com/Gamble-Client/GambleLauncher)
 - Repository: `/home/theac/Desktop/gamble-client-launcher`
 - Current working branch: `codex/launcher-ui-security-pass-20260821`
-- Current source commit: `d91805a` (`Move sponsor verification to Dashboard`)
+- Published artifact source: `d91805a` (`Move sponsor verification to Dashboard`); the repository may advance with documentation-only handoff commits.
 - Current public launcher version: `0.1.131`; the Dashboard sponsor migration is live.
 - Native workflow runs: Windows `33437745051`; Linux `33437744351`
 - Universal JAR and the Windows/Linux native packages are the current immutable artifacts. Versions `0.1.113` through `0.1.129` are superseded.
