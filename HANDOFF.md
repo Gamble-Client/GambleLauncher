@@ -1,6 +1,6 @@
 # Gamble Client Launcher — Launcher Handoff
 
-Last updated: 2026-08-31 UTC
+Last updated: 2026-09-01 UTC
 
 This document covers the launcher repository only. Client behavior is in `/home/theac/Desktop/GambleClient/HANDOFF.md`; Site/API and publishing are in `/home/theac/Desktop/cg-mod-release/HANDOFF.md` and `/home/theac/Desktop/RELEASE_HANDOFF.md`.
 
@@ -11,6 +11,7 @@ This document covers the launcher repository only. Client behavior is in `/home/
 - Current working branch: `codex/launcher-ui-security-pass-20260821`
 - Published artifact source: `d91805a` (`Move sponsor verification to Dashboard`); the repository may advance with documentation-only handoff commits.
 - Current public launcher version: `0.1.131`; the Dashboard sponsor migration is live.
+- Current standalone-loader feed: `1.4.22`; the published loader now has the same trusted-origin backend failover as the launcher for connection failures.
 - Native workflow runs: Windows `33437745051`; Linux `33437744351`
 - Universal JAR and the Windows/Linux native packages are the current immutable artifacts. Versions `0.1.113` through `0.1.129` are superseded.
 
