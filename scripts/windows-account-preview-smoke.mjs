@@ -95,6 +95,11 @@ for (const fixture of fixtures) {
   }
 
   await evaluate(`document.querySelector('button[data-view="play"]')?.click()`);
+  await waitFor(
+    `Boolean(document.querySelector('[data-view-frame="play"] [data-action="launch"]'))`,
+    Boolean,
+    `${fixture.id} play view`
+  );
   if (fixture.outcome === "dashboard") {
     await evaluate(`document.querySelector('[data-action="launch"]')?.click()`);
     await waitFor(
