@@ -94,13 +94,13 @@ for (const fixture of fixtures) {
     throw new Error(`${fixture.id} exposed ${JSON.stringify(builds)}; expected ${JSON.stringify(fixture.builds)}.`);
   }
 
-  await evaluate(`document.querySelector('button[data-view="play"]')?.click()`);
-  await waitFor(
-    `Boolean(document.querySelector('[data-view-frame="play"] [data-action="launch"]'))`,
-    Boolean,
-    `${fixture.id} play view`
-  );
   if (fixture.outcome === "dashboard") {
+    await evaluate(`document.querySelector('button[data-view="play"]')?.click()`);
+    await waitFor(
+      `Boolean(document.querySelector('[data-view-frame="play"] [data-action="launch"]'))`,
+      Boolean,
+      `${fixture.id} play view`
+    );
     await evaluate(`document.querySelector('[data-action="launch"]')?.click()`);
     await waitFor(
       `({heading:[...document.querySelectorAll('h2')].some((node)=>node.textContent.includes('Dashboard sponsor check')),running:document.body?.innerText?.includes('STOP MINECRAFT')})`,
@@ -108,16 +108,28 @@ for (const fixture of fixtures) {
       `${fixture.id} sponsor redirect`
     );
   } else {
-    await evaluate(`{const buttons=[...document.querySelectorAll('[data-action="install"]')];buttons.at(-1)?.click()}`);
+    await evaluate(`document.querySelector('button[data-view="updates"]')?.click()`);
     await waitFor(
-      `document.querySelector('[data-action="launch"]')?.textContent?.trim().toUpperCase()`,
-      (value) => value === "PLAY",
+      `Boolean(document.querySelector('[data-view-frame="updates"] [data-action="install"]'))`,
+      Boolean,
+      `${fixture.id} updates view`
+    );
+    await evaluate(`document.querySelector('[data-view-frame="updates"] [data-action="install"]')?.click()`);
+    await waitFor(
+      `(()=>{const card=[...document.querySelectorAll('[data-view-frame="updates"] .update-card')].find((node)=>node.querySelector('span')?.textContent?.trim()==='Managed client');const button=card?.querySelector('[data-action="install"]');return {status:card?.querySelector('strong')?.textContent?.trim()||'',disabled:Boolean(button?.disabled)};})()`,
+      (value) => value?.status === "1.21.11" && !value.disabled,
       `${fixture.id} client install`
+    );
+    await evaluate(`document.querySelector('button[data-view="play"]')?.click()`);
+    await waitFor(
+      `Boolean(document.querySelector('[data-view-frame="play"] [data-action="launch"]'))`,
+      Boolean,
+      `${fixture.id} play view`
     );
     await evaluate(`document.querySelector('[data-action="launch"]')?.click()`);
     await waitFor(
-      `document.querySelector('[data-action="launch"]')?.textContent?.trim().toUpperCase()`,
-      (value) => value === "STOP MINECRAFT",
+      `({text:document.querySelector('[data-action="launch"]')?.textContent?.trim().toUpperCase(),disabled:Boolean(document.querySelector('[data-action="launch"]')?.disabled),modal:document.querySelector('.update-modal h2')?.textContent?.trim()||"",status:document.querySelector('.status-line')?.textContent?.trim()||""})`,
+      (value) => value?.text === "STOP MINECRAFT",
       `${fixture.id} process start`
     );
   }
