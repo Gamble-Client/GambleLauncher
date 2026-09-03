@@ -13,7 +13,7 @@ public final class LauncherBootstrap {
 
     public static void main(String[] args) {
         diagnostics = Arrays.asList(args).contains("--diagnostics") || Arrays.asList(args).contains("--self-test");
-        if (Arrays.asList(args).contains("--swing")) {
+        if (shouldLaunchSwing(System.getProperty("os.name", ""), args)) {
             launchSwing(args);
             return;
         }
@@ -29,6 +29,14 @@ public final class LauncherBootstrap {
             showFallbackNotice();
             launchSwing(args);
         }
+    }
+
+    static boolean shouldLaunchSwing(String operatingSystem, String[] args) {
+        var arguments = Arrays.asList(args);
+        if (arguments.contains("--self-test") || arguments.contains("--diagnostics")) return false;
+        if (arguments.contains("--swing")) return true;
+        if (arguments.contains("--javafx")) return false;
+        return String.valueOf(operatingSystem).toLowerCase().contains("linux");
     }
 
     private static Throwable unwrap(Throwable error) {

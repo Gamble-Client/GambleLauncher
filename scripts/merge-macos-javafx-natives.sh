@@ -54,7 +54,7 @@ find_platform_jar() {
 }
 
 declare -A processed=()
-for module in base graphics controls media web; do
+for module in base graphics controls; do
     mac_jar="$(find_platform_jar "$module" mac)"
     arm_jar="$(find_platform_jar "$module" mac-aarch64)"
     if [[ -z "$mac_jar" || -z "$arm_jar" ]]; then

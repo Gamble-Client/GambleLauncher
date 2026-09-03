@@ -2302,10 +2302,7 @@ public class FxMain extends Application {
     }
 
     private String bestBuildId(Object user) {
-        if (canUseBuild(user, "media")) return "media";
-        if (canUseBuild(user, "beta_plus")) return "beta_plus";
-        if (canUseBuild(user, "release")) return "release";
-        return "ad_tier";
+        return LauncherAccessPolicy.preferredBuild(accessPolicyAccount(user));
     }
 
     private boolean canUseAntiScreenshare() {
@@ -2314,22 +2311,22 @@ public class FxMain extends Application {
     }
 
     private boolean canUseBuild(Object user, String buildId) {
-        if (user == null) return false;
-        String status = objectFieldString(user, "accessStatus");
-        String plan = objectFieldString(user, "selectedPlan");
-        boolean owner = objectFieldBoolean(user, "ownerAccess") || "owner".equals(status) || "owner".equals(plan);
-        boolean media = owner || objectFieldBoolean(user, "mediaAccess") || objectFieldBoolean(user, "testerAccess") || "media".equals(status) || "media".equals(plan) || "tester".equals(plan);
-        boolean beta = media || objectFieldBoolean(user, "betaAccess") || "beta_plus".equals(status) || "beta_plus".equals(plan) || "lifetime_beta".equals(plan);
-        boolean release = "owned".equals(status) || beta;
-        boolean blocked = "banned".equals(status) || "revoked".equals(status);
+        return LauncherAccessPolicy.canUseBuild(accessPolicyAccount(user), buildId);
+    }
 
-        return switch (buildId) {
-            case "media" -> media;
-            case "beta_plus" -> beta;
-            case "release" -> release;
-            case "ad_tier" -> !blocked && !objectFieldString(user, "email").isBlank();
-            default -> false;
-        };
+    private LauncherAccessPolicy.Account accessPolicyAccount(Object user) {
+        if (user == null) return null;
+        return new LauncherAccessPolicy.Account(
+            objectFieldString(user, "email"),
+            objectFieldString(user, "selectedPlan"),
+            objectFieldString(user, "accessStatus"),
+            objectFieldBoolean(user, "ownerAccess"),
+            objectFieldBoolean(user, "mediaAccess"),
+            objectFieldBoolean(user, "testerAccess"),
+            objectFieldBoolean(user, "betaAccess"),
+            objectFieldBoolean(user, "devAccess"),
+            objectFieldBoolean(user, "adTierAccess")
+        );
     }
 
     private final class BuildAccessCell extends ListCell<String> {

@@ -8,7 +8,7 @@ use md5::{Digest as Md5Digest, Md5};
 use ring::signature::{UnparsedPublicKey, ED25519};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     env,
@@ -36,6 +36,11 @@ use std::os::windows::process::CommandExt;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const SITE_URL: &str = "https://gambleclient.org";
+const FIRST_PARTY_BACKEND_HOSTS: &[&str] = &[
+    "gambleclient.org",
+    "dash.gambleclient.org",
+    "gamble-client-b67.pages.dev",
+];
 const LOADER_JAR_NAME: &str = "gamble-client-loader.jar";
 const MINECRAFT_VERSION: &str = "1.21.11";
 const FABRIC_LOADER_VERSION: &str = "0.19.3";
@@ -43,6 +48,8 @@ const FABRIC_VERSIONS_URL: &str = "https://meta.fabricmc.net/v2/versions/loader/
 const VERSION_MANIFEST_URL: &str =
     "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
 const ASSET_BASE_URL: &str = "https://resources.download.minecraft.net/";
+const ASSET_NETWORK_SELF_TEST_URL: &str =
+    "https://resources.download.minecraft.net/5f/5ff04807c356f1beed0b86ccf659b44b9983e3fa";
 const MICROSOFT_DEVICE_CODE_URL: &str =
     "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
 const MICROSOFT_AUTHORIZE_URL: &str =
@@ -82,6 +89,7 @@ const TEMURIN_21_WINDOWS_URL: &str =
 const TRUSTED_NETWORK_HOSTS: &[&str] = &[
     "gambleclient.org",
     "dash.gambleclient.org",
+    "gamble-client-b67.pages.dev",
     "login.microsoftonline.com",
     "user.auth.xboxlive.com",
     "xsts.auth.xboxlive.com",
@@ -3287,8 +3295,9 @@ fn download_missing_assets(
 ) -> Result<(), String> {
     let total = missing.len() as u32;
     let workers = std::thread::available_parallelism()
-        .map(|count| count.get().saturating_mul(2).clamp(2, 12))
+        .map(|count| asset_worker_count(count.get()))
         .unwrap_or(4);
+    let client = trusted_download_http_client()?;
     let queue = Arc::new(Mutex::new(VecDeque::from(missing)));
     let done = Arc::new(AtomicU32::new(0));
 
@@ -3308,6 +3317,7 @@ fn download_missing_assets(
             let queue = Arc::clone(&queue);
             let done = Arc::clone(&done);
             let app = app.clone();
+            let client = client.clone();
             handles.push(scope.spawn(move || -> Result<(), String> {
                 loop {
                     let asset = {
@@ -3319,7 +3329,7 @@ fn download_missing_assets(
                     };
                     if !asset.path.is_file() {
                         let url = format!("{ASSET_BASE_URL}{}/{}", &asset.hash[0..2], asset.hash);
-                        download_file(&url, &asset.path)?;
+                        download_file_with_client(&url, &asset.path, &client)?;
                     }
                     let current = done.fetch_add(1, Ordering::SeqCst).saturating_add(1);
                     if let Some(app) = app.as_ref() {
@@ -3344,6 +3354,10 @@ fn download_missing_assets(
         }
         Ok(())
     })
+}
+
+fn asset_worker_count(parallelism: usize) -> usize {
+    parallelism.saturating_mul(2).clamp(2, 6)
 }
 
 fn extract_natives_with_progress(
@@ -3517,12 +3531,19 @@ fn sanitize_display_name(value: &str, fallback: &str) -> String {
 }
 
 fn download_file(url: &str, path: &Path) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(error_text)?;
-    }
+    let client = trusted_download_http_client()?;
+    download_file_with_client(url, path, &client)
+}
+
+fn download_file_with_client(
+    url: &str,
+    path: &Path,
+    client: &reqwest::blocking::Client,
+) -> Result<(), String> {
+    ensure_download_parent(path)?;
     let mut last_error = String::new();
     for attempt in 1..=HTTP_DOWNLOAD_ATTEMPTS {
-        match download_file_once(url, path) {
+        match download_file_once(url, path, client) {
             Ok(()) => return Ok(()),
             Err(error) => {
                 last_error = error;
@@ -3535,7 +3556,18 @@ fn download_file(url: &str, path: &Path) -> Result<(), String> {
     Err(download_failure_message(url, &last_error))
 }
 
-fn download_file_once(url: &str, path: &Path) -> Result<(), String> {
+fn ensure_download_parent(path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(error_text)?;
+    }
+    Ok(())
+}
+
+fn download_file_once(
+    url: &str,
+    path: &Path,
+    client: &reqwest::blocking::Client,
+) -> Result<(), String> {
     let temp = path.with_extension(format!(
         "{}.part",
         path.extension()
@@ -3549,7 +3581,6 @@ fn download_file_once(url: &str, path: &Path) -> Result<(), String> {
     } else {
         vec![parsed_url]
     };
-    let client = trusted_download_http_client()?;
     let mut last_kind = "network request failed";
     let mut response = None;
     for request_url in request_urls {
@@ -4208,6 +4239,20 @@ fn network_self_test() -> Result<(), String> {
         }
         println!("OK {label} - HTTP {}", status.as_u16());
     }
+    let response = trusted_download_http_client()?
+        .get(ASSET_NETWORK_SELF_TEST_URL)
+        .send()
+        .map_err(error_text)?
+        .error_for_status()
+        .map_err(error_text)?;
+    let bytes = response.bytes().map_err(error_text)?;
+    if bytes.len() != 781 {
+        return Err(format!(
+            "Minecraft asset CDN returned an unexpected test object size: {}.",
+            bytes.len()
+        ));
+    }
+    println!("OK Minecraft asset CDN - HTTP 200 (781-byte object)");
     Ok(())
 }
 
@@ -5604,16 +5649,16 @@ fn first_party_request_urls(raw_url: &str) -> Result<Vec<reqwest::Url>, String> 
     }
 
     let mut urls = vec![parsed.clone()];
-    let alternate_host = if parsed.host_str() == Some("gambleclient.org") {
-        "dash.gambleclient.org"
-    } else {
-        "gambleclient.org"
-    };
-    let mut alternate = parsed;
-    alternate
-        .set_host(Some(alternate_host))
-        .map_err(|_| "Backend request URL is invalid.".to_string())?;
-    urls.push(alternate);
+    for host in FIRST_PARTY_BACKEND_HOSTS {
+        if parsed.host_str() == Some(*host) {
+            continue;
+        }
+        let mut alternate = parsed.clone();
+        alternate
+            .set_host(Some(host))
+            .map_err(|_| "Backend request URL is invalid.".to_string())?;
+        urls.push(alternate);
+    }
     Ok(urls)
 }
 
@@ -5622,10 +5667,9 @@ fn is_first_party_backend_url(url: &reqwest::Url) -> bool {
         && url.port().is_none()
         && url.username().is_empty()
         && url.password().is_none()
-        && matches!(
-            url.host_str(),
-            Some("gambleclient.org" | "dash.gambleclient.org")
-        )
+        && url
+            .host_str()
+            .is_some_and(|host| FIRST_PARTY_BACKEND_HOSTS.contains(&host))
 }
 
 fn network_error_kind(error: &reqwest::Error) -> &'static str {
@@ -5704,7 +5748,7 @@ fn post_json_error_message(url: &str, status: u16, message: &str) -> String {
 
 fn service_label_for_url(url: &str) -> &'static str {
     let lower = url.to_lowercase();
-    if lower.contains("gambleclient.org") {
+    if lower.contains("gambleclient.org") || lower.contains("gamble-client-b67.pages.dev") {
         "Backend"
     } else if lower.contains("minecraftservices.com") {
         "Minecraft auth"
@@ -6012,11 +6056,7 @@ fn is_trusted_network_url(url: &reqwest::Url) -> bool {
 
 fn trusted_launcher_update_url(raw_url: &str) -> Result<reqwest::Url, String> {
     let parsed = trusted_network_url(raw_url)?;
-    let first_party = matches!(
-        parsed.host_str(),
-        Some("gambleclient.org" | "dash.gambleclient.org")
-    );
-    if !first_party {
+    if !is_first_party_backend_url(&parsed) {
         return Err(
             "Launcher updates must be downloaded from Gamble Client infrastructure.".to_string(),
         );
@@ -6209,15 +6249,16 @@ fn open_external(target: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
+        asset_worker_count, download_missing_assets, ensure_download_parent,
         first_party_request_urls, has_launcher_managed_enrollment, is_browser_url,
         is_expected_loader_fabric_metadata, is_required_mod_for_profile, java_feature_from_text,
         launch_log_has_gpu_fault, loader_core_sha256, microsoft_refresh_error,
         normalize_graphics_mode, offline_minecraft_identity, quarantine_duplicate_loader_jars,
         random_base64_url, replace_file_with_rollback, replace_path_with_rollback, safe_file_name,
-        should_apply_amd_guard, trusted_launcher_update_url, trusted_network_url,
-        validate_gpu_selector, verify_fabric_mod_id, verify_fabric_mod_identity,
-        webkit_safe_mode_enabled, write_private_file, MANAGED_CLIENT_MOD_ID,
-        MICROSOFT_REAUTH_REQUIRED,
+        should_apply_amd_guard, trusted_download_http_client, trusted_launcher_update_url,
+        trusted_network_url, validate_gpu_selector, verify_fabric_mod_id,
+        verify_fabric_mod_identity, webkit_safe_mode_enabled, write_private_file, AssetDownload,
+        MANAGED_CLIENT_MOD_ID, MICROSOFT_REAUTH_REQUIRED, MINECRAFT_VERSION, VERSION_MANIFEST_URL,
     };
     use serde_json::json;
     use std::{env, fs, fs::File, io::Cursor, io::Write, path::PathBuf};
@@ -6266,6 +6307,10 @@ mod tests {
             trusted_launcher_update_url("https://dash.gambleclient.org/releases/launcher.jar")
                 .is_ok()
         );
+        assert!(trusted_launcher_update_url(
+            "https://gamble-client-b67.pages.dev/api/launcher/download/windows"
+        )
+        .is_ok());
         assert!(
             trusted_launcher_update_url("https://github.com/example/launcher/releases/latest")
                 .is_err()
@@ -6278,12 +6323,15 @@ mod tests {
             "https://gambleclient.org/api/launcher/poll?code=private-code&state=one",
         )
         .unwrap();
-        assert_eq!(urls.len(), 2);
+        assert_eq!(urls.len(), 3);
         assert_eq!(urls[0].host_str(), Some("gambleclient.org"));
         assert_eq!(urls[1].host_str(), Some("dash.gambleclient.org"));
+        assert_eq!(urls[2].host_str(), Some("gamble-client-b67.pages.dev"));
         assert_eq!(urls[0].path(), "/api/launcher/poll");
         assert_eq!(urls[1].path(), "/api/launcher/poll");
+        assert_eq!(urls[2].path(), "/api/launcher/poll");
         assert_eq!(urls[0].query(), urls[1].query());
+        assert_eq!(urls[0].query(), urls[2].query());
         assert!(first_party_request_urls("https://evil.example/api/launcher/poll").is_err());
         assert!(first_party_request_urls("http://gambleclient.org/api/launcher/poll").is_err());
     }
@@ -6323,6 +6371,90 @@ mod tests {
             "vanilla",
             "fabric-api-0.140.2.jar"
         ));
+    }
+
+    #[test]
+    fn asset_download_parallelism_is_bounded_for_home_networks() {
+        assert_eq!(asset_worker_count(1), 2);
+        assert_eq!(asset_worker_count(2), 4);
+        assert_eq!(asset_worker_count(8), 6);
+        assert_eq!(asset_worker_count(128), 6);
+    }
+
+    #[test]
+    fn shared_download_client_creates_clean_asset_directories() {
+        let root =
+            env::temp_dir().join(format!("gamble-download-parent-{}", random_base64_url(12)));
+        let target = root.join("objects").join("ab").join("abcdef");
+        ensure_download_parent(&target).expect("create nested asset directory");
+        assert!(target.parent().is_some_and(|parent| parent.is_dir()));
+        fs::remove_dir_all(root).expect("remove download parent test files");
+    }
+
+    #[test]
+    #[ignore = "downloads a live bounded sample from Mojang's asset CDN"]
+    fn live_mojang_asset_batch_uses_the_production_downloader() {
+        let client = trusted_download_http_client().expect("trusted HTTP client");
+        let manifest = client
+            .get(VERSION_MANIFEST_URL)
+            .send()
+            .expect("Mojang version manifest request")
+            .error_for_status()
+            .expect("Mojang version manifest status")
+            .json::<serde_json::Value>()
+            .expect("Mojang version manifest JSON");
+        let version_url = manifest["versions"]
+            .as_array()
+            .expect("version list")
+            .iter()
+            .find(|entry| entry["id"].as_str() == Some(MINECRAFT_VERSION))
+            .and_then(|entry| entry["url"].as_str())
+            .expect("current Minecraft version URL");
+        let version = client
+            .get(version_url)
+            .send()
+            .expect("Minecraft version request")
+            .error_for_status()
+            .expect("Minecraft version status")
+            .json::<serde_json::Value>()
+            .expect("Minecraft version JSON");
+        let index_url = version["assetIndex"]["url"]
+            .as_str()
+            .expect("asset index URL");
+        let index = client
+            .get(index_url)
+            .send()
+            .expect("asset index request")
+            .error_for_status()
+            .expect("asset index status")
+            .json::<serde_json::Value>()
+            .expect("asset index JSON");
+        let mut hashes = index["objects"]
+            .as_object()
+            .expect("asset objects")
+            .values()
+            .filter_map(|value| value["hash"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+        hashes.sort();
+        hashes.dedup();
+        hashes.truncate(128);
+        assert_eq!(hashes.len(), 128);
+
+        let root = env::temp_dir().join(format!("gamble-assets-{}", random_base64_url(12)));
+        let downloads = hashes
+            .iter()
+            .map(|hash| AssetDownload {
+                hash: hash.clone(),
+                path: root.join(&hash[0..2]).join(hash),
+            })
+            .collect::<Vec<_>>();
+        download_missing_assets(downloads, None).expect("bounded Mojang asset batch");
+        assert!(hashes.iter().all(|hash| root
+            .join(&hash[0..2])
+            .join(hash)
+            .metadata()
+            .is_ok_and(|item| item.len() > 0)));
+        fs::remove_dir_all(root).expect("remove asset test files");
     }
 
     #[test]

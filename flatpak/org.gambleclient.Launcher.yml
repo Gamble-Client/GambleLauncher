@@ -1,0 +1,38 @@
+app-id: org.gambleclient.Launcher
+runtime: org.freedesktop.Platform
+runtime-version: "25.08"
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.openjdk21
+command: gamble-client-launcher
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=x11
+  - --socket=pulseaudio
+  - --device=dri
+  - --filesystem=~/.minecraft:create
+  - --filesystem=~/.local/share/gamble-client:create
+modules:
+  - name: gamble-client-launcher
+    buildsystem: simple
+    build-commands:
+      - /usr/lib/sdk/openjdk21/install.sh
+      - install -Dm755 gamble-client-launcher /app/bin/gamble-client-launcher
+      - install -Dm644 gamble-client-launcher.jar /app/lib/gamble-client-launcher.jar
+      - install -Dm644 org.gambleclient.Launcher.desktop /app/share/applications/org.gambleclient.Launcher.desktop
+      - install -Dm644 org.gambleclient.Launcher.metainfo.xml /app/share/metainfo/org.gambleclient.Launcher.metainfo.xml
+      - install -Dm644 org.gambleclient.Launcher.png /app/share/icons/hicolor/512x512/apps/org.gambleclient.Launcher.png
+    sources:
+      - type: file
+        path: ../build/flatpak/gamble-client-launcher.jar
+        dest-filename: gamble-client-launcher.jar
+      - type: file
+        path: gamble-client-launcher
+      - type: file
+        path: org.gambleclient.Launcher.desktop
+      - type: file
+        path: org.gambleclient.Launcher.metainfo.xml
+      - type: file
+        path: ../src-tauri/icons/icon.png
+        dest-filename: org.gambleclient.Launcher.png

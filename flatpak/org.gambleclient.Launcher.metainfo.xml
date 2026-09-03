@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.gambleclient.Launcher</id>
+  <name>Gamble Client Launcher</name>
+  <summary>Install, update, and launch Gamble Client for Minecraft</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="org.gambleclient">
+    <name>Gamble Client</name>
+  </developer>
+  <description>
+    <p>
+      Gamble Client Launcher manages isolated Minecraft profiles, authenticated
+      Gamble Client builds, Fabric dependencies, and Microsoft account sessions.
+    </p>
+    <p>
+      The Flatpak includes Java 21 and uses the Linux compatibility interface so
+      it does not depend on a system Java installation or an embedded web view.
+    </p>
+  </description>
+  <launchable type="desktop-id">org.gambleclient.Launcher.desktop</launchable>
+  <url type="homepage">https://gambleclient.org/</url>
+  <url type="bugtracker">https://github.com/Gamble-Client/GambleLauncher/issues</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.132" date="2026-09-03">
+      <description>
+        <p>Adds Linux-safe launcher startup, resilient backend gateways, and a bundled Java 21 runtime.</p>
+      </description>
+    </release>
+  </releases>
+</component>

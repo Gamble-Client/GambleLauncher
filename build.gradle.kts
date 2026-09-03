@@ -11,10 +11,10 @@ plugins {
 }
 
 group = "com.gambleclient"
-version = "0.1.131"
+version = "0.1.132"
 
 val javafxVersion = "22.0.2"
-val javafxModuleNames = listOf("base", "graphics", "controls", "media", "web")
+val javafxModuleNames = listOf("base", "graphics", "controls")
 val javafxPlatforms = listOf("linux", "win", "mac", "mac-aarch64")
 
 java {
@@ -29,7 +29,7 @@ application {
 
 javafx {
     version = javafxVersion
-    modules = listOf("javafx.controls", "javafx.graphics", "javafx.media", "javafx.web")
+    modules = listOf("javafx.controls", "javafx.graphics")
 }
 
 dependencies {
@@ -132,6 +132,15 @@ fun jpackageExecutable(): String {
 
 val launcherJar = hardenedLauncherJar.flatMap { it.archiveFile }
 val nativeOutputDir = layout.buildDirectory.dir("native")
+
+tasks.register<Copy>("stageFlatpakLauncher") {
+    group = "distribution"
+    description = "Stages the hardened launcher JAR under a version-independent Flatpak source name."
+    dependsOn(hardenedLauncherJar)
+    from(launcherJar)
+    into(layout.buildDirectory.dir("flatpak"))
+    rename { "gamble-client-launcher.jar" }
+}
 
 tasks.register<Exec>("packageNativeImage") {
     group = "distribution"

@@ -1,0 +1,131 @@
+name: Build Flatpak Launcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Upload the tested Flatpak and release manifest to production R2
+        required: false
+        default: false
+        type: boolean
+  push:
+    branches:
+      - main
+      - codex/launcher-ui-security-pass-20260821
+    paths:
+      - ".github/workflows/flatpak.yml"
+      - "flatpak/**"
+      - "src/main/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle/**"
+      - "gradlew"
+
+jobs:
+  flatpak:
+    name: Flatpak bundle
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Read package version
+        id: package
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+
+      - name: Install Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder xvfb
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive -y flathub \
+            org.freedesktop.Platform//25.08 \
+            org.freedesktop.Sdk//25.08 \
+            org.freedesktop.Sdk.Extension.openjdk21//25.08
+
+      - name: Build and verify universal launcher JAR
+        run: ./gradlew test verifyHardenedLauncherJar stageFlatpakLauncher
+
+      - name: Build Flatpak repository
+        run: |
+          flatpak-builder --user --force-clean --repo=flatpak-repo \
+            flatpak-build flatpak/org.gambleclient.Launcher.yml
+          flatpak install --user --noninteractive -y ./flatpak-repo org.gambleclient.Launcher
+
+      - name: Test packaged Flatpak network path
+        run: flatpak run --user org.gambleclient.Launcher --self-test
+
+      - name: Smoke-test packaged Flatpak UI
+        run: |
+          set +e
+          timeout 15s xvfb-run -a flatpak run --user org.gambleclient.Launcher
+          launcher_status=$?
+          set -e
+          test "$launcher_status" -eq 124
+
+      - name: Build single-file Flatpak bundle
+        run: |
+          flatpak build-bundle flatpak-repo \
+            "Gamble-Client-Launcher-${{ steps.package.outputs.version }}.flatpak" \
+            org.gambleclient.Launcher
+
+      - name: Create Flatpak release manifest
+        run: |
+          node - "${{ steps.package.outputs.version }}" <<'NODE'
+          const fs = require('fs');
+          const crypto = require('crypto');
+          const version = process.argv[2];
+          const fileName = `Gamble-Client-Launcher-${version}.flatpak`;
+          const data = fs.readFileSync(fileName);
+          fs.writeFileSync(`launcher-flatpak-${version}.json`, JSON.stringify({
+            version,
+            commit: process.env.GITHUB_SHA,
+            artifacts: {
+              linuxFlatpak: {
+                fileName,
+                size: data.length,
+                sha256: crypto.createHash('sha256').update(data).digest('hex')
+              }
+            }
+          }, null, 2) + '\n');
+          NODE
+
+      - name: Install upload tooling
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || inputs.publish }}
+        run: npm install --no-save --package-lock=false --ignore-scripts wrangler@4
+
+      - name: Upload Flatpak and release manifest to R2
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || inputs.publish }}
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          ./node_modules/.bin/wrangler r2 object put \
+            "gamble-client-jars/Gamble-Client-Launcher-${{ steps.package.outputs.version }}.flatpak" \
+            --file "Gamble-Client-Launcher-${{ steps.package.outputs.version }}.flatpak" --remote
+          ./node_modules/.bin/wrangler r2 object put \
+            "gamble-client-jars/release-manifests/launcher-flatpak-${{ steps.package.outputs.version }}.json" \
+            --file "launcher-flatpak-${{ steps.package.outputs.version }}.json" --remote
+
+      - name: Upload Flatpak artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamble-client-launcher-flatpak-${{ steps.package.outputs.version }}
+          path: |
+            Gamble-Client-Launcher-${{ steps.package.outputs.version }}.flatpak
+            launcher-flatpak-${{ steps.package.outputs.version }}.json
+          if-no-files-found: error

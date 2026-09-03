@@ -79,6 +79,23 @@ On Fedora 44, graphical RPM installers can fail with `Id is out of bitmap range`
 from the libdnf5/PackageKit session resolver. Install the same RPM with `dnf`
 from a terminal when that happens.
 
+Cross-distribution Flatpak bundle:
+
+```bash
+./gradlew test verifyHardenedLauncherJar stageFlatpakLauncher
+flatpak-builder --user --force-clean --repo=flatpak-repo \
+  flatpak-build flatpak/org.gambleclient.Launcher.yml
+flatpak build-bundle flatpak-repo Gamble-Client-Launcher-0.1.132.flatpak \
+  org.gambleclient.Launcher
+flatpak install --user ./Gamble-Client-Launcher-0.1.132.flatpak
+flatpak run org.gambleclient.Launcher
+```
+
+The Flatpak includes Java 21 and defaults to the Linux Swing interface, avoiding
+WebKit and host-Java dependencies. Its filesystem access is limited to the shared
+Gamble Client data folder and the standard `.minecraft` folder, so it can reuse
+native-launcher profiles without receiving access to the rest of the home folder.
+
 Windows installer:
 
 ```powershell
@@ -91,7 +108,7 @@ Universal JAR macOS smoke check:
 
 ```bash
 ./gradlew hardenedLauncherJar
-./scripts/merge-macos-javafx-natives.sh build/libs/gamble-client-launcher-0.1.131.jar
+./scripts/merge-macos-javafx-natives.sh build/libs/gamble-client-launcher-0.1.132.jar
 ```
 
 The release workflow combines the Intel and Apple Silicon JavaFX binaries in

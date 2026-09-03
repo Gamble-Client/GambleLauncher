@@ -1,0 +1,6 @@
+#!/bin/sh
+export JAVA_HOME=/app/jre
+if [ -z "${GAMBLE_CLIENT_GAME_DIR:-}" ]; then
+  export GAMBLE_CLIENT_GAME_DIR="$HOME/.local/share/gamble-client/minecraft"
+fi
+exec /app/jre/bin/java -jar /app/lib/gamble-client-launcher.jar --swing "$@"

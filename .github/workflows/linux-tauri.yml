@@ -2,6 +2,12 @@ name: Build Linux Launcher
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Upload the tested packages and release manifest to production R2
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - main
@@ -76,9 +82,11 @@ jobs:
         run: ./src-tauri/target/release/gamble-client-launcher --network-self-test
 
       - name: Install upload tooling
+        if: ${{ github.event_name == 'push' || inputs.publish }}
         run: npm install --no-save --package-lock=false --ignore-scripts wrangler@4
 
       - name: Upload Linux packages directly to R2
+        if: ${{ github.event_name == 'push' || inputs.publish }}
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

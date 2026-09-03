@@ -71,7 +71,11 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
+import java.net.ConnectException;
+import java.net.NoRouteToHostException;
+import java.net.SocketTimeoutException;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.ByteBuffer;
@@ -114,6 +118,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
+import javax.net.ssl.SSLException;
 
 public class Main {
     private static final Color BACKGROUND = new Color(18, 16, 22);
@@ -132,7 +137,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.131";
+    private static final String LAUNCHER_VERSION = "0.1.132";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -156,6 +161,11 @@ public class Main {
     };
 
     private static final String DEFAULT_SITE_URL = "https://gambleclient.org";
+    private static final List<String> FIRST_PARTY_API_BASES = List.of(
+        DEFAULT_SITE_URL,
+        "https://dash.gambleclient.org",
+        "https://gamble-client-b67.pages.dev"
+    );
     private static final String CAPE_OWNERS_PATH = "/api/capes/owners.txt";
     private static final String CAPES_PATH = "/api/capes/capes.txt";
     private static final String MINECRAFT_VERSION = "1.21.11";
@@ -169,6 +179,7 @@ public class Main {
     private static final Set<String> TRUSTED_NETWORK_HOSTS = Set.of(
         "gambleclient.org",
         "dash.gambleclient.org",
+        "gamble-client-b67.pages.dev",
         "login.microsoftonline.com",
         "user.auth.xboxlive.com",
         "xsts.auth.xboxlive.com",
@@ -4914,55 +4925,118 @@ public class Main {
 
     private ApiResponse apiRequest(String method, String path, String body, String bearerToken, int... acceptedStatuses) throws IOException {
         String urlText = path.startsWith("http://") || path.startsWith("https://") ? path : siteUrl() + path;
-        HttpURLConnection connection = openTrustedHttpConnection(urlText, false);
-        connection.setConnectTimeout(15000);
-        connection.setReadTimeout(30000);
-        connection.setRequestMethod(method);
-        connection.setRequestProperty("Accept", "application/json");
-        connection.setRequestProperty("User-Agent", "GambleClientLauncher/" + LAUNCHER_VERSION);
-        if (bearerToken != null && !bearerToken.trim().isEmpty()) {
-            connection.setRequestProperty("Authorization", "Bearer " + bearerToken.trim());
-        }
-
-        if (!body.isEmpty()) {
-            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-            connection.setDoOutput(true);
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            connection.setRequestProperty("Content-Length", String.valueOf(bytes.length));
-            try (java.io.OutputStream out = connection.getOutputStream()) {
-                out.write(bytes);
-            }
-        }
-
-        int status = connection.getResponseCode();
-        String responseText = readAll(status >= 200 && status < 400 ? connection.getInputStream() : connection.getErrorStream());
-        Map<String, Object> responseBody = Collections.emptyMap();
-        if (!responseText.isEmpty()) {
+        List<String> urls = firstPartyApiUrls(urlText);
+        IOException lastTransportError = null;
+        for (int index = 0; index < urls.size(); index++) {
             try {
-                responseBody = Json.asObject(Json.parse(responseText));
-            } catch (Exception ignored) {
-                responseBody = Collections.emptyMap();
+                return apiRequestOnce(method, urls.get(index), path, body, bearerToken, acceptedStatuses);
+            } catch (IOException error) {
+                if (!isRetryableTransport(error)) throw error;
+                lastTransportError = error;
+                if (index + 1 < urls.size()) {
+                    log("Backend gateway unavailable; trying the next trusted gateway.");
+                }
             }
         }
+        throw new IOException(
+            "Could not reach the Gamble Client service. Check your VPN, firewall, DNS filter, or internet connection, then try again.",
+            lastTransportError
+        );
+    }
 
-        if (!statusAccepted(status, acceptedStatuses)) {
-            String message = Json.string(responseBody.get("message"));
-            if (message.isEmpty() && !responseText.isEmpty()) message = responseText;
-            if (status == 404 && path.startsWith("/api/launcher/")) {
-                message = "Launcher backend route is not live at " + siteUrl() + ". Deploy the backend launcher routes and D1 migration.";
+    private ApiResponse apiRequestOnce(String method, String urlText, String path, String body, String bearerToken, int... acceptedStatuses) throws IOException {
+        HttpURLConnection connection = openTrustedHttpConnection(urlText, false);
+        try {
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(30000);
+            connection.setRequestMethod(method);
+            connection.setRequestProperty("Accept", "application/json");
+            connection.setRequestProperty("User-Agent", "GambleClientLauncher/" + LAUNCHER_VERSION);
+            if (bearerToken != null && !bearerToken.trim().isEmpty()) {
+                connection.setRequestProperty("Authorization", "Bearer " + bearerToken.trim());
             }
-            if (status == 426) {
-                throw new LauncherOutdatedException(
-                    message.isEmpty() ? "This launcher is out of date." : message,
-                    Json.string(responseBody.get("version")),
-                    Json.string(responseBody.get("downloadUrl"))
-                );
+
+            if (!body.isEmpty()) {
+                byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                connection.setRequestProperty("Content-Length", String.valueOf(bytes.length));
+                try (java.io.OutputStream out = connection.getOutputStream()) {
+                    out.write(bytes);
+                }
             }
-            if (message.isEmpty()) message = "Backend returned HTTP " + status;
-            throw new HttpStatusException(status, message);
+
+            int status = connection.getResponseCode();
+            String responseText = readAll(status >= 200 && status < 400 ? connection.getInputStream() : connection.getErrorStream());
+            Map<String, Object> responseBody = Collections.emptyMap();
+            if (!responseText.isEmpty()) {
+                try {
+                    responseBody = Json.asObject(Json.parse(responseText));
+                } catch (Exception ignored) {
+                    responseBody = Collections.emptyMap();
+                }
+            }
+
+            if (!statusAccepted(status, acceptedStatuses)) {
+                String message = Json.string(responseBody.get("message"));
+                if (message.isEmpty() && !responseText.isEmpty()) message = responseText;
+                if (status == 404 && path.startsWith("/api/launcher/")) {
+                    message = "Launcher backend route is not live at " + siteUrl() + ". Deploy the backend launcher routes and D1 migration.";
+                }
+                if (status == 426) {
+                    throw new LauncherOutdatedException(
+                        message.isEmpty() ? "This launcher is out of date." : message,
+                        Json.string(responseBody.get("version")),
+                        Json.string(responseBody.get("downloadUrl"))
+                    );
+                }
+                if (message.isEmpty()) message = "Backend returned HTTP " + status;
+                throw new HttpStatusException(status, message);
+            }
+
+            return new ApiResponse(status, responseBody);
+        } finally {
+            connection.disconnect();
         }
+    }
 
-        return new ApiResponse(status, responseBody);
+    static List<String> firstPartyApiUrls(String urlText) throws IOException {
+        final URI original;
+        try {
+            original = URI.create(urlText == null ? "" : urlText.trim());
+        } catch (IllegalArgumentException error) {
+            throw new IOException("Backend request URL is invalid.", error);
+        }
+        String host = original.getHost() == null ? "" : original.getHost().toLowerCase(Locale.ROOT);
+        boolean trusted = "https".equalsIgnoreCase(original.getScheme())
+            && original.getPort() == -1
+            && original.getUserInfo() == null
+            && original.getFragment() == null
+            && FIRST_PARTY_API_BASES.stream().map(base -> URI.create(base).getHost()).anyMatch(host::equals);
+        if (!trusted) throw new IOException("Backend request URL is not a trusted Gamble Client origin.");
+
+        String suffix = (original.getRawPath() == null ? "" : original.getRawPath())
+            + (original.getRawQuery() == null ? "" : "?" + original.getRawQuery());
+        List<String> urls = new ArrayList<>(FIRST_PARTY_API_BASES.size());
+        urls.add(original.toString());
+        for (String base : FIRST_PARTY_API_BASES) {
+            String candidate = base + suffix;
+            if (!urls.contains(candidate)) urls.add(candidate);
+        }
+        return List.copyOf(urls);
+    }
+
+    static boolean isRetryableTransport(Throwable failure) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            if (current instanceof ConnectException
+                || current instanceof NoRouteToHostException
+                || current instanceof SocketTimeoutException
+                || current instanceof UnknownHostException
+                || current instanceof SSLException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean statusAccepted(int status, int... acceptedStatuses) {
@@ -5075,13 +5149,7 @@ public class Main {
     }
 
     private Build bestBuildForUser(LauncherUser user) {
-        if (user != null && user.devAccess) return findBuild("dev");
-        if (hasOwnerAccess(user)) return findBuild("media");
-        String[] priority = {"dev", "media", "beta_plus", "release", "ad_tier"};
-        for (String buildId : priority) {
-            if (canUseBuild(user, buildId)) return findBuild(buildId);
-        }
-        return findBuild("ad_tier");
+        return findBuild(LauncherAccessPolicy.preferredBuild(accessPolicyAccount(user)));
     }
 
     private Build findBuild(String id) {
@@ -5092,31 +5160,34 @@ public class Main {
     }
 
     private boolean canUseBuild(LauncherUser user, String buildId) {
-        if (user == null) return false;
-        if ("dev".equals(buildId)) return user.devAccess || hasOwnerAccess(user);
-        if ("media".equals(buildId)) return hasMediaAccess(user);
-        if ("beta_plus".equals(buildId)) return hasBetaAccess(user);
-        if ("release".equals(buildId)) return isOwnedAccess(user.accessStatus);
-        if ("ad_tier".equals(buildId)) return !isBlockedAccess(user.accessStatus)
-            && !isOwnedAccess(user.accessStatus)
-            && !user.email.isEmpty();
-        return false;
+        return LauncherAccessPolicy.canUseBuild(accessPolicyAccount(user), buildId);
     }
 
     private boolean hasMediaAccess(LauncherUser user) {
-        return "media".equals(user.accessStatus) || "owner".equals(user.accessStatus) ||
-            "media".equals(user.selectedPlan) || "tester".equals(user.selectedPlan) || "owner".equals(user.selectedPlan) ||
-            user.mediaAccess || user.testerAccess || user.ownerAccess;
+        return LauncherAccessPolicy.hasMediaAccess(accessPolicyAccount(user));
     }
 
     private boolean hasOwnerAccess(LauncherUser user) {
-        return user != null && (user.ownerAccess || "owner".equals(user.accessStatus) || "owner".equals(user.selectedPlan));
+        return LauncherAccessPolicy.hasOwnerAccess(accessPolicyAccount(user));
     }
 
     private boolean hasBetaAccess(LauncherUser user) {
-        return "beta_plus".equals(user.accessStatus) || hasMediaAccess(user) ||
-            "beta_plus".equals(user.selectedPlan) || "lifetime_beta".equals(user.selectedPlan) ||
-            user.betaAccess;
+        return LauncherAccessPolicy.hasBetaAccess(accessPolicyAccount(user));
+    }
+
+    private LauncherAccessPolicy.Account accessPolicyAccount(LauncherUser user) {
+        if (user == null) return null;
+        return new LauncherAccessPolicy.Account(
+            user.email,
+            user.selectedPlan,
+            user.accessStatus,
+            user.ownerAccess,
+            user.mediaAccess,
+            user.testerAccess,
+            user.betaAccess,
+            user.devAccess,
+            user.adTierAccess
+        );
     }
 
     private boolean isOwnedAccess(String value) {
@@ -5213,15 +5284,12 @@ public class Main {
         return connection;
     }
 
-    private HttpURLConnection openTrustedDownloadConnection(String urlText) throws IOException {
+    private DownloadConnection openTrustedDownloadConnection(String urlText) throws IOException {
         String current = urlText;
         for (int redirect = 0; redirect <= MAX_DOWNLOAD_REDIRECTS; redirect++) {
             HttpURLConnection connection = openTrustedHttpConnection(current, false);
-            connection.setConnectTimeout(15000);
-            connection.setReadTimeout(30000);
-            connection.setRequestProperty("User-Agent", "GambleClientLauncher/" + LAUNCHER_VERSION);
-            int status = connection.getResponseCode();
-            if (status < 300 || status >= 400) return connection;
+            int status = connectDownloadConnection(connection);
+            if (status < 300 || status >= 400) return new DownloadConnection(connection, status);
 
             String location = connection.getHeaderField("Location");
             connection.disconnect();
@@ -5237,6 +5305,16 @@ public class Main {
         throw new IOException("Download followed too many redirects.");
     }
 
+    static int connectDownloadConnection(HttpURLConnection connection) throws IOException {
+        // HttpURLConnection rejects request-property and timeout changes after
+        // getResponseCode() has opened the connection. Configure every option
+        // before the first operation that can connect, including redirects.
+        connection.setConnectTimeout(15000);
+        connection.setReadTimeout(30000);
+        connection.setRequestProperty("User-Agent", "GambleClientLauncher/" + LAUNCHER_VERSION);
+        return connection.getResponseCode();
+    }
+
     private void downloadFile(String urlText, File output, String label, boolean updateProgress) throws IOException {
         File parent = output.getParentFile();
         if (parent != null) {
@@ -5249,14 +5327,11 @@ public class Main {
 
         File temp = new File(output.getAbsolutePath() + ".part");
         Files.deleteIfExists(temp.toPath());
-        HttpURLConnection connection = openTrustedDownloadConnection(urlText);
+        DownloadConnection download = openTrustedDownloadConnection(urlText);
+        HttpURLConnection connection = download.connection;
         boolean completed = false;
         try {
-            connection.setConnectTimeout(15000);
-            connection.setReadTimeout(30000);
-            connection.setRequestProperty("User-Agent", "GambleClientLauncher/" + LAUNCHER_VERSION);
-
-            int status = connection.getResponseCode();
+            int status = download.status;
             if (status < 200 || status >= 300) {
                 String body = readSmall(connection.getErrorStream());
                 throw new IOException(label + " returned HTTP " + status + (body.isEmpty() ? "" : ": " + body));
@@ -5298,6 +5373,16 @@ public class Main {
         }
     }
 
+    private static final class DownloadConnection {
+        final HttpURLConnection connection;
+        final int status;
+
+        DownloadConnection(HttpURLConnection connection, int status) {
+            this.connection = connection;
+            this.status = status;
+        }
+    }
+
     private void ensureLoaderJar() throws IOException {
         File mods = getModsFolder();
         if (!mods.exists() && !mods.mkdirs()) {
@@ -5315,7 +5400,29 @@ public class Main {
         ensureSignedIn();
         File temporary = new File(loader.getAbsolutePath() + ".part");
         Files.deleteIfExists(temporary.toPath());
-        HttpURLConnection connection = openTrustedHttpConnection(siteUrl() + "/api/standalone/loader", false);
+        List<String> endpoints = firstPartyApiUrls(siteUrl() + "/api/standalone/loader");
+        IOException lastTransportError = null;
+        for (int index = 0; index < endpoints.size(); index++) {
+            try {
+                downloadPersonalizedLoaderOnce(mods, loader, temporary, endpoints.get(index));
+                return;
+            } catch (IOException error) {
+                if (!isRetryableTransport(error)) throw error;
+                lastTransportError = error;
+                Files.deleteIfExists(temporary.toPath());
+                if (index + 1 < endpoints.size()) {
+                    log("Loader download gateway unavailable; trying the next trusted gateway.");
+                }
+            }
+        }
+        throw new IOException(
+            "Could not reach the Gamble Client service to install the loader. Check your VPN, firewall, DNS filter, or internet connection, then try again.",
+            lastTransportError
+        );
+    }
+
+    private void downloadPersonalizedLoaderOnce(File mods, File loader, File temporary, String endpoint) throws IOException {
+        HttpURLConnection connection = openTrustedHttpConnection(endpoint, false);
         try {
             connection.setInstanceFollowRedirects(false);
             connection.setConnectTimeout(15000);

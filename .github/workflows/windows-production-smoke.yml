@@ -286,6 +286,8 @@ jobs:
           $config | ConvertTo-Json -Depth 20 | Set-Content $configPath -Encoding utf8NoBOM
 
       - name: Build diagnostic executable
+        env:
+          VITE_LAUNCHER_TEST_FIXTURES: "true"
         run: |
           npm ci
           npm run tauri -- build --no-bundle
@@ -377,6 +379,36 @@ jobs:
             $scriptPath = Join-Path $env:RUNNER_TEMP "inspect-launcher.mjs"
             $script | Set-Content $scriptPath -Encoding utf8NoBOM
             node $scriptPath $target.webSocketDebuggerUrl
+          } finally {
+            if (-not $launcher.HasExited) {
+              Stop-Process -Id $launcher.Id -Force
+            }
+          }
+
+      - name: Exercise realistic account tiers in the Windows WebView
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9222"
+          $executable = "src-tauri/target/release/gamble-client-launcher.exe"
+          $launcher = Start-Process -FilePath $executable -PassThru
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(45)
+            do {
+              Start-Sleep -Milliseconds 500
+              try {
+                $targets = Invoke-RestMethod "http://127.0.0.1:9222/json/list"
+              } catch {
+                $targets = $null
+              }
+              $target = $targets |
+                Where-Object { $_.url -like "*tauri.localhost*" } |
+                Select-Object -First 1
+            } while (-not $target -and [DateTime]::UtcNow -lt $deadline)
+            if (-not $target) {
+              throw "The diagnostic WebView did not expose a Gamble Client target."
+            }
+            node scripts/windows-account-preview-smoke.mjs $target.webSocketDebuggerUrl $target.url
           } finally {
             if (-not $launcher.HasExited) {
               Stop-Process -Id $launcher.Id -Force

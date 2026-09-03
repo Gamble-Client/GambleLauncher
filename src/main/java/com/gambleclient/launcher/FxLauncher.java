@@ -19,6 +19,8 @@ import java.util.logging.Logger;
 public final class FxLauncher {
     private static final Set<String> SELF_TEST_HOSTS = Set.of(
         "gambleclient.org",
+        "dash.gambleclient.org",
+        "gamble-client-b67.pages.dev",
         "launchermeta.mojang.com",
         "meta.fabricmc.net",
         "resources.download.minecraft.net"
@@ -77,7 +79,7 @@ public final class FxLauncher {
 
     private static void runSelfTest() {
         println("Gamble Client Launcher self-test");
-        check("Java runtime", Runtime.version().feature() >= 21, "Java " + Runtime.version());
+        boolean requiredOk = required("Java runtime", Runtime.version().feature() >= 21, "Java " + Runtime.version());
         check("Operating system", true, System.getProperty("os.name") + " " + System.getProperty("os.arch"));
 
         File root = managedMinecraftRoot();
@@ -105,10 +107,12 @@ public final class FxLauncher {
             }
         }
 
-        http("Launcher release metadata", "https://gambleclient.org/api/launcher/version");
-        http("Mojang version manifest", "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json");
-        http("Fabric loader metadata", "https://meta.fabricmc.net/v2/versions/loader/1.21.11/0.19.3/profile/json");
-        http("Minecraft asset CDN", "https://resources.download.minecraft.net/", true);
+        requiredOk &= http("Primary Gamble gateway", "https://gambleclient.org/api/launcher/version");
+        requiredOk &= http("Dashboard Gamble gateway", "https://dash.gambleclient.org/api/launcher/version");
+        requiredOk &= http("Stable Gamble gateway", "https://gamble-client-b67.pages.dev/api/launcher/version");
+        requiredOk &= http("Mojang version manifest", "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json");
+        requiredOk &= http("Fabric loader metadata", "https://meta.fabricmc.net/v2/versions/loader/1.21.11/0.19.3/profile/json");
+        requiredOk &= http("Minecraft asset CDN", "https://resources.download.minecraft.net/5f/5ff04807c356f1beed0b86ccf659b44b9983e3fa");
 
         File latestLaunch = new File(data, "latest-launch.log");
         check("Latest launch log", latestLaunch.isFile(), availability(latestLaunch.isFile()));
@@ -120,13 +124,18 @@ public final class FxLauncher {
                 check("Latest launch log readable", false, "unreadable");
             }
         }
+        if (!requiredOk) {
+            println("FAILED One or more required launcher checks failed.");
+            System.exit(1);
+        }
+        println("PASS All required launcher checks succeeded.");
     }
 
-    private static void http(String label, String url) {
-        http(label, url, false);
+    private static boolean http(String label, String url) {
+        return http(label, url, false);
     }
 
-    private static void http(String label, String url, boolean hostReachabilityOnly) {
+    private static boolean http(String label, String url, boolean hostReachabilityOnly) {
         try {
             URI uri = URI.create(url);
             String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(java.util.Locale.ROOT);
@@ -145,10 +154,15 @@ public final class FxLauncher {
             connection.setRequestProperty("User-Agent", "GambleClientLauncher/SelfTest");
             int status = connection.getResponseCode();
             boolean ok = hostReachabilityOnly ? status < 500 : status >= 200 && status < 400;
-            check(label, ok, "HTTP " + status);
+            return required(label, ok, "HTTP " + status);
         } catch (Exception e) {
-            check(label, false, "request failed");
+            return required(label, false, "request failed");
         }
+    }
+
+    private static boolean required(String label, boolean ok, String detail) {
+        println((ok ? "OK   " : "FAIL ") + label + " - " + detail);
+        return ok;
     }
 
     private static void checkFolder(String label, File folder) {

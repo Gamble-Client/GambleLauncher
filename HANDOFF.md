@@ -1,6 +1,6 @@
 # Gamble Client Launcher — Launcher Handoff
 
-Last updated: 2026-09-01 UTC
+Last updated: 2026-09-03 UTC
 
 This document covers the launcher repository only. Client behavior is in `/home/theac/Desktop/GambleClient/HANDOFF.md`; Site/API and publishing are in `/home/theac/Desktop/cg-mod-release/HANDOFF.md` and `/home/theac/Desktop/RELEASE_HANDOFF.md`.
 
@@ -12,6 +12,7 @@ This document covers the launcher repository only. Client behavior is in `/home/
 - Published artifact source: `d91805a` (`Move sponsor verification to Dashboard`); the repository may advance with documentation-only handoff commits.
 - Current public launcher version: `0.1.131`; the Dashboard sponsor migration is live.
 - Current standalone-loader feed: `1.4.22`; the published loader now has the same trusted-origin backend failover as the launcher for connection failures.
+- Release candidate: launcher `0.1.132` and standalone loader `1.4.23`. They are not public until source-matched Windows, Linux, and Flatpak workflows and the production audit pass.
 - Native workflow runs: Windows `33437745051`; Linux `33437744351`
 - Universal JAR and the Windows/Linux native packages are the current immutable artifacts. Versions `0.1.113` through `0.1.129` are superseded.
 
@@ -23,7 +24,7 @@ The launcher supports the managed native workflow, the universal JavaFX JAR, and
 - The selected profile’s account override is passed to that launch only. It does not rewrite the global Accounts default; reconnect restores the prior default when needed and labels an inherited choice `Default (follows Accounts)`.
 - Native and Java paths require fresh launcher enrollment before and after managed-loader installation, quarantine duplicate active standalone loaders, and append the selected profile’s `fabric.modsFolder` after custom JVM arguments.
 - Windows same-name replacement uses a rollback-safe remove/rename sequence because Windows rename does not overwrite an existing target. The same helper protects launcher installer updates.
-- First-party API and download calls use bounded retries and failover between `https://gambleclient.org` and `https://dash.gambleclient.org`. Transport errors are mapped to recovery guidance, not opaque Java stack traces. The packaged binary exposes `--network-self-test`.
+- First-party API and signed-download calls use bounded retries across `https://gambleclient.org`, `https://dash.gambleclient.org`, and the independently routed stable Pages origin `https://gamble-client-b67.pages.dev`. Transport errors are mapped to recovery guidance, not opaque Java stack traces. The packaged binary exposes `--network-self-test`.
 - Browser Microsoft sign-in runs off the UI thread and has a real cancellation path. Play/Cancel leaves the UI rendered and does not leave a stale callback worker or dead launch modal.
 - Native Play permits a launcher-authenticated offline Minecraft session when no Microsoft account is saved, using the same deterministic `OfflinePlayer` UUID and `legacy` auth type as the universal Java launcher. Microsoft authentication remains required for online servers; launcher/client authorization is unchanged.
 - If Minecraft exits before its window appears, the native UI now shows the exit reason and points to Settings → Diagnostics instead of silently returning to idle.
@@ -51,6 +52,7 @@ The known RX 6800 incident is a Mesa/AMDGPU GPUVM page fault triggered by Java r
 - Java network requests use HTTPS and explicit trusted-host allowlists; bearer-bearing redirects are disabled. Downloads validate bounded redirects and response sizes. Existing signed provenance and memory-only loader behavior remain required.
 - The launcher verifies personalized-loader provenance, platform markers, immutable-core fingerprints, and enrollment before accepting managed jars. No executable payloads are expected in public loader jars.
 - The JavaFX reflection bridge is kept through ProGuard. macOS JavaFX dylibs are merged as universal Intel/Apple-Silicon entries, and the native ACL/window capability is explicit.
+- The Flatpak package bundles Java 21 and starts the Swing compatibility interface, avoiding host-Java and WebKit dependencies. Its sandbox grants network, X11, audio, DRI, and only the shared Gamble/Minecraft data paths.
 - OS credential-store protection for Windows tokens, independently signed launcher artifacts, managed-Java digest pinning, and a packaged macOS native guard remain future hardening work.
 - Do not add an unsigned or half-finished injection route. Any future injection architecture needs explicit trust, authorization, process compatibility, rollback, and support design.
 
@@ -69,6 +71,13 @@ Published launcher release `0.1.131` (2026-08-31):
 - Launcher Vite build, Gradle tests, Rust formatting, and `git diff --check` pass. The clean release tree passed 194 Site/API tests plus the release audit, and the Pages build passed.
 - Hosted Windows and Linux native tests/builds, packaged network self-tests, R2 uploads, and matching manifest checks passed. Local `cargo test --manifest-path src-tauri/Cargo.toml` remains unavailable on this host because GTK/WebKit development packages (`gdk-3.0`, `pango`, `libsoup-3.0`, and related `.pc` files) are missing.
 
+Release-candidate verification for `0.1.132` (2026-09-03):
+
+- 26 frontend/security tests, Gradle tests, hardened-JAR verification, Rust formatting, and 24 Rust tests passed; the one ignored Rust test separately downloaded 128 real Minecraft 1.21.11 asset objects successfully.
+- Clean Ubuntu 24.04, Arch Linux, and installed Flatpak users passed all three Gamble gateways plus Mojang, Fabric, and the exact asset-CDN check. Each clean GUI stayed alive for the 15-second smoke window.
+- The official Flatpak manifest lint passed. The bundle uses the latest available Java 21 extension runtime (`25.08`); the linter only notes that the platform has a newer `26.08` runtime whose Java 21 extension is not yet published.
+- Real source-matched Windows, native Linux package, and hosted Flatpak workflow runs remain required before publication.
+
 Useful live checks still worth repeating after launcher changes:
 
 1. Fresh profile with no launch data, normal profile, and a profile-specific account override.
@@ -86,7 +95,7 @@ npm run build
 git diff --check
 ```
 
-Native packaging is performed by the GitHub Actions workflows. The release procedure waits for matching Windows/Linux manifests before publishing native metadata; see `/home/theac/Desktop/RELEASE_HANDOFF.md`.
+Native packaging is performed by the GitHub Actions workflows. The release procedure waits for matching Windows, Linux, and Flatpak manifests before publishing native metadata; see `/home/theac/Desktop/RELEASE_HANDOFF.md`.
 
 ## Operating constraints
 

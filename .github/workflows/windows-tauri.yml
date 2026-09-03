@@ -2,6 +2,12 @@ name: Build Windows Launcher
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Upload the tested installer and release manifest to production R2
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - main
@@ -83,6 +89,7 @@ jobs:
           if ($selfTest.ExitCode -ne 0) { throw "The packaged Windows launcher network self-test failed with exit code $($selfTest.ExitCode)." }
 
       - name: Upload Windows installer directly to R2
+        if: ${{ github.event_name == 'push' || inputs.publish }}
         shell: pwsh
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

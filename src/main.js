@@ -2,6 +2,7 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as tauriOpenDialog } from "@tauri-apps/plugin-dialog";
+import { canUseBuildForAccess, preferredBuildForAccess } from "./access-policy.js";
 import "./styles.css";
 import logoUrl from "./assets/cg-mod-icon.png";
 
@@ -19,12 +20,15 @@ const LAUNCHER_DISPLAY_NAME_KEY = "gamble.launcher.displayName";
 const CLIENT_DISPLAY_NAME_KEY = "gamble.client.displayName";
 const GRAPHICS_MODE_KEY = "gamble.launcher.graphicsMode";
 const GPU_SELECTOR_KEY = "gamble.launcher.gpuSelector";
-const LAUNCHER_VERSION = "0.1.130";
+const LAUNCHER_VERSION = "0.1.132";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
-// Browser mocks are a development-only visual harness. Vite removes this branch
-// and its sample data from production launcher bundles.
-const PREVIEW = import.meta.env.DEV && !("__TAURI_INTERNALS__" in window);
+// Browser mocks are a development-only visual harness. A source-built CI
+// diagnostic may opt in explicitly so the real Windows WebView can exercise
+// representative account tiers. Normal production builds leave the flag false,
+// allowing Vite to remove this branch and its sample data entirely.
+const TEST_ACCOUNT_FIXTURES = import.meta.env.VITE_LAUNCHER_TEST_FIXTURES === "true";
+const PREVIEW = TEST_ACCOUNT_FIXTURES || (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window));
 const PREVIEW_MODE = PREVIEW
   ? new URLSearchParams(globalThis.location?.search || "").get("preview") || ""
   : "";
@@ -217,6 +221,37 @@ async function openDialog(options) {
 let previewClientInstalled = false;
 let nativeWindow;
 
+function previewAccount(mode) {
+  const paidAds = { required: false, canWatch: false, active: false, remainingSeconds: 0 };
+  const fixtures = {
+    "ad-tier": {
+      user: { email: "river.free@example.test", displayName: "River Cole", selectedPlan: "ad_tier", accessStatus: "ad_tier", adTierAccess: true },
+      ads: { required: true, canWatch: true, active: false, remainingSeconds: 0, message: "Open the Dashboard to watch the 30-second sponsor before playing." }
+    },
+    "ad-tier-active": {
+      user: { email: "river.free@example.test", displayName: "River Cole", selectedPlan: "ad_tier", accessStatus: "ad_tier", adTierAccess: true },
+      ads: { required: true, canWatch: true, active: true, remainingSeconds: 10_800, message: "Sponsored access is active." }
+    },
+    giveaway: {
+      user: { email: "mason.giveaway@example.test", displayName: "Mason Reed", selectedPlan: "weekly", accessStatus: "owned" },
+      ads: paidAds
+    },
+    "beta-weekly": {
+      user: { email: "nova.beta@example.test", displayName: "Nova Brooks", selectedPlan: "beta_plus", accessStatus: "beta_plus", betaAccess: true },
+      ads: paidAds
+    },
+    media: {
+      user: { email: "harper.media@example.test", displayName: "Harper Lane", selectedPlan: "media", accessStatus: "media", mediaAccess: true, betaAccess: true },
+      ads: paidAds
+    },
+    owner: {
+      user: { email: "jordan.owner@example.test", displayName: "Jordan Vale", selectedPlan: "owner", accessStatus: "owner", ownerAccess: true, mediaAccess: true, betaAccess: true, devAccess: true },
+      ads: paidAds
+    }
+  };
+  return fixtures[mode] || fixtures.owner;
+}
+
 function currentNativeWindow() {
   if (PREVIEW) return null;
   try {
@@ -264,20 +299,17 @@ async function mockInvoke(command, args = {}) {
         downloadUrl: "/api/launcher/download",
         downloads: {
           windows: { fileName: `Gamble Client Launcher_${LAUNCHER_VERSION}_x64-setup.exe`, downloadUrl: "/api/launcher/download/windows" },
+          linuxFlatpak: { fileName: `Gamble-Client-Launcher-${LAUNCHER_VERSION}.flatpak`, downloadUrl: "/api/launcher/download/linux-flatpak" },
           linuxRpm: { fileName: `Gamble Client Launcher-${LAUNCHER_VERSION}-1.x86_64.rpm`, downloadUrl: "/api/launcher/download/linux-rpm" },
           linuxDeb: { fileName: `Gamble Client Launcher_${LAUNCHER_VERSION}_amd64.deb`, downloadUrl: "/api/launcher/download/linux-deb" }
         }
       };
     }
     if (path === "/api/launcher/session" || path === "/api/launcher/account") {
-      const adTier = PREVIEW_MODE === "ad-tier";
+      const preview = previewAccount(PREVIEW_MODE);
       return {
-        user: adTier
-          ? { displayName: "DemoPlayer", selectedPlan: "ad_tier", accessStatus: "ad_tier", ownerAccess: false }
-          : { displayName: "DemoPlayer", selectedPlan: "owner", accessStatus: "owner", ownerAccess: true },
-        ads: adTier
-          ? { required: true, canWatch: true, active: false, remainingSeconds: 0, message: "Open the Dashboard to watch the 30-second sponsor before playing." }
-          : { required: false, canWatch: false, active: false, remainingSeconds: 0 }
+        user: preview.user,
+        ads: preview.ads
       };
     }
     if (path === "/api/launcher/start") {
@@ -1439,24 +1471,11 @@ function buildForAccount() {
 }
 
 function preferredBuildForAccount(account = state.account) {
-  if (!account) return "release";
-  if (account.devAccess) return "dev";
-  if (account.ownerAccess || hasPlanOrStatus(account, ["owner"])) return "media";
-  if (account.mediaAccess || account.testerAccess || hasPlanOrStatus(account, ["media", "tester"])) return "media";
-  if (account.betaAccess || hasPlanOrStatus(account, ["beta_plus", "lifetime_beta"])) return "beta_plus";
-  if (hasPlanOrStatus(account, ["weekly", "monthly", "yearly", "lifetime", "owned"])) return "release";
-  return "ad_tier";
+  return preferredBuildForAccess(account);
 }
 
 function canUseBuild(buildId, account = state.account) {
-  if (!account) return buildId === "release";
-  if (account.ownerAccess || hasPlanOrStatus(account, ["owner"])) return true;
-  if (buildId === "dev") return Boolean(account.devAccess);
-  if (buildId === "ad_tier") return preferredBuildForAccount(account) === "ad_tier";
-  if (buildId === "release") return preferredBuildForAccount(account) !== "ad_tier";
-  if (buildId === "beta_plus") return ["beta_plus", "media"].includes(preferredBuildForAccount(account));
-  if (buildId === "media") return preferredBuildForAccount(account) === "media";
-  return false;
+  return canUseBuildForAccess(account, buildId);
 }
 
 function buildRank(buildId) {

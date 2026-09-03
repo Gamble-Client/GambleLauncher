@@ -108,7 +108,8 @@ test("production launcher UI omits owner-specific preview data and sanitizes vis
     const bootstrap = await source("src/main/java/com/gambleclient/launcher/LauncherBootstrap.java");
     const cargo = await source("src-tauri/Cargo.toml");
 
-    assert.match(frontend, /const PREVIEW = import\.meta\.env\.DEV/);
+    assert.match(frontend, /VITE_LAUNCHER_TEST_FIXTURES === "true"/);
+    assert.match(frontend, /const PREVIEW = TEST_ACCOUNT_FIXTURES \|\| \(import\.meta\.env\.DEV/);
     assert.doesNotMatch(frontend, /\/home\/theac|BaseToucher|8667ba71b85a4004af54457a9734eed7|preview-token/);
     assert.doesNotMatch(java, /BaseToucher/);
     assert.match(frontend, /function publicMessage\(/);
@@ -124,6 +125,35 @@ test("production launcher UI omits owner-specific preview data and sanitizes vis
     assert.doesNotMatch(bootstrap, /showFallbackNotice\(cause\)/);
     assert.match(cargo, /\[profile\.release\][\s\S]*strip = "symbols"/);
     assert.match(cargo, /panic = "abort"/);
+});
+
+test("launcher frontend and native package versions stay synchronized", async () => {
+    const packageJson = JSON.parse(await source("package.json"));
+    const frontend = await source("src/main.js");
+    const flatpak = await source("flatpak/org.gambleclient.Launcher.yml");
+    const flatpakMetadata = await source("flatpak/org.gambleclient.Launcher.metainfo.xml");
+    assert.match(frontend, new RegExp(`const LAUNCHER_VERSION = ["']${packageJson.version.replaceAll(".", "\\.")}["'];`));
+    assert.match(flatpak, /build\/flatpak\/gamble-client-launcher\.jar/);
+    assert.match(flatpakMetadata, new RegExp(`<release version="${packageJson.version.replaceAll(".", "\\.")}"`));
+});
+
+test("Flatpak bundles Java 21 and grants only launcher-required host capabilities", async () => {
+    const manifest = await source("flatpak/org.gambleclient.Launcher.yml");
+    const wrapper = await source("flatpak/gamble-client-launcher");
+
+    assert.match(manifest, /org\.freedesktop\.Sdk\.Extension\.openjdk21/);
+    assert.match(manifest, /\/usr\/lib\/sdk\/openjdk21\/install\.sh/);
+    assert.match(manifest, /--share=network/);
+    assert.match(manifest, /--socket=x11/);
+    assert.match(manifest, /--socket=pulseaudio/);
+    assert.match(manifest, /--device=dri/);
+    assert.match(manifest, /--filesystem=~\/\.minecraft:create/);
+    assert.match(manifest, /--filesystem=~\/\.local\/share\/gamble-client:create/);
+    assert.doesNotMatch(manifest, /--filesystem=(?:host|home)|--device=all|--talk-name=|--socket=wayland/);
+    assert.match(wrapper, /\/app\/jre\/bin\/java/);
+    assert.match(wrapper, /if \[ -z "\$\{GAMBLE_CLIENT_GAME_DIR:-\}" \]/);
+    assert.match(wrapper, /GAMBLE_CLIENT_GAME_DIR="\$HOME\/\.local\/share\/gamble-client\/minecraft"/);
+    assert.match(wrapper, /--swing "\$@"/);
 });
 
 test("launcher settings survive unavailable WebView storage", async () => {
@@ -232,11 +262,13 @@ test("cancelling browser sign-in invalidates its background poll", async () => {
 test("native and universal launchers expose the role-gated Dev build", async () => {
     const frontend = await source("src/main.js");
     const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
+    const frontendPolicy = await source("src/access-policy.js");
+    const javaPolicy = await source("src/main/java/com/gambleclient/launcher/LauncherAccessPolicy.java");
 
     assert.match(frontend, /\{ id: "dev", label: "Dev" \}/);
-    assert.match(frontend, /if \(buildId === "dev"\) return Boolean\(account\.devAccess\);/);
+    assert.match(frontendPolicy, /if \(build === "dev"\) return account\.devAccess === true \|\| hasOwnerAccess\(account\);/);
     assert.match(java, /new Build\("Dev", "dev"\)/);
-    assert.match(java, /if \("dev"\.equals\(buildId\)\) return user\.devAccess \|\| hasOwnerAccess\(user\);/);
+    assert.match(javaPolicy, /case "dev" -> account\.devAccess\(\) \|\| hasOwnerAccess\(account\);/);
 });
 
 test("custom launcher chrome exposes explicit drag and resize paths", async () => {
