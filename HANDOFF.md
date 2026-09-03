@@ -9,12 +9,11 @@ This document covers the launcher repository only. Client behavior is in `/home/
 - GitHub: [Gamble-Client/GambleLauncher](https://github.com/Gamble-Client/GambleLauncher)
 - Repository: `/home/theac/Desktop/gamble-client-launcher`
 - Current working branch: `codex/launcher-ui-security-pass-20260821`
-- Published artifact source: `d91805a` (`Move sponsor verification to Dashboard`); the repository may advance with documentation-only handoff commits.
-- Current public launcher version: `0.1.131`; the Dashboard sponsor migration is live.
-- Current standalone-loader feed: `1.4.22`; the published loader now has the same trusted-origin backend failover as the launcher for connection failures.
-- Release candidate: launcher `0.1.132` and standalone loader `1.4.23`. They are not public until source-matched Windows, Linux, and Flatpak workflows and the production audit pass.
-- Native workflow runs: Windows `33437745051`; Linux `33437744351`
-- Universal JAR and the Windows/Linux native packages are the current immutable artifacts. Versions `0.1.113` through `0.1.129` are superseded.
+- Published artifact source: `4e1d50fa11a15e4f4e498a7d65cab7cca3f9a0b0`; later handoff-only commits do not change the package bytes.
+- Current public launcher: `0.1.132`; current standalone loader: `1.4.23`; current client build: `20260903124510` (`1.246`).
+- Source-matched package runs: Windows `33756205997`, Linux DEB/RPM `33756208434`, and Flatpak `33755938461`.
+- Windows account/WebView matrix: `33755443274`; final public-installer smoke: `33757439545`.
+- The universal JAR, Windows NSIS installer, DEB, RPM, and bundled-Java Flatpak are the current immutable artifacts. MSI remains intentionally unavailable.
 
 The launcher supports the managed native workflow, the universal JavaFX JAR, and the Swing fallback. The owner uses this standard Gamble Client launcher flow; old Prism directories are not current runtime evidence.
 
@@ -45,7 +44,7 @@ The known RX 6800 incident is a Mesa/AMDGPU GPUVM page fault triggered by Java r
 
 - Ad Tier sponsor playback is no longer embedded in the launcher. The Tauri frontend and universal Java Swing/JavaFX paths receive access state only and send users to `https://dash.gambleclient.org/dashboard.html?section=free` when sponsored time is missing.
 - The Dashboard owns the normal-browser media session. The backend issues a one-use challenge with a 30-second not-before time, a five-minute expiry window, a 60-second per-account start cooldown, and a 72-hour bank cap. The page tracks forward visible playback and the server remains authoritative at completion.
-- Source version `0.1.131` removes the launcher media resolver, embedded video/player fallback, media CSP grant, sponsor overlay, and old launcher reward calls. The old launcher reward routes return `410` with Dashboard guidance.
+- Version `0.1.132` contains no launcher media resolver, embedded video/player fallback, media CSP grant, sponsor overlay, or old launcher reward calls. The old launcher reward routes return `410` with Dashboard guidance.
 
 ## Security and platform notes
 
@@ -58,25 +57,14 @@ The known RX 6800 incident is a Mesa/AMDGPU GPUVM page fault triggered by Java r
 
 ## Verification state
 
-Completed for `0.1.130`:
+Published and verified for `0.1.132` (2026-09-03):
 
-- Vite production build, Gradle tests, 24 launcher contract tests, ProGuard/hardened-JAR checks, Rust formatting, and packaged Linux/Windows network self-tests.
-- Hosted Windows and Linux native tests/builds, including Windows fresh install, same-version reinstall/update, accelerated WebView/render smoke, and source-matched diagnostic DOM checks.
-- Physical Linux GUI smoke: Play reached the Minecraft title screen; an empty profile remained responsive through Play/sign-in/Cancel. A second stored session returned HTTP 401, so a second authenticated-account launch was not available.
-- Sponsor-media 200/range checks and public artifact metadata/byte/hash/provenance checks.
-
-Published launcher release `0.1.131` (2026-08-31):
-
-- Native offline launch fallback, startup-exit popup, dashboard-only sponsor verification, updated account copy, and 23 launcher contract tests are implemented.
-- Launcher Vite build, Gradle tests, Rust formatting, and `git diff --check` pass. The clean release tree passed 194 Site/API tests plus the release audit, and the Pages build passed.
-- Hosted Windows and Linux native tests/builds, packaged network self-tests, R2 uploads, and matching manifest checks passed. Local `cargo test --manifest-path src-tauri/Cargo.toml` remains unavailable on this host because GTK/WebKit development packages (`gdk-3.0`, `pango`, `libsoup-3.0`, and related `.pc` files) are missing.
-
-Release-candidate verification for `0.1.132` (2026-09-03):
-
-- 26 frontend/security tests, Gradle tests, hardened-JAR verification, Rust formatting, and 24 Rust tests passed; the one ignored Rust test separately downloaded 128 real Minecraft 1.21.11 asset objects successfully.
-- Clean Ubuntu 24.04, Arch Linux, and installed Flatpak users passed all three Gamble gateways plus Mojang, Fabric, and the exact asset-CDN check. Each clean GUI stayed alive for the 15-second smoke window.
-- The official Flatpak manifest lint passed. The bundle uses the latest available Java 21 extension runtime (`25.08`); the linter only notes that the platform has a newer `26.08` runtime whose Java 21 extension is not yet published.
-- Real source-matched Windows, native Linux package, and hosted Flatpak workflow runs remain required before publication.
+- Vite production build, 26 frontend/access/security tests, Gradle tests, hardened-JAR verification, Rust formatting, and 24 Rust tests passed. The one ignored Rust test was run separately and downloaded 128 real Minecraft `1.21.11` asset objects.
+- The Windows VM passed a real packaged WebView/DOM check and six representative accounts: inactive and active Ad Tier, giveaway, Beta Weekly, Media, and Owner. Each account exposed only its allowed builds; inactive Ad Tier opened the Dashboard and the other five reached process start.
+- Source-matched Windows, DEB/RPM, and Flatpak workflows tested the packaged network paths before uploading manifests. The release gate accepted only manifests for exact commit `4e1d50f`.
+- Fresh post-release Ubuntu 24.04 DEB and Fedora 44 RPM users passed install, network, and 15-second GUI smokes. The downloaded public universal JAR and installed public Flatpak passed all three Gamble gateways, Mojang, Fabric, the exact asset CDN, and GUI smokes.
+- All public launcher downloads matched the live API sizes and SHA-256 values. The final Windows public-installer job passed clean install, same-version reinstall, packaged network, WebView-process, and nonblank-render checks.
+- Official Flatpak manifest lint passed. The bundle uses Freedesktop/OpenJDK `25.08`; `26.08` does not yet publish the required Java 21 extension.
 
 Useful live checks still worth repeating after launcher changes:
 
