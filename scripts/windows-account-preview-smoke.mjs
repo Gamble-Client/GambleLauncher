@@ -84,11 +84,12 @@ for (const fixture of fixtures) {
 
   await evaluate(`document.querySelector('[data-action="dismiss-client-popup"]')?.click()`);
   await evaluate(`document.querySelector('button[data-view="profiles"]')?.click()`);
-  const builds = await waitFor(
-    `[...document.querySelectorAll('[data-action="select-profile-build"]')].map((node)=>node.dataset.build)`,
-    (value) => Array.isArray(value),
+  const profileView = await waitFor(
+    `({view:Boolean(document.querySelector('[data-view-frame="profiles"]')),builds:[...document.querySelectorAll('[data-action="select-profile-build"]')].map((node)=>node.dataset.build)})`,
+    (value) => value?.view && JSON.stringify(value.builds) === JSON.stringify(fixture.builds),
     `${fixture.id} build choices`
   );
+  const builds = profileView.builds;
   if (JSON.stringify(builds) !== JSON.stringify(fixture.builds)) {
     throw new Error(`${fixture.id} exposed ${JSON.stringify(builds)}; expected ${JSON.stringify(fixture.builds)}.`);
   }
