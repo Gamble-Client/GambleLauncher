@@ -557,6 +557,10 @@ mod windows_private {
 
     pub(super) fn has_private_acl(path: &Path) -> io::Result<bool> {
         let sid = current_user_sid()?;
+        // Windows prints well-known account SIDs using aliases (for example LA
+        // for this machine's RID-500 user). Canonicalize the exact expected
+        // descriptor too; never broaden the permitted owner or ACE list.
+        let expected = canonical_sddl(&format!("O:{sid}D:P(A;;FA;;;{sid})"))?;
         let name: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
         unsafe {
             let mut descriptor = ptr::null_mut();
@@ -594,7 +598,49 @@ mod windows_private {
             let sddl = String::from_utf16_lossy(std::slice::from_raw_parts(text, count));
             LocalFree(text.cast());
             LocalFree(descriptor);
-            Ok(sddl == format!("O:{sid}D:P(A;;FA;;;{sid})"))
+            Ok(sddl == expected)
+        }
+    }
+
+    pub(super) fn canonical_sddl(sddl: &str) -> io::Result<String> {
+        let wide: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
+        if sddl.contains('\0') {
+            return Err(invalid("Security descriptor contains NUL."));
+        }
+        // Both conversions allocate LocalFree-owned buffers. Only the owner
+        // and DACL are compared, matching the fields read from the real file.
+        unsafe {
+            let mut descriptor = ptr::null_mut();
+            if ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                wide.as_ptr(),
+                1,
+                &mut descriptor,
+                ptr::null_mut(),
+            ) == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            let mut text = ptr::null_mut();
+            if ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                descriptor,
+                1,
+                DACL_SECURITY_INFORMATION | OWNER_SECURITY_INFORMATION,
+                &mut text,
+                ptr::null_mut(),
+            ) == 0
+            {
+                let error = io::Error::last_os_error();
+                LocalFree(descriptor);
+                return Err(error);
+            }
+            let mut count = 0;
+            while *text.add(count) != 0 {
+                count += 1;
+            }
+            let canonical = String::from_utf16_lossy(std::slice::from_raw_parts(text, count));
+            LocalFree(text.cast());
+            LocalFree(descriptor);
+            Ok(canonical)
         }
     }
 

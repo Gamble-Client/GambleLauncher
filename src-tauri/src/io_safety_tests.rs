@@ -407,6 +407,20 @@ fn windows_private_file_has_only_current_token_user_in_protected_dacl_before_byt
         LocalFree(sddl.cast());
         LocalFree(descriptor);
         let sid = windows_private::current_user_sid().unwrap();
-        assert_eq!(actual, format!("O:{sid}D:P(A;;FA;;;{sid})"));
+        let expected =
+            windows_private::canonical_sddl(&format!("O:{sid}D:P(A;;FA;;;{sid})")).unwrap();
+        assert_eq!(actual, expected);
+        assert!(windows_private::has_private_acl(file.path()).unwrap());
+        assert_ne!(
+            expected,
+            windows_private::canonical_sddl(&format!("O:{sid}D:P(A;;FA;;;{sid})(A;;FR;;;WD)"))
+                .unwrap(),
+            "Canonicalization must not erase additional principals"
+        );
+        assert_ne!(
+            expected,
+            windows_private::canonical_sddl(&format!("O:WDD:P(A;;FA;;;{sid})")).unwrap(),
+            "Canonicalization must not erase a different owner"
+        );
     }
 }
