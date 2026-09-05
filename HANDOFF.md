@@ -11,24 +11,22 @@ This document covers the launcher repository only. Client behavior is in `/home/
 - Current working branch: `codex/launcher-ui-security-pass-20260821`
 - Published artifact source: `209aff4319e331dbbf3198347f4a70842589f027`; later handoff-only commits do not change the package bytes.
 - Current public launcher: `0.1.133`; current standalone loader: `1.4.24`; current client build: `20260905052753` (`1.248`).
-- Source-matched package runs: Windows `33945840421`, Linux DEB/RPM `33945841278`, Flatpak `33945842206`, and WebView/diagnostic matrix `33945842974`.
+- Source-matched publication runs: Windows `33946836353`, Linux DEB/RPM `33946838214`, and Flatpak `33946839381`. Prepublication runs: Windows `33945840421`, Linux `33945841278`, Flatpak `33945842206`, and six-fixture WebView/diagnostic matrix `33945842974`.
 - Final staged installer smoke: `33947183098`; final live public-installer smoke: `33947469178`.
 - The universal JAR, Windows NSIS installer, DEB, RPM, and bundled-Java Flatpak are the current immutable artifacts. MSI remains intentionally unavailable.
 
 The launcher supports the managed native workflow, the universal JavaFX JAR, and the Swing fallback. The owner uses this standard Gamble Client launcher flow; old Prism directories are not current runtime evidence.
 
-## Release preparation (2026-09-05 — published)
+## Released changes (2026-09-05)
 
-- The coordinated release published launcher `0.1.133`, standalone loader `1.4.24`, and client build `20260905052753`/version `1.248`. Launcher source is committed/pushed at `209aff4319e331dbbf3198347f4a70842589f027`; the loader source is committed/pushed at `17211963af4d6ac9778d79a119dfa39285ddda41`.
-- The Windows installer smoke accepts a successful Windows-build run ID and rejects a different source SHA. It installs/reinstalls that candidate artifact before metadata promotion; the optional diagnostic build runs the six-account WebView fixture matrix. These checks do not use private client source in the public launcher repository.
-
+- Coordinated publication delivered launcher `0.1.133`, loader `1.4.24`, and client build `20260905052753`/version `1.248`. Artifact sources: launcher `209aff4`, client `db37985c9` (client code identical to tested `0aad5422`), and site `5c09863`; site metadata/state commits are `2707eea`/`9f06d6c`. Later documentation-only commits do not change artifact identity.
 - Reworked first-run Play and account/profile presentation; removed the blocking client-update detour; added accessible dialogs/progress, direct diagnostics/mod/pack actions and minimum-size coverage. Fresh sponsor access is profile-scoped and rechecked when returning from the Dashboard, including Java/Flatpak.
 - Added private credential/enrollment staging, bounded HTTP/ZIP reads and safe failed-download handling, non-inflating resource-pack previews, private Java argument files with exact platform encoding, and bounded/cancellable native OAuth callback reads. Existing provenance, entitlement and host restrictions remain mandatory.
-- Launcher verification: 36 Node tests, 41 Java tests, hardened-JAR verification and Vite build passed; six synthetic browser fixtures passed first-run Play, plain-profile/sponsor behavior, diagnostics, sign-out, dialog focus and 820×560 layout. Isolated packaged Swing survived a 15-second startup smoke. These are not real-account or Windows Minecraft tests.
-- Coordinated loader fix removes the consumed-Mixin-queue registration race. Actual baseline/production Fabric/Sponge matrix: 108 cases; complete client/loader suite: 676 tests, zero failures/errors/skips. All five client tiers and three loader platforms were rebuilt for `20260905052753`.
-- Native verification:57 Linux Rust tests passed; the separate live Mojang test passed128 asset downloads; formatting passed using the existing sysroot catalog. Credential argument files are cleaned on normal exit/failure and marked dead-child leftovers on next startup/launch. Live/reused/unknown process identities are retained conservatively; no age-based deletion or extra background service was added.
-- Site/backend: 199 tests and static build pass. The integrated release audit passed the immutable `1.4.24` metadata, and the remote byte/hash/provenance audit passed all client, loader, and launcher artifacts.
-- Windows validation passed on source-matched private run `33946761073` (126 tests, zero failures/errors/skips); the final live public installer smoke `33947469178` passed clean install, reinstall, packaged network, and nonblank render.
+- Real Windows gates caught and fixed elevated-token file ownership, canonical Windows ACL descriptor comparisons, and cleanup when a terminated child still has an open process handle. Exact current-user ownership/permissions remain enforced; foreign writers and uncertain process identities do not get accepted.
+- Coordinated loader fixes address the consumed-Mixin-queue registration race and Windows staging ownership/ACL handling. Complete local client/loader suite: 676 tests, zero failures/errors/skips; focused baseline/production loader matrix: 112 cases plus a packaged-entrypoint test. Hosted Windows run `33946761073` passed 126 native/JNI and real Fabric/Knot loader checks, zero failures/errors/skips.
+- All five independently obfuscated tiers and three loader platforms were released. The exact `client/scripts/build-tiers.sh` replay passed in `/tmp/gamble-client-final-tiers.bzm4HK`, without changing canonical `/home/theac/Desktop/Built Jars`. All tier entry names and uncompressed contents match the release; four ZIP containers differ only in entry timestamps. Release tier and three loaders are byte-identical.
+- Site/backend: 199 tests and static build passed. Integrated release and remote byte/hash/provenance audits passed. Current Pages deployment: `https://85504fd0.gamble-client-b67.pages.dev`; canonical production: `https://gambleclient.org`.
+- See `docs/audit-2026-09-05.md` for scoped security findings, tests, published hashes and remaining hardening work.
 
 ## Current launch flow
 
@@ -57,7 +55,7 @@ The known RX 6800 incident is a Mesa/AMDGPU GPUVM page fault triggered by Java r
 
 - Ad Tier sponsor playback is no longer embedded in the launcher. The Tauri frontend and universal Java Swing/JavaFX paths receive access state only and send users to `https://dash.gambleclient.org/dashboard.html?section=free` when sponsored time is missing.
 - The Dashboard owns the normal-browser media session. The backend issues a one-use challenge with a 30-second not-before time, a five-minute expiry window, a 60-second per-account start cooldown, and a 72-hour bank cap. The page tracks forward visible playback and the server remains authoritative at completion.
-- Version `0.1.133` contains no launcher media resolver, embedded video/player fallback, media CSP grant, sponsor overlay, or old launcher reward calls. The old launcher reward routes return `410` with Dashboard guidance.
+- The current release contains no launcher media resolver, embedded video/player fallback, media CSP grant, sponsor overlay, or old launcher reward calls. The old launcher reward routes return `410` with Dashboard guidance.
 
 ## Security and platform notes
 
@@ -72,12 +70,14 @@ The known RX 6800 incident is a Mesa/AMDGPU GPUVM page fault triggered by Java r
 
 Published and verified for `0.1.133` (2026-09-05):
 
-- Vite production build, 26 frontend/access/security tests, Gradle tests, hardened-JAR verification, Rust formatting, and 24 Rust tests passed. The one ignored Rust test was run separately and downloaded 128 real Minecraft `1.21.11` asset objects.
-- The Windows VM passed a real packaged WebView/DOM check and six representative accounts: inactive and active Ad Tier, giveaway, Beta Weekly, Media, and Owner. Each account exposed only its allowed builds; inactive Ad Tier opened the Dashboard and the other five reached process start.
-- Source-matched Windows, DEB/RPM, and Flatpak workflows tested the packaged network paths before uploading manifests. The release gate accepted only manifests for exact commit `209aff4`.
-- Fresh post-release Ubuntu 24.04 DEB and Fedora 44 RPM users passed install, network, and 15-second GUI smokes. The downloaded public universal JAR and installed public Flatpak passed all three Gamble gateways, Mojang, Fabric, the exact asset CDN, and GUI smokes.
-- All public launcher downloads matched the live API sizes and SHA-256 values. The final Windows public-installer job passed clean install, same-version reinstall, packaged network, WebView-process, and nonblank-render checks.
-- Official Flatpak manifest lint passed. The bundle uses Freedesktop/OpenJDK `25.08`; `26.08` does not yet publish the required Java 21 extension.
+- Vite production build, 36 Node tests, 41 local Java tests, hardened-JAR verification (88 protected classes), Rust formatting and 57 Linux Rust tests passed. The separately run live-network test downloaded 128 real Minecraft `1.21.11` asset objects.
+- Windows hosted VMs passed 57 Rust tests and 38 Java tests; three Java skips are expected for POSIX symlinks, procfs argv and the full-Unicode fixture under legacy CP1252. Native-code-page argument round-trip checks passed.
+- The source-matched Windows WebView/DOM matrix passed six synthetic account fixtures: inactive and active Ad Tier, giveaway, Beta Weekly, Media and Owner. First Play, sponsor/plain-profile behavior, diagnostics, sign-out, dialog focus and 820×560 layout passed.
+- Windows, DEB/RPM and Flatpak publication manifests match exact source `209aff4319e331dbbf3198347f4a70842589f027`. Packaged network checks and Flatpak Swing GUI startup smoke passed.
+- Final staged installer smoke `33947183098` and live public-installer smoke `33947469178` passed clean install, same-version reinstall, packaged network and nonblank render. The independently downloaded public Windows installer is 2,732,056 bytes, SHA-256 `50a7cf2ef4f28dfeb01cbdf0bd3a99395a174cc6e681286029ef769186aee635`.
+- All public launcher downloads passed the release remote byte/hash/provenance audit. Published package hashes are recorded in the audit report.
+- Flatpak bundles Freedesktop/OpenJDK `25.08` and starts the Swing interface; update guidance opens the download page. The native RPM/DEB selector is not the Flatpak entrypoint.
+- These are real Windows JVM/NTFS/JNI, packaged installer and WebView checks, but account flows use fixtures. They are **not** an authenticated interactive Minecraft desktop or real Microsoft-account login/playthrough.
 
 Useful live checks still worth repeating after launcher changes:
 
