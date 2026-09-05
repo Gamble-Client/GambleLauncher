@@ -2032,7 +2032,7 @@ public class FxMain extends Application {
             boolean enabled = isEnabledResourcePack(file);
             boolean disabled = lower.endsWith(".zip.disabled") || lower.endsWith(".disabled");
             if (!isResourcePackLikeFile(file) && !disabled) continue;
-            result.add(new ModFile(file, enabled, false));
+            result.add(new ModFile(file, enabled, false, false));
         }
         result.sort(java.util.Comparator.comparing(value -> value.file.getName().toLowerCase(Locale.ROOT)));
         return result;
@@ -2370,8 +2370,12 @@ public class FxMain extends Application {
         final boolean locked;
 
         ModFile(File file, boolean enabled, boolean locked) {
+            this(file, enabled, locked, true);
+        }
+
+        ModFile(File file, boolean enabled, boolean locked, boolean modMetadata) {
             this.file = file;
-            this.displayName = displayName(file);
+            this.displayName = ArchiveDisplayName.read(file, modMetadata);
             this.enabled = enabled;
             this.locked = locked;
         }
@@ -2387,18 +2391,6 @@ public class FxMain extends Application {
             return (enabled ? "On  " : "Off ") + displayName + (locked ? "  (required)" : "");
         }
 
-        private static String displayName(File file) {
-            try (ZipFile zip = new ZipFile(file)) {
-                ZipEntry entry = zip.getEntry("fabric.mod.json");
-                if (entry == null) return file.getName();
-                String json = new String(zip.getInputStream(entry).readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-                java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("\"name\"\\s*:\\s*\"([^\"]+)\"").matcher(json);
-                if (matcher.find()) return matcher.group(1);
-            } catch (Exception ignored) {
-                // Fall back to filename for non-Fabric jars or disabled files.
-            }
-            return file.getName();
-        }
     }
 
     private static final class ModFileCell extends ListCell<ModFile> {

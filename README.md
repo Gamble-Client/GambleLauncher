@@ -11,10 +11,10 @@ Current flow:
 - Opens the Gamble Client site sign-in from the top bar.
 - Stores a launcher session token locally after browser sign-in succeeds.
 - Requests the selected build manifest from the backend instead of asking for a URL or license key.
-- Keeps the license in the shared managed `cg-mod` folder and mirrors it into the active profile for older builds.
-- Ad-Tier free access is launcher-only and requires a completed 30-second sponsor check in the Dashboard before install or launch.
-- Installs or updates the selected Gamble Client jar in the managed game folder, not the user's main `.minecraft`.
-- Installs managed Fabric helper mods for Fabric profiles: Fabric API and Mod Menu.
+- Installs a fresh authenticated standalone loader into the selected Gamble profile; the loader authorizes and loads the protected client in memory. No license file or protected client JAR is mirrored into profiles.
+- Ad-Tier access to the Gamble profile requires a completed 30-second sponsor check in the Dashboard. Returning to Play refreshes access; plain Vanilla/Fabric profiles do not require a sponsor.
+- First-run **Set up & play** prepares missing Minecraft, Fabric and loader files automatically. Profiles stay separate from the user's main `.minecraft`.
+- Installs Fabric API for Fabric profiles; the Java distribution additionally manages Mod Menu.
 - Downloads Minecraft/Fabric runtime files when missing.
 - Launches Minecraft directly through Fabric Loader.
 - Optionally links a Microsoft account for online Minecraft auth using the approved Gamble Client app registration. Without it, the launcher falls back to the local/offline session.
@@ -25,7 +25,7 @@ Managed game folder:
 - Windows: `%APPDATA%/Gamble Client/minecraft`
 - macOS: `~/Library/Application Support/Gamble Client/minecraft`
 
-Override with `GAMBLE_CLIENT_GAME_DIR` or `-Dgamble.gameDir=/path/to/minecraft`.
+Override with `GAMBLE_CLIENT_GAME_DIR`; the Java distribution also accepts `-Dgamble.gameDir=/path/to/minecraft`.
 
 Profile files are kept below the managed game folder in `profiles/<profile>/`.
 For Fabric profiles, add extra `.jar` files to that profile's `mods/` folder;
@@ -49,7 +49,12 @@ The web/Tauri shell can be built with:
 ```bash
 npm ci
 npm run build
+npm test
 ```
+
+The isolated browser-fixture smoke is `node scripts/launcher-ui-smoke.mjs <dev-url> <output-dir>`
+with Playwright installed. `LAUNCHER_PLAYWRIGHT_MODULE` and `LAUNCHER_CHROMIUM` can select existing
+tooling. It exercises UI/state behavior, not production authentication or a real Minecraft launch.
 
 ## Security and privacy
 

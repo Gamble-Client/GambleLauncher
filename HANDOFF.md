@@ -1,6 +1,6 @@
 # Gamble Client Launcher — Launcher Handoff
 
-Last updated: 2026-09-03 UTC
+Last updated: 2026-09-05 UTC
 
 This document covers the launcher repository only. Client behavior is in `/home/theac/Desktop/GambleClient/HANDOFF.md`; Site/API and publishing are in `/home/theac/Desktop/cg-mod-release/HANDOFF.md` and `/home/theac/Desktop/RELEASE_HANDOFF.md`.
 
@@ -16,6 +16,19 @@ This document covers the launcher repository only. Client behavior is in `/home/
 - The universal JAR, Windows NSIS installer, DEB, RPM, and bundled-Java Flatpak are the current immutable artifacts. MSI remains intentionally unavailable.
 
 The launcher supports the managed native workflow, the universal JavaFX JAR, and the Swing fallback. The owner uses this standard Gamble Client launcher flow; old Prism directories are not current runtime evidence.
+
+## Release preparation (2026-09-05 — not published)
+
+- User-authorized release preparation now assigns launcher `0.1.133` and standalone loader `1.4.24`. Loader source is committed/pushed at `17211963af4d6ac9778d79a119dfa39285ddda41`; private client CI is owned by the client chat. Public versions above remain unchanged until coordinated promotion.
+- The Windows installer smoke accepts a successful Windows-build run ID and rejects a different source SHA. It installs/reinstalls that candidate artifact before metadata promotion; the optional diagnostic build runs the six-account WebView fixture matrix. These checks do not use private client source in the public launcher repository.
+
+- Reworked first-run Play and account/profile presentation; removed the blocking client-update detour; added accessible dialogs/progress, direct diagnostics/mod/pack actions and minimum-size coverage. Fresh sponsor access is profile-scoped and rechecked when returning from the Dashboard, including Java/Flatpak.
+- Added private credential/enrollment staging, bounded HTTP/ZIP reads and safe failed-download handling, non-inflating resource-pack previews, private Java argument files with exact platform encoding, and bounded/cancellable native OAuth callback reads. Existing provenance, entitlement and host restrictions remain mandatory.
+- Launcher verification: 36 Node tests, 41 Java tests, hardened-JAR verification and Vite build passed; six synthetic browser fixtures passed first-run Play, plain-profile/sponsor behavior, diagnostics, sign-out, dialog focus and 820×560 layout. Isolated packaged Swing survived a 15-second startup smoke. These are not real-account or Windows Minecraft tests.
+- Coordinated loader fix removes the consumed-Mixin-queue registration race. Actual baseline/production Fabric/Sponge matrix:108 cases; complete client/loader suite:671 tests, zero failures/errors/skips. All five client tiers and three loader platforms built as local client `20260905032012`.
+- Native verification:57 Linux Rust tests passed; the separate live Mojang test passed128 asset downloads; formatting passed using the existing sysroot catalog. Credential argument files are cleaned on normal exit/failure and marked dead-child leftovers on next startup/launch. Live/reused/unknown process identities are retained conservatively; no age-based deletion or extra background service was added.
+- Site/backend:199 tests and static build pass. The integrated release audit correctly rejected rebuilt loader bytes against immutable public `1.4.23` metadata. Keep this gate during the `1.4.24`/`0.1.133` promotion; exact-source package manifests are mandatory. Do not upload new bytes as the existing public versions.
+- Windows validation for these new patches is outstanding; no local Windows VM was available. The older published Windows runs below are historical evidence only. See `docs/audit-2026-09-05.md` for scope, risks and evidence.
 
 ## Current launch flow
 

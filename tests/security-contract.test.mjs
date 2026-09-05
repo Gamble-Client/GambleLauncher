@@ -12,7 +12,7 @@ test("Ad Tier launchers send users to the Dashboard instead of embedding sponsor
     assert.doesNotMatch(frontend, /\/api\/launcher\/ad-reward\//);
     assert.doesNotMatch(java, /\/api\/launcher\/ad-reward\//);
     assert.doesNotMatch(javaFx, /\/api\/launcher\/ad-reward\//);
-    assert.match(frontend, /selectedBuild\.id === "ad_tier" && !state\.ads\?\.active/);
+    assert.match(await source("src/launch-state.js"), /profile\.client && buildId === "ad_tier" && !ads\?\.active/);
     assert.match(frontend, /DASHBOARD_FREE_URL/);
     assert.match(frontend, /data-action="open-dashboard"/);
     assert.match(java, /openDashboardForAds\(\)/);
@@ -234,8 +234,16 @@ test("browser Microsoft sign-in can be cancelled without leaving launch progress
     assert.match(frontend, /message\.toLowerCase\(\)\.includes\("microsoft sign-in cancelled"\)/);
     assert.match(rust, /static MICROSOFT_BROWSER_SIGNIN_GENERATION: AtomicU32/);
     assert.match(rust, /fn cancel_microsoft_browser_sign_in\(\)/);
-    assert.match(rust, /wait_for_microsoft_callback\(&listener, generation\)/);
+    assert.match(rust, /wait_for_microsoft_callback\(&listener, generation, deadline\)/);
     assert.match(rust, /microsoft_browser_sign_in_cancelled\(generation\)/);
+});
+
+test("Java sponsor eligibility is checked after refreshing account access and only for Gamble profiles", async () => {
+    const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
+    const launch = java.slice(java.indexOf("private void launch()"), java.indexOf("private LauncherAccount refreshLauncherAccountBlocking"));
+    assert.match(launch, /if \(launchProfile\.includesGambleClient\) \{\s*LauncherAccount account = refreshLauncherAccountBlocking\(\);/);
+    assert.ok(launch.indexOf("refreshLauncherAccountBlocking()") < launch.indexOf("!sponsoredAccessActiveFor(build)"));
+    assert.match(launch, /SponsorRequiredException[\s\S]*openDashboardForAds\(\)/);
 });
 
 test("default-size launcher keeps account sign-in controls inside the visible content column", async () => {
@@ -334,7 +342,7 @@ test("native launches support offline Minecraft sessions and explain startup exi
     const launchBranch = frontend.slice(frontend.indexOf('action === "launch"'), frontend.indexOf('action === "microsoft"'));
 
     assert.doesNotMatch(launchBranch, /!selectedAccount\)[\s\S]*startMicrosoftSignIn\(\)/);
-    assert.match(frontend, /Launching an offline session/);
+    assert.match(frontend, /An offline Minecraft session is selected/);
     assert.match(frontend, /showExitPopup/);
     assert.match(rust, /fn offline_minecraft_identity\(username: &str\)/);
     assert.match(rust, /offline_minecraft_identity\(&input\.username\)/);

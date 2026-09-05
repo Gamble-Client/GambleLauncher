@@ -1,6 +1,6 @@
 [package]
 name = "gamble-client-launcher"
-version = "0.1.132"
+version = "0.1.133"
 description = "Gamble Client Launcher"
 authors = ["Gamble Client"]
 edition = "2021"
@@ -21,6 +21,9 @@ rand = "0.9"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 walkdir = "2.5"
 tauri-plugin-dialog = "2.4"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
 
 [features]
 default = ["custom-protocol"]

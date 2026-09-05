@@ -137,7 +137,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.132";
+    private static final String LAUNCHER_VERSION = "0.1.133";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -333,6 +333,10 @@ public class Main {
     private boolean startupUpdateCheckStarted;
     private boolean explicitBuildSelection;
     private boolean applyingAutomaticBuildSelection;
+
+    public Main() {
+        JavaLaunchArguments.cleanupOrphans(getLauncherDataFolder().toPath());
+    }
 
     public static void main(String[] args) throws UnsupportedLookAndFeelException, ClassNotFoundException, InstantiationException, IllegalAccessException {
         UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
@@ -2677,7 +2681,7 @@ public class Main {
         if (outdated == null) return false;
 
         String target = outdated.version.isEmpty() ? "the latest launcher" : "Gamble Client Launcher " + outdated.version;
-        String download = outdated.downloadUrl.isEmpty() ? siteUrl() + "/download" : outdated.downloadUrl;
+        String download = launcherUpdateLink(outdated.downloadUrl);
         String message = outdated.getMessage() + "\n\nDownload " + target + ":\n" + download;
         setUpdateStatus("Launcher update required: " + target + ".");
         log("Launcher update required: " + download);
@@ -3269,8 +3273,14 @@ public class Main {
             Json.string(response.body.get("version")),
             Json.string(response.body.get("minVersion")),
             Json.string(response.body.get("fileName")),
-            Json.string(response.body.get("downloadUrl"))
+            launcherUpdateLink(Json.string(response.body.get("downloadUrl")))
         );
+    }
+
+    private String launcherUpdateLink(String downloadUrl) {
+        // Flatpak includes its own runtime; a standalone JAR is not its updater.
+        return System.getenv("FLATPAK_ID") != null || downloadUrl == null || downloadUrl.isBlank()
+            ? siteUrl() + "/download" : downloadUrl;
     }
 
     private String fetchStandaloneLoaderVersion() throws IOException {
@@ -3450,15 +3460,6 @@ public class Main {
             JOptionPane.showMessageDialog(frame, "Sign in to the launcher before launching Minecraft.", "Sign in required", JOptionPane.WARNING_MESSAGE);
             return;
         }
-        if (!sponsoredAccessActiveFor(build)) {
-            setProgressStatus("Dashboard sponsor required");
-            log("Launch blocked: Ad Tier sponsored access is not active.");
-            JOptionPane.showMessageDialog(frame,
-                "Open the Gamble Client Dashboard, watch the 30-second sponsor break, then return to the launcher.",
-                "Dashboard sponsor check required", JOptionPane.WARNING_MESSAGE);
-            openDashboardForAds();
-            return;
-        }
 
         final String requestedName = !crackedMode && microsoftAccount != null && !microsoftAccount.name.isEmpty()
             ? microsoftAccount.name
@@ -3505,6 +3506,9 @@ public class Main {
                     if (!canUseBuild(account.user, build.id)) {
                         throw new IOException("This account no longer has access to " + build.label + ".");
                     }
+                    // Refresh first: the user may just have completed the sponsor
+                    // check in the Dashboard while this launcher was open.
+                    if (!sponsoredAccessActiveFor(build)) throw new SponsorRequiredException();
                 }
                 if (launchProfile.includesGambleClient) {
                     // The standalone loader owns authorization, update selection, and
@@ -3545,7 +3549,12 @@ public class Main {
                     setProgressStatus("Failed");
                     String message = rootMessage(e);
                     log("Launch failed: " + message);
-                    if (microsoftReconnectRequired(message)) {
+                    if (e.getCause() instanceof SponsorRequiredException) {
+                        setProgressStatus("Dashboard sponsor required");
+                        JOptionPane.showMessageDialog(frame, message,
+                            "Dashboard sponsor check required", JOptionPane.INFORMATION_MESSAGE);
+                        openDashboardForAds();
+                    } else if (microsoftReconnectRequired(message)) {
                         reconnectingMicrosoft = true;
                         JOptionPane.showMessageDialog(
                             frame,
@@ -3572,6 +3581,12 @@ public class Main {
         launcherUser = account.user;
         launcherAds = account.ads;
         return account;
+    }
+
+    private static final class SponsorRequiredException extends IOException {
+        SponsorRequiredException() {
+            super("Open the Gamble Client Dashboard, watch the 30-second sponsor break, then return and press Play again.");
+        }
     }
 
     private void stopMinecraftProcess(Process process) {
@@ -3823,12 +3838,14 @@ public class Main {
             diagnosticLog("Main class: " + profile.mainClass);
             log("Starting Minecraft.");
 
-            ProcessBuilder builder = new ProcessBuilder(command);
-            builder.directory(gameDir);
-            builder.redirectErrorStream(false);
-            applyGraphicsEnvironment(builder.environment(), graphicsMode, gpuSelector);
-            Process process = builder.start();
-            return process;
+            try (JavaLaunchArguments arguments = JavaLaunchArguments.create(
+                getLauncherDataFolder().toPath(), command)) {
+                ProcessBuilder builder = new ProcessBuilder(arguments.command());
+                builder.directory(gameDir);
+                builder.redirectErrorStream(false);
+                applyGraphicsEnvironment(builder.environment(), graphicsMode, gpuSelector);
+                return arguments.start(builder);
+            }
         } catch (IOException e) {
             throw e;
         }
@@ -4293,22 +4310,7 @@ public class Main {
     }
 
     private void unzipNatives(File zip, File targetDir) throws IOException {
-        try (ZipInputStream in = new ZipInputStream(new BufferedInputStream(Files.newInputStream(zip.toPath())))) {
-            ZipEntry entry;
-            while ((entry = in.getNextEntry()) != null) {
-                String name = entry.getName();
-                if (entry.isDirectory() || name.startsWith("META-INF/") || name.contains("..")) continue;
-
-                File out = new File(targetDir, new File(name).getName());
-                try (BufferedOutputStream stream = new BufferedOutputStream(new FileOutputStream(out))) {
-                    byte[] buffer = new byte[8192];
-                    int read;
-                    while ((read = in.read(buffer)) != -1) {
-                        stream.write(buffer, 0, read);
-                    }
-                }
-            }
-        }
+        NativeArchive.extract(zip.toPath(), targetDir.toPath(), MAX_DOWNLOAD_BYTES, 2048);
     }
 
     private void applyGraphicsEnvironment(Map<String, String> environment, String graphicsMode, String gpuSelector) {
@@ -5398,8 +5400,7 @@ public class Main {
         }
 
         ensureSignedIn();
-        File temporary = new File(loader.getAbsolutePath() + ".part");
-        Files.deleteIfExists(temporary.toPath());
+        File temporary = PrivateFileSecurity.createPrivateTempFile(mods.toPath(), ".loader-").toFile();
         List<String> endpoints = firstPartyApiUrls(siteUrl() + "/api/standalone/loader");
         IOException lastTransportError = null;
         for (int index = 0; index < endpoints.size(); index++) {
@@ -5411,6 +5412,7 @@ public class Main {
                 lastTransportError = error;
                 Files.deleteIfExists(temporary.toPath());
                 if (index + 1 < endpoints.size()) {
+                    temporary = PrivateFileSecurity.createPrivateTempFile(mods.toPath(), ".loader-").toFile();
                     log("Loader download gateway unavailable; trying the next trusted gateway.");
                 }
             }
@@ -5450,7 +5452,9 @@ public class Main {
             long length = connection.getContentLengthLong();
             if (length <= 0 || length > MAX_LOADER_BYTES) throw new IOException("Standalone loader size is invalid.");
             try (InputStream input = new BufferedInputStream(connection.getInputStream());
-                 OutputStream output = new BufferedOutputStream(new FileOutputStream(temporary))) {
+                 OutputStream output = new BufferedOutputStream(Files.newOutputStream(temporary.toPath(),
+                     java.nio.file.StandardOpenOption.WRITE, java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+                     java.nio.file.LinkOption.NOFOLLOW_LINKS))) {
                 byte[] buffer = new byte[16 * 1024];
                 long total = 0;
                 int read;
@@ -5835,8 +5839,7 @@ public class Main {
             throw new IOException("Failed to create launcher data folder: " + folder);
         }
 
-        Files.write(getLauncherSessionFile().toPath(), (token + System.lineSeparator()).getBytes(StandardCharsets.UTF_8));
-        hardenPrivateFile(getLauncherSessionFile());
+        PrivateFileSecurity.writePrivate(getLauncherSessionFile().toPath(), (token + System.lineSeparator()).getBytes(StandardCharsets.UTF_8));
     }
 
     private String readLauncherToken() {
@@ -5892,8 +5895,7 @@ public class Main {
             + "\"refreshToken\":\"" + jsonEscape(account.refreshToken) + "\","
             + "\"minecraftExpiresAt\":" + account.minecraftExpiresAt
             + "}";
-        Files.write(getMicrosoftAccountFile().toPath(), (json + System.lineSeparator()).getBytes(StandardCharsets.UTF_8));
-        hardenPrivateFile(getMicrosoftAccountFile());
+        PrivateFileSecurity.writePrivate(getMicrosoftAccountFile().toPath(), (json + System.lineSeparator()).getBytes(StandardCharsets.UTF_8));
     }
 
     private MicrosoftAccount readMicrosoftAccount() {
@@ -6210,7 +6212,7 @@ public class Main {
                 summary,
                 detected,
                 "A native library failed before Minecraft reached client initialization.",
-                "Your Java installation may be corrupted. Try reinstalling Java 17+ and restarting your launcher."
+                "Verify Java 21 or newer and that the mod supports your operating system. Attach the latest launch log if it still fails."
             );
         }
         if (detected.contains("GPU driver reset")) {
@@ -6231,7 +6233,7 @@ public class Main {
             return new LaunchDiagnosis(summary, detected, "Fabric dependency resolution failed.", "Open the mod list in latest-launch.log and install the missing dependency.");
         }
         if (detected.contains("Native") || detected.contains("UnsatisfiedLinkError")) {
-            return new LaunchDiagnosis(summary, detected, "A native library failed to load.", "Your Java installation may be corrupted. Try reinstalling Java 17+ and restarting your launcher.");
+            return new LaunchDiagnosis(summary, detected, "A native library failed to load.", "Verify Java 21 or newer and that the mod supports your operating system. Attach the latest launch log if it still fails.");
         }
         if (abnormalStartup) {
             return new LaunchDiagnosis(
@@ -6250,11 +6252,11 @@ public class Main {
         boolean signingIn = isLauncherSignInActive();
         boolean running = minecraftProcess != null && minecraftProcess.isAlive();
         Build selectedBuild = (Build) buildBox.getSelectedItem();
-        boolean sponsoredAccess = sponsoredAccessActiveFor(selectedBuild);
+        boolean sponsoredAccess = !gambleProfile || sponsoredAccessActiveFor(selectedBuild);
         installButton.setEnabled(!busy && !running && gambleProfile && signedIn && sponsoredAccess);
         accountManagerButton.setEnabled(!busy && !running);
-        boolean dashboardSponsorRequired = selectedBuild != null && "ad_tier".equals(selectedBuild.id) && !sponsoredAccess;
-        launchButton.setText(running ? "Kill" : sponsoredAccess ? "Play" : dashboardSponsorRequired ? "Open Dashboard" : "Play");
+        boolean dashboardSponsorRequired = gambleProfile && selectedBuild != null && "ad_tier".equals(selectedBuild.id) && !sponsoredAccess;
+        launchButton.setText(running ? "Stop Minecraft" : sponsoredAccess ? "Play" : dashboardSponsorRequired ? "Open Dashboard" : "Play");
         launchButton.setEnabled(running || (!busy && signedIn && (sponsoredAccess || dashboardSponsorRequired)));
         signInButton.setText(signingIn ? "Cancel" : "Sign In");
         promptSignInButton.setText(signingIn ? "Cancel" : "Sign In");

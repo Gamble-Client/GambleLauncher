@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as tauriOpenDialog } from "@tauri-apps/plugin-dialog";
 import { canUseBuildForAccess, preferredBuildForAccess } from "./access-policy.js";
+import { launchState } from "./launch-state.js";
 import "./styles.css";
 import logoUrl from "./assets/cg-mod-icon.png";
 
@@ -20,7 +21,7 @@ const LAUNCHER_DISPLAY_NAME_KEY = "gamble.launcher.displayName";
 const CLIENT_DISPLAY_NAME_KEY = "gamble.client.displayName";
 const GRAPHICS_MODE_KEY = "gamble.launcher.graphicsMode";
 const GPU_SELECTOR_KEY = "gamble.launcher.gpuSelector";
-const LAUNCHER_VERSION = "0.1.132";
+const LAUNCHER_VERSION = "0.1.133";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 // Browser mocks are a development-only visual harness. A source-built CI
@@ -82,6 +83,7 @@ const state = {
   launcherDisplayName: storedDisplayName(LAUNCHER_DISPLAY_NAME_KEY, "Gamble Client Launcher"),
   clientDisplayName: storedDisplayName(CLIENT_DISPLAY_NAME_KEY, "Gamble Client"),
   status: "Starting",
+  starting: true,
   busy: false,
   signIn: null,
   signInActive: false,
@@ -474,6 +476,12 @@ function cssEscape(value) {
 }
 
 function render() {
+  const focused = document.activeElement;
+  const focusField = focused?.dataset?.field;
+  const focusAction = focused?.dataset?.action;
+  const previousDialog = app.querySelector('[role="dialog"]')?.getAttribute("aria-label");
+  const selection = focusField && typeof focused.selectionStart === "number"
+    ? [focused.selectionStart, focused.selectionEnd] : null;
   const scrollState = captureScrollState();
   const preserveScroll = scrollState && renderedView === state.view;
   const profile = currentProfile();
@@ -515,7 +523,7 @@ function render() {
           ${navButton("updates", "Updates", "04")}
           ${navButton("profiles", "Profiles", "05")}
           <button class="nav-item nav-action" type="button" data-open="${DASH}/dashboard.html">Dashboard</button>
-          <button class="nav-item nav-action" type="button" data-open="https://discord.gg/YPescfEt">Discord</button>
+          <button class="nav-item nav-action" type="button" data-open="https://discord.gg/gambleclient">Discord</button>
         </nav>
         <div class="rail-status">
           <div class="rail-card">
@@ -548,7 +556,34 @@ function render() {
 
   renderedView = state.view;
   if (preserveScroll) restoreScrollState(scrollState);
+  const dialog = app.querySelector('[aria-modal="true"]');
+  for (const background of app.querySelectorAll(".shell > .rail, .shell > .content")) background.inert = Boolean(dialog);
+  if (state.busy) {
+    for (const control of app.querySelectorAll("[data-field], [data-action=select-profile]")) control.disabled = true;
+  }
+  const focusTarget = focusField ? app.querySelector(`[data-field="${cssEscape(focusField)}"]`)
+    : focusAction ? app.querySelector(`[data-action="${cssEscape(focusAction)}"]`) : null;
+  if (dialog && (previousDialog !== dialog.getAttribute("aria-label") || !dialog.contains(focusTarget))) {
+    (dialog.querySelector("button:not(:disabled)") || dialog).focus({ preventScroll: true });
+  } else if (focusTarget && !focusTarget.disabled) {
+    focusTarget.focus({ preventScroll: true });
+    if (selection && typeof focusTarget.setSelectionRange === "function") {
+      try { focusTarget.setSelectionRange(...selection); } catch { /* Non-text input. */ }
+    }
+  }
 }
+
+app.addEventListener("keydown", (event) => {
+  const dialog = app.querySelector('[aria-modal="true"]');
+  if (!dialog || event.key !== "Tab") return;
+  const controls = [...dialog.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]')];
+  const index = controls.indexOf(document.activeElement);
+  if (!controls.length) { event.preventDefault(); dialog.focus(); }
+  else if ((event.shiftKey && index <= 0) || (!event.shiftKey && index === controls.length - 1)) {
+    event.preventDefault();
+    controls[event.shiftKey ? controls.length - 1 : 0].focus();
+  }
+});
 
 function navButton(id, label, index) {
   const active = state.view === id || (id === "profiles" && ["mods", "packs"].includes(state.view));
@@ -616,26 +651,23 @@ function topbar(signedIn) {
 }
 
 function playView(profile, selectedBuild, canInstall, signedIn) {
-  const sponsorBlocked = !state.minecraftRunning && selectedBuild.id === "ad_tier" && !state.ads?.active;
-  const launchLabel = state.minecraftRunning ? "Stop Minecraft" : sponsorBlocked ? "Open Dashboard" : "Play";
-  const clientStatus = clientStatusLabel();
+  const ready = launchState({ profile, signedIn, running: state.minecraftRunning, starting: state.starting,
+    busy: state.busy, buildId: selectedBuild.id, ads: state.ads, updateAvailable: clientNeedsUpdate() });
   const enabledMods = state.mods.filter((item) => item.enabled).length;
   const enabledPacks = state.packs.filter((item) => item.enabled).length;
   const activeMicrosoft = profileAccount(profile);
   return `
-    <section class="play-stage">
+    <section class="play-stage play-overview">
       <section class="launch-panel">
         <div class="launch-copy">
-          <span class="eyebrow">${escapeHtml(state.clientDisplayName)}</span>
-          <h2>${escapeHtml(selectedBuild.label)}</h2>
-          <div class="version-strip">
-            <span>Channel</span>
-            <strong>Latest</strong>
-          </div>
+          <span class="eyebrow">${escapeHtml(profile.client ? state.clientDisplayName : "Minecraft")}</span>
+          <h2>${escapeHtml(profile.client ? selectedBuild.label : profile.label)}</h2>
+          <p class="launch-description">${escapeHtml(ready.detail)}</p>
           <div class="launch-facts">
             <div>
               <span>Profile</span>
               <strong>${escapeHtml(profile.label)}</strong>
+              <button class="inline-link" type="button" data-view="profiles">Change profile</button>
             </div>
             <div>
               <span>Memory</span>
@@ -644,9 +676,9 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           </div>
         </div>
         <div class="launch-stack">
-          <button class="launch-button" type="button" data-action="launch" ${state.busy ? "disabled" : ""}>${escapeHtml(launchLabel)}</button>
-          ${sponsorBlocked ? `<p class="launch-warning">Watch the 30-second sponsor in the Dashboard, then return here to play.</p>` : ""}
-          ${activeMicrosoft ? "" : `<p class="launch-warning">No Microsoft account linked. Launching an offline session. Online servers require Microsoft authentication.</p>`}
+          <button class="launch-button" type="button" data-action="launch" ${ready.disabled ? "disabled" : ""}>${escapeHtml(ready.label)}</button>
+          <p class="launch-version">Minecraft 1.21.11${profile.loader === "fabric" ? " · Fabric" : ""}</p>
+          ${activeMicrosoft ? "" : `<p class="launch-warning">An offline Minecraft session is selected. <button class="inline-link" type="button" data-view="accounts">Connect Microsoft</button> for online servers.</p>`}
         </div>
       </section>
 
@@ -660,11 +692,11 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           </div>
         </div>
         ${accountRow("Launcher", accountTitle(), accountMeta(), signedIn ? "Signed in" : "Required", launcherAvatarStyle())}
-        ${accountRow("Minecraft", microsoftTitle(), state.microsoft ? `${state.microsoftAccounts.length || 1} saved account${(state.microsoftAccounts.length || 1) === 1 ? "" : "s"}` : "Offline launch available", state.microsoft ? "Linked" : "Offline", avatarStyle(state.microsoft), avatarInitials(state.microsoft?.name))}
+        <button class="ghost identity-manage" type="button" data-view="accounts">Manage accounts</button>
       </aside>
     </section>
 
-    <section class="quick-grid main-quick-grid">
+    <section class="quick-grid main-quick-grid play-shortcuts">
       <article class="action-tile">
         <span>Dashboard access</span>
         <strong>${escapeHtml(sponsorTitle())}</strong>
@@ -673,17 +705,17 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
       <article class="action-tile">
         <span>Mods</span>
         <strong>${profileHasMods(profile) ? `${enabledMods} enabled` : "Vanilla"}</strong>
-        <button type="button" data-view="profiles">Manage</button>
+        <button type="button" data-view="mods" ${profileHasMods(profile) ? "" : "disabled"}>Manage mods</button>
       </article>
       <article class="action-tile">
         <span>Resource packs</span>
         <strong>${enabledPacks} enabled</strong>
-        <button type="button" data-view="profiles">Manage</button>
+        <button type="button" data-view="packs">Manage packs</button>
       </article>
-      <article class="action-tile spotify-tile">
-        <span>Spotify</span>
-        <strong>${escapeHtml(spotifyTitle())}</strong>
-        <button type="button" data-open="${DASH}/dashboard.html#spotify">Open Dashboard</button>
+      <article class="action-tile">
+        <span>Need a hand?</span>
+        <strong>Startup help</strong>
+        <button type="button" data-action="show-diagnostics">Open diagnostics</button>
       </article>
     </section>
   `;
@@ -1102,7 +1134,7 @@ function updatePopup() {
   if (state.popup) {
     return `
       <section class="modal-scrim">
-        <article class="update-modal">
+        <article class="update-modal" role="dialog" aria-modal="true" aria-label="${escapeAttr(state.popup.title || "Launcher notice")}" tabindex="-1">
           <span class="eyebrow">${escapeHtml(state.popup.kind || "Launcher")}</span>
           <h2>${escapeHtml(state.popup.title || "Launcher notice")}</h2>
           <p>${escapeHtml(state.popup.message || "")}</p>
@@ -1110,7 +1142,7 @@ function updatePopup() {
             ${state.popup.confirmAction ? `
               <button class="ghost" type="button" data-action="dismiss-popup">Cancel</button>
               <button class="primary-small danger" type="button" data-action="${escapeAttr(state.popup.confirmAction)}">${escapeHtml(state.popup.confirmLabel || "Confirm")}</button>
-            ` : `<button class="primary-small" type="button" data-action="dismiss-popup">OK</button>`}
+            ` : `${state.popup.kind === "launch" ? `<button class="ghost" type="button" data-action="show-diagnostics">Open diagnostics</button>` : ""}<button class="primary-small" type="button" data-action="dismiss-popup">OK</button>`}
           </div>
         </article>
       </section>
@@ -1123,7 +1155,7 @@ function updatePopup() {
   if (launcherNeedsUpdate() && state.dismissedLauncherVersion !== latestLauncherVersion()) {
     return `
       <section class="modal-scrim">
-        <article class="update-modal">
+        <article class="update-modal" role="dialog" aria-modal="true" aria-label="Launcher update" tabindex="-1">
           <span class="eyebrow">Launcher update</span>
           <h2>Update required</h2>
           <p>Installed ${escapeHtml(state.info?.version || "unknown")}. Latest is ${escapeHtml(latestLauncherVersion() || "unknown")}.</p>
@@ -1135,22 +1167,8 @@ function updatePopup() {
       </section>
     `;
   }
-  const clientKey = clientStatusKey();
-  if (clientNeedsUpdate() && state.dismissedClientVersion !== clientKey) {
-    return `
-      <section class="modal-scrim">
-        <article class="update-modal">
-          <span class="eyebrow">Client update</span>
-          <h2>Client update available</h2>
-          <p>${escapeHtml(state.clientStatus?.message || "Install the latest managed client memory loader.")}</p>
-          <div class="top-actions">
-            <button class="primary-small" type="button" data-action="install" ${state.busy ? "disabled" : ""}>Update Client</button>
-            <button class="ghost" type="button" data-action="dismiss-client-popup">Later</button>
-          </div>
-        </article>
-      </section>
-    `;
-  }
+  // Play installs the current verified loader. Client updates remain visible
+  // inline and in Updates instead of covering the first-run launch screen.
   return "";
 }
 
@@ -1163,16 +1181,16 @@ function launchProgressModal() {
   const trackClass = progress.indeterminate ? "launch-progress-track indeterminate" : "launch-progress-track";
   return `
     <section class="modal-scrim">
-      <article class="update-modal launch-progress-modal">
+      <article class="update-modal launch-progress-modal" role="dialog" aria-modal="true" aria-label="Launch progress" tabindex="-1">
         <span class="eyebrow">Launch progress</span>
         <h2>Preparing Minecraft</h2>
-        <p>${escapeHtml(progress.message)}</p>
-        <div class="${trackClass}" aria-label="Launch progress">
+        <p role="status">${escapeHtml(progress.message)}</p>
+        <div class="${trackClass}" role="progressbar" aria-label="Launch progress" aria-valuemin="0" aria-valuemax="100" ${progress.indeterminate ? "" : `aria-valuenow="${progress.percent}"`}>
           <span style="width:${progress.percent}%"></span>
         </div>
         <div class="launch-progress-meta">
           <span>${escapeHtml(progress.phase)}</span>
-          <strong>${progress.percent}%</strong>
+          <strong>${progress.indeterminate ? "Working…" : `${progress.percent}%`}</strong>
         </div>
         <small class="launch-progress-note">First launch can download Minecraft files, Fabric, assets, and native libraries.</small>
       </article>
@@ -1498,7 +1516,7 @@ function sponsorTitle() {
   if (!state.ads) return "Checking";
   if (!state.ads.required) return "Ads off";
   if (state.ads.remainingSeconds > 0) return `${formatDuration(state.ads.remainingSeconds)} left`;
-  return state.ads.canWatch ? "Ready" : "Capped";
+  return state.ads.canWatch ? "Sponsor required" : "Check Dashboard";
 }
 
 function clientStatusLabel() {
@@ -1632,11 +1650,13 @@ async function boot() {
   await invoke("ensure_profile", { profile: state.selectedProfile }).catch(() => {});
   await refreshProfileLoaderStatus();
   await refreshAntiScreenshareStatus();
-  await refreshManifest();
+  await refreshManifestForUpdate();
   await refreshSpotifyStatus();
   await refreshSocial();
   await refreshMinecraftStatus({ render: false });
   setInterval(() => refreshMinecraftStatus({ render: true }), 3500);
+  state.starting = false;
+  state.status = "Ready";
   render();
 }
 
@@ -1870,11 +1890,15 @@ async function refreshManifest() {
     return;
   }
   const build = buildForAccount();
-  state.clientStatus = await invoke("client_install_status", {
-    profile: state.selectedProfile,
+  const profileId = profile.id;
+  const result = await invoke("client_install_status", {
+    profile: profileId,
     build: build.id,
     token: state.token
   });
+  // A profile switch can finish before a slower metadata request returns.
+  if (state.selectedProfile !== profileId || buildForAccount().id !== build.id) return;
+  state.clientStatus = result;
   state.manifest = state.clientStatus;
   state.lastManifestCheckAt = Date.now();
   log(state.clientStatus.message || `Client checked: ${clientStatusLabel()}`);
@@ -2163,11 +2187,13 @@ function microsoftReconnectRequired(error) {
 }
 
 async function refreshFiles() {
-  await invoke("ensure_profile", { profile: state.selectedProfile }).catch(() => {});
+  const profileId = state.selectedProfile;
+  await invoke("ensure_profile", { profile: profileId }).catch(() => {});
   const [mods, packs] = await Promise.all([
-    invoke("list_local_files", { profile: state.selectedProfile, kind: "mods" }).catch(() => []),
-    invoke("list_local_files", { profile: state.selectedProfile, kind: "resourcepacks" }).catch(() => [])
+    invoke("list_local_files", { profile: profileId, kind: "mods" }).catch(() => []),
+    invoke("list_local_files", { profile: profileId, kind: "resourcepacks" }).catch(() => [])
   ]);
+  if (state.selectedProfile !== profileId) return;
   state.mods = mods;
   state.packs = packs;
 }
@@ -2178,7 +2204,8 @@ async function refreshProfileLoaderStatus() {
     state.profileLoaderStatus = null;
     return;
   }
-  state.profileLoaderStatus = await invoke("profile_loader_status", { profile: state.selectedProfile }).catch(() => null);
+  const result = await invoke("profile_loader_status", { profile: profile.id }).catch(() => null);
+  if (state.selectedProfile === profile.id) state.profileLoaderStatus = result;
 }
 
 async function addMods() {
@@ -2254,9 +2281,14 @@ async function refreshAntiScreenshareStatus() {
 }
 
 async function runDiagnostics() {
-  const result = await invoke("diagnostics", { profile: state.selectedProfile });
-  state.diagnostics = result.checks || [];
-  log("Diagnostics updated.");
+  setBusy(true, "Checking diagnostics");
+  try {
+    const result = await invoke("diagnostics", { profile: state.selectedProfile });
+    state.diagnostics = result?.checks || [];
+    log("Diagnostics updated.");
+  } catch (error) {
+    log(`Diagnostics failed: ${publicMessage(error)}`);
+  } finally { setBusy(false, "Ready"); }
 }
 
 function setBusy(value, message) {
@@ -2300,6 +2332,7 @@ app.addEventListener("click", async (event) => {
 
   const view = event.target.closest("[data-view]")?.dataset.view;
   if (view) {
+    if (state.busy) return;
     state.view = view;
     if (view === "social") {
       render();
@@ -2338,6 +2371,7 @@ app.addEventListener("click", async (event) => {
   const actionEl = event.target.closest("[data-action]");
   const action = actionEl?.dataset.action;
   if (!action) return;
+  if (actionEl.disabled || (state.busy && !["cancel-signin", "cancel-microsoft", "open-signin-link", "copy-signin-link", "open-microsoft-link"].includes(action))) return;
 
   if (action === "check-updates") {
     setBusy(true, "Checking updates");
@@ -2391,9 +2425,23 @@ app.addEventListener("click", async (event) => {
   } else if (action === "dismiss-popup") {
     state.popup = null;
     render();
+  } else if (action === "show-diagnostics") {
+    state.popup = null;
+    state.view = "settings";
+    render();
+    await runDiagnostics();
+    render();
+    app.querySelector(".diagnostics-list")?.scrollIntoView({ block: "nearest" });
   } else if (action === "install") {
     await installSelected();
   } else if (action === "launch") {
+    if (state.starting) return;
+    if (!state.minecraftRunning && !(state.account && state.token)) {
+      await startSignIn();
+      return;
+    }
+    const selectedProfile = currentProfile();
+    const selectedAccount = profileAccount(selectedProfile);
     state.launchProgress = normalizeLaunchProgress({
       phase: "Starting",
       message: "Checking launcher state",
@@ -2413,7 +2461,7 @@ app.addEventListener("click", async (event) => {
       });
       render();
       await refreshMinecraftStatus({ render: false, logExit: false });
-      if (!state.minecraftRunning) {
+      if (!state.minecraftRunning && selectedProfile.client) {
         state.launchProgress = normalizeLaunchProgress({
           phase: "Account",
           message: "Refreshing launcher account",
@@ -2422,7 +2470,9 @@ app.addEventListener("click", async (event) => {
           indeterminate: true
         });
         render();
-        await refreshAccountForUpdate();
+        // Fail visibly on an access-check error; cached access must not drive
+        // the sponsor decision after a failed refresh.
+        applyAccount(await api("/api/launcher/account"));
         if (buildForAccount().id === "ad_tier" && !state.ads?.active) {
           showPopup("Dashboard sponsor check", "Open the Dashboard and watch the 30-second sponsor break, then return to the launcher.", "dashboard");
           await openDashboardForAds();
@@ -2436,19 +2486,14 @@ app.addEventListener("click", async (event) => {
           indeterminate: true
         });
         render();
-        await refreshManifestForUpdate();
-      }
-      const selectedProfile = currentProfile();
-      const selectedAccount = profileAccount(selectedProfile);
-      if (!state.minecraftRunning && clientNeedsUpdate()) {
-        showPopup("Client update needed", state.clientStatus?.message || "Install the latest managed client memory loader before launching.", "client");
-        return;
+        // The native launch operation fetches the manifest and atomically
+        // installs a fresh, verified loader before starting Minecraft.
       }
       setBusy(true, "Preparing Minecraft");
       const selectedBuild = buildForAccount();
       const message = await invoke("launch_game", {
         input: {
-          profile: state.selectedProfile,
+          profile: selectedProfile.id,
           build: selectedBuild.id,
           token: state.token,
           username: state.username,
@@ -2718,6 +2763,7 @@ app.addEventListener("click", async (event) => {
 });
 
 app.addEventListener("change", async (event) => {
+  if (state.busy) return;
   const settingToggle = event.target.closest("[data-setting-toggle]")?.dataset.settingToggle;
   if (settingToggle === "animationsEnabled") {
     state.animationsEnabled = event.target.checked;
@@ -2785,6 +2831,7 @@ app.addEventListener("change", async (event) => {
 });
 
 app.addEventListener("input", (event) => {
+  if (state.busy) return;
   const field = event.target.closest("[data-field]")?.dataset.field;
   if (!field) return;
   if (field === "selectedProfileLabel") {

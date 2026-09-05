@@ -67,7 +67,9 @@ jobs:
         run: npm ci
 
       - name: Build frontend test assets
-        run: npm run build
+        run: |
+          npm test
+          npm run build
 
       - name: Test native launcher on Linux
         working-directory: src-tauri

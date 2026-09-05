@@ -1,5 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod io_safety;
+#[cfg(test)]
+mod security_tests;
+
+use io_safety::{copy_bounded, read_bounded, stage_download, StagedDirectory, StagedFile};
+
 use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine as _,
@@ -13,15 +19,15 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     env,
     fs::{self, File},
-    io::{self, Cursor, Read, Write},
+    io::{self, Cursor, Read, Seek, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
+    process::{Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc, Mutex,
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 #[cfg(target_os = "windows")]
 use tauri::Manager;
@@ -70,6 +76,9 @@ const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_MANAGED_CLIENT_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_LOADER_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_FABRIC_METADATA_BYTES: u64 = 1024 * 1024;
+const MAX_TEXT_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
+// Minecraft's full asset index is larger than ordinary API metadata.
+const MAX_ASSET_INDEX_BYTES: u64 = 32 * 1024 * 1024;
 const MANAGED_CLIENT_MOD_ID: &str = "cg-mod";
 const STANDALONE_LOADER_MOD_ID: &str = "gamble-client-standalone-loader";
 const LOADER_PROVENANCE_ENTRY: &str = "META-INF/gamble-loader-provenance.json";
@@ -150,7 +159,7 @@ const ANTISCREENSHARE_VISUAL_OFF: &[&str] = &[
     "block-debug-finder",
     "block-update-finder",
 ];
-static MINECRAFT_PROCESS: Mutex<Option<Child>> = Mutex::new(None);
+static MINECRAFT_PROCESS: Mutex<Option<io_safety::PrivateChild>> = Mutex::new(None);
 static LAST_MINECRAFT_EXIT: Mutex<Option<MinecraftExit>> = Mutex::new(None);
 static LAST_MINECRAFT_GRAPHICS_MODE: Mutex<String> = Mutex::new(String::new());
 static LAUNCH_LOCK: Mutex<()> = Mutex::new(());
@@ -591,7 +600,7 @@ fn launcher_api(input: ApiCommandBody) -> Result<serde_json::Value, String> {
         request
     })?;
     let status = response.status();
-    let text = response.text().map_err(error_text)?;
+    let text = response.bounded_text().map_err(error_text)?;
     let body = if text.trim().is_empty() {
         serde_json::Value::Object(Default::default())
     } else {
@@ -745,9 +754,16 @@ fn microsoft_browser_sign_in_blocking(
     let auth_url = microsoft_authorize_url(&code_challenge, &state, force_account_picker);
     open_external(&auth_url)?;
 
+    let deadline = Instant::now() + Duration::from_secs(180);
     let result = loop {
-        let mut stream = wait_for_microsoft_callback(&listener, generation)?;
-        let callback = read_microsoft_callback(&mut stream)?;
+        let mut stream = wait_for_microsoft_callback(&listener, generation, deadline)?;
+        let callback = match read_microsoft_callback(&mut stream, generation) {
+            Ok(callback) => callback,
+            Err(error) if microsoft_browser_sign_in_cancelled(generation) => return Err(error),
+            // A browser preconnect, favicon request, or malformed local client must not
+            // consume the sign-in. The overall deadline remains unchanged.
+            Err(_) => continue,
+        };
         if callback.get("state").map(String::as_str) != Some(state.as_str()) {
             let _ = write_microsoft_callback_response(
                 &mut stream,
@@ -820,7 +836,7 @@ fn microsoft_device_start_blocking(
         .map_err(error_text)?
         .error_for_status()
         .map_err(error_text)?
-        .json::<serde_json::Value>()
+        .bounded_json::<serde_json::Value>()
         .map_err(error_text)?;
 
     let error = json_string(&body, "error");
@@ -889,7 +905,9 @@ fn microsoft_device_poll_blocking(device_code: String) -> Result<serde_json::Val
         .send()
         .map_err(error_text)?;
     let status = response.status();
-    let body = response.json::<serde_json::Value>().map_err(error_text)?;
+    let body = response
+        .bounded_json::<serde_json::Value>()
+        .map_err(error_text)?;
 
     if status.as_u16() == 400 {
         let error = json_string(&body, "error");
@@ -1521,7 +1539,7 @@ fn diagnostics(profile: String) -> Result<Diagnostics, String> {
         "Launcher session",
         session.is_file(),
         if session.is_file() {
-            "Saved securely"
+            "Saved locally"
         } else {
             "Sign-in required"
         }
@@ -2038,19 +2056,20 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
             .map_err(error_text)?;
         let mut process = Command::new(&command[0]);
         process
-            .args(&command[1..])
             .current_dir(&profile_dir)
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
         apply_game_graphics_environment(&mut process, &graphics_mode, &gpu_selector);
         #[cfg(target_os = "windows")]
         process.creation_flags(CREATE_NO_WINDOW);
-        process.spawn().map_err(|error| {
-            format!(
-                "Could not start Minecraft with the managed Java runtime: {error}. See {}.",
-                display_path(&log_file)
-            )
-        })
+        io_safety::PrivateChild::spawn(process, &command[1..], &launcher_data_folder()).map_err(
+            |error| {
+                format!(
+                    "Could not start Minecraft with the managed Java runtime: {error}. See {}.",
+                    display_path(&log_file)
+                )
+            },
+        )
     })();
     let mut child = launch_result?;
     let mut running = match MINECRAFT_PROCESS.lock() {
@@ -2061,7 +2080,43 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
             return Err(error_text(error));
         }
     };
+    let pid = child.id();
     *running = Some(child);
+    drop(running);
+    // Cleanup cannot depend on WebView status polling remaining active.
+    let monitor = std::thread::Builder::new()
+        .name("minecraft-exit".to_string())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_millis(250));
+                let Ok(mut running) = MINECRAFT_PROCESS.lock() else {
+                    return;
+                };
+                let Some(child) = running.as_mut().filter(|child| child.id() == pid) else {
+                    return;
+                };
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        record_minecraft_exit(&status);
+                        *running = None;
+                        return;
+                    }
+                    Ok(None) => {}
+                    // Keep ownership and retry; never discard a live child's argument file.
+                    Err(_) => {}
+                }
+            }
+        });
+    if let Err(error) = monitor {
+        if let Ok(mut running) = MINECRAFT_PROCESS.lock() {
+            if let Some(child) = running.as_mut().filter(|child| child.id() == pid) {
+                let _ = child.kill();
+                let _ = child.wait();
+                *running = None;
+            }
+        }
+        return Err(format!("Could not monitor the Minecraft process: {error}"));
+    }
     if let Ok(mut mode) = LAST_MINECRAFT_GRAPHICS_MODE.lock() {
         *mode = graphics_mode;
     }
@@ -2363,7 +2418,9 @@ fn refresh_microsoft_token(refresh_token: &str) -> Result<MicrosoftToken, String
         .send()
         .map_err(error_text)?;
     let status = response.status();
-    let body = response.json::<serde_json::Value>().map_err(error_text)?;
+    let body = response
+        .bounded_json::<serde_json::Value>()
+        .map_err(error_text)?;
     if !status.is_success() {
         return Err(microsoft_refresh_error(status.as_u16(), &body));
     }
@@ -2404,7 +2461,7 @@ fn exchange_microsoft_authorization_code(
         .map_err(error_text)?
         .error_for_status()
         .map_err(error_text)?
-        .json::<serde_json::Value>()
+        .bounded_json::<serde_json::Value>()
         .map_err(error_text)?;
     parse_microsoft_token(&body)
 }
@@ -2412,19 +2469,18 @@ fn exchange_microsoft_authorization_code(
 fn wait_for_microsoft_callback(
     listener: &TcpListener,
     generation: u32,
+    deadline: Instant,
 ) -> Result<TcpStream, String> {
-    let deadline = SystemTime::now() + Duration::from_secs(180);
-
     loop {
         if microsoft_browser_sign_in_cancelled(generation) {
             return Err("Microsoft sign-in cancelled.".to_string());
         }
+        if Instant::now() >= deadline {
+            return Err("Microsoft sign-in timed out.".to_string());
+        }
         match listener.accept() {
             Ok((stream, _)) => return Ok(stream),
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                if SystemTime::now() >= deadline {
-                    return Err("Microsoft sign-in timed out.".to_string());
-                }
                 std::thread::sleep(Duration::from_millis(150));
             }
             Err(error) => return Err(error_text(error)),
@@ -2469,12 +2525,83 @@ fn microsoft_authorize_url(
     format!("{MICROSOFT_AUTHORIZE_URL}?{query}")
 }
 
-fn read_microsoft_callback(stream: &mut TcpStream) -> Result<HashMap<String, String>, String> {
-    let mut buffer = [0u8; 8192];
-    let count = stream.read(&mut buffer).map_err(error_text)?;
-    let request = String::from_utf8_lossy(&buffer[..count]);
+fn read_microsoft_callback(
+    stream: &mut TcpStream,
+    generation: u32,
+) -> Result<HashMap<String, String>, String> {
+    read_callback_with_deadline(
+        stream,
+        || microsoft_browser_sign_in_cancelled(generation),
+        Duration::from_secs(5),
+    )
+}
+
+fn read_callback_with_deadline<F: Fn() -> bool>(
+    stream: &mut TcpStream,
+    cancelled: F,
+    timeout: Duration,
+) -> Result<HashMap<String, String>, String> {
+    stream.set_nonblocking(false).map_err(error_text)?;
+    let interval = timeout.min(Duration::from_millis(100));
+    stream
+        .set_read_timeout(Some(interval))
+        .map_err(error_text)?;
+    stream
+        .set_write_timeout(Some(Duration::from_millis(100)))
+        .map_err(error_text)?;
+    let deadline = Instant::now() + timeout;
+    let mut bytes = Vec::new();
+    let mut buffer = [0u8; 1024];
+    loop {
+        if cancelled() {
+            return Err("Microsoft sign-in cancelled.".to_string());
+        }
+        if Instant::now() >= deadline {
+            return Err("Microsoft callback read timed out.".to_string());
+        }
+        if bytes.len() == 8192 {
+            return Err("Microsoft callback exceeds the 8 KiB safety limit.".to_string());
+        }
+        let capacity = buffer.len().min(8192 - bytes.len());
+        match stream.read(&mut buffer[..capacity]) {
+            Ok(0) => {
+                return Err("Microsoft callback ended before its headers were complete.".to_string())
+            }
+            Ok(count) => bytes.extend_from_slice(&buffer[..count]),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
+                ) =>
+            {
+                continue
+            }
+            Err(error) => return Err(error_text(error)),
+        }
+        if bytes.windows(4).any(|part| part == b"\r\n\r\n")
+            || bytes.windows(2).any(|part| part == b"\n\n")
+        {
+            break;
+        }
+    }
+    if cancelled() {
+        return Err("Microsoft sign-in cancelled.".to_string());
+    }
+    let request = std::str::from_utf8(&bytes)
+        .map_err(|_| "Microsoft callback is not valid UTF-8.".to_string())?;
     let first_line = request.lines().next().unwrap_or("");
-    let target = first_line.split_whitespace().nth(1).unwrap_or("/");
+    let mut parts = first_line.split_whitespace();
+    let method = parts.next();
+    let target = parts.next().unwrap_or("");
+    if method != Some("GET")
+        || !target.starts_with('/')
+        || !matches!(parts.next(), Some("HTTP/1.0" | "HTTP/1.1"))
+        || parts.next().is_some()
+    {
+        return Err("Microsoft callback request line is invalid.".to_string());
+    }
     let query = target.split_once('?').map(|(_, query)| query).unwrap_or("");
     Ok(parse_url_query(query))
 }
@@ -2810,7 +2937,7 @@ fn read_anti_screenshare_bridge(path: &str, method: &str) -> Result<serde_json::
     };
     let response = request.send().map_err(error_text)?;
     let status = response.status();
-    let text = response.text().map_err(error_text)?;
+    let text = response.bounded_text().map_err(error_text)?;
     if !status.is_success() {
         return Err(if text.trim().is_empty() {
             format!("AntiScreenshare bridge returned HTTP {}", status.as_u16())
@@ -2846,7 +2973,11 @@ fn ensure_fabric_version_json_with_progress(
         if let Some(app) = app {
             emit_launch_progress(app, "Fabric", "Downloading Fabric launch profile", 4, 12);
         }
-        download_file(&fabric_profile_url(&loader_version), &path)?;
+        download_file_limited(
+            &fabric_profile_url(&loader_version),
+            &path,
+            MAX_TEXT_RESPONSE_BYTES,
+        )?;
     } else if let Some(app) = app {
         emit_launch_progress(app, "Fabric", "Fabric launch profile is ready", 4, 12);
     }
@@ -2889,7 +3020,7 @@ fn latest_fabric_loader_version() -> Result<String, String> {
         .map_err(error_text)?
         .error_for_status()
         .map_err(error_text)?
-        .json::<Vec<serde_json::Value>>()
+        .bounded_json::<Vec<serde_json::Value>>()
         .map_err(error_text)?;
     versions
         .iter()
@@ -2953,7 +3084,7 @@ fn ensure_vanilla_version_json_with_progress(
         .map_err(error_text)?
         .error_for_status()
         .map_err(error_text)?
-        .json::<serde_json::Value>()
+        .bounded_json::<serde_json::Value>()
         .map_err(error_text)?;
     let versions = manifest
         .get("versions")
@@ -2977,7 +3108,7 @@ fn ensure_vanilla_version_json_with_progress(
             12,
         );
     }
-    download_file(&url, &path)?;
+    download_file_limited(&url, &path, MAX_TEXT_RESPONSE_BYTES)?;
     Ok(path)
 }
 
@@ -2986,9 +3117,11 @@ fn load_version_profile(game_dir: &Path, version_id: &str) -> Result<VersionProf
         .join("versions")
         .join(version_id)
         .join(format!("{version_id}.json"));
-    let body =
-        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).map_err(error_text)?)
-            .map_err(error_text)?;
+    let body = serde_json::from_slice::<serde_json::Value>(&read_file_bounded(
+        &path,
+        MAX_TEXT_RESPONSE_BYTES,
+    )?)
+    .map_err(error_text)?;
     let inherits = json_string(&body, "inheritsFrom");
     let mut profile = if inherits.trim().is_empty() {
         VersionProfile::default()
@@ -3246,11 +3379,13 @@ fn ensure_assets_with_progress(
         if let Some(app) = app {
             emit_launch_progress(app, "Assets", "Downloading Minecraft asset index", 0, 1);
         }
-        download_file(&profile.asset_index_url, &index)?;
+        download_file_limited(&profile.asset_index_url, &index, MAX_ASSET_INDEX_BYTES)?;
     }
-    let body =
-        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(index).map_err(error_text)?)
-            .map_err(error_text)?;
+    let body = serde_json::from_slice::<serde_json::Value>(&read_file_bounded(
+        &index,
+        MAX_ASSET_INDEX_BYTES,
+    )?)
+    .map_err(error_text)?;
     let objects = body
         .get("objects")
         .and_then(|v| v.as_object())
@@ -3367,7 +3502,8 @@ fn extract_natives_with_progress(
     app: Option<&AppHandle>,
 ) -> Result<PathBuf, String> {
     let target = game_dir.join("versions").join(version_id).join("natives");
-    fs::create_dir_all(&target).map_err(error_text)?;
+    let staging = StagedDirectory::new(&target).map_err(error_text)?;
+    let mut expanded = 0u64;
     let libraries_dir = game_dir.join("libraries");
     let total = profile
         .libraries
@@ -3393,10 +3529,11 @@ fn extract_natives_with_progress(
                         total,
                     );
                 }
-                unzip_natives(&file, &target)?;
+                unzip_natives(&file, staging.path(), &mut expanded)?;
             }
         }
     }
+    staging.install(&target).map_err(error_text)?;
     Ok(target)
 }
 
@@ -3531,8 +3668,12 @@ fn sanitize_display_name(value: &str, fallback: &str) -> String {
 }
 
 fn download_file(url: &str, path: &Path) -> Result<(), String> {
+    download_file_limited(url, path, MAX_DOWNLOAD_BYTES)
+}
+
+fn download_file_limited(url: &str, path: &Path, limit: u64) -> Result<(), String> {
     let client = trusted_download_http_client()?;
-    download_file_with_client(url, path, &client)
+    download_file_with_client_limited(url, path, &client, limit)
 }
 
 fn download_file_with_client(
@@ -3540,10 +3681,19 @@ fn download_file_with_client(
     path: &Path,
     client: &reqwest::blocking::Client,
 ) -> Result<(), String> {
+    download_file_with_client_limited(url, path, client, MAX_DOWNLOAD_BYTES)
+}
+
+fn download_file_with_client_limited(
+    url: &str,
+    path: &Path,
+    client: &reqwest::blocking::Client,
+    limit: u64,
+) -> Result<(), String> {
     ensure_download_parent(path)?;
     let mut last_error = String::new();
     for attempt in 1..=HTTP_DOWNLOAD_ATTEMPTS {
-        match download_file_once(url, path, client) {
+        match download_file_once(url, path, client, limit) {
             Ok(()) => return Ok(()),
             Err(error) => {
                 last_error = error;
@@ -3567,14 +3717,8 @@ fn download_file_once(
     url: &str,
     path: &Path,
     client: &reqwest::blocking::Client,
+    limit: u64,
 ) -> Result<(), String> {
-    let temp = path.with_extension(format!(
-        "{}.part",
-        path.extension()
-            .and_then(|value| value.to_str())
-            .unwrap_or("download")
-    ));
-    let _ = fs::remove_file(&temp);
     let parsed_url = trusted_network_url(url)?;
     let request_urls = if is_first_party_backend_url(&parsed_url) {
         first_party_request_urls(url)?
@@ -3592,32 +3736,11 @@ fn download_file_once(
             Err(error) => last_kind = network_error_kind(&error),
         }
     }
-    let response = response
-        .ok_or_else(|| format!("Could not reach the download service. ({last_kind})"))?
-        .error_for_status()
-        .map_err(error_text)?;
-    if response
-        .content_length()
-        .is_some_and(|size| size > MAX_DOWNLOAD_BYTES)
-    {
-        return Err("Download exceeds the 512 MiB safety limit.".to_string());
-    }
-    let result = (|| {
-        let mut output = File::create(&temp).map_err(error_text)?;
-        let copied = io::copy(&mut response.take(MAX_DOWNLOAD_BYTES + 1), &mut output)
-            .map_err(error_text)?;
-        if copied > MAX_DOWNLOAD_BYTES {
-            return Err("Download exceeds the 512 MiB safety limit.".to_string());
-        }
-        output.flush().map_err(error_text)?;
-        drop(output);
-        let backup = path.with_extension("download.previous");
-        replace_path_with_rollback(&temp, path, &backup)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    result
+    let response =
+        response.ok_or_else(|| format!("Could not reach the download service. ({last_kind})"))?;
+    let staging = stage_download_response(response, path, limit, false)?;
+    let backup = path.with_extension("download.previous");
+    replace_path_with_rollback(staging.path(), path, &backup)
 }
 
 fn download_failure_message(url: &str, error: &str) -> String {
@@ -3634,31 +3757,16 @@ fn download_failure_message(url: &str, error: &str) -> String {
     format!("Download failed after {HTTP_DOWNLOAD_ATTEMPTS} attempts: {url} ({error})")
 }
 
-fn unzip_natives(zip_path: &Path, target: &Path) -> Result<(), String> {
+fn unzip_natives(zip_path: &Path, target: &Path, expanded: &mut u64) -> Result<(), String> {
     let file = File::open(zip_path).map_err(error_text)?;
-    let mut archive = ZipArchive::new(file).map_err(error_text)?;
-    if archive.len() > MAX_NATIVE_FILES {
-        return Err("Native archive contains too many files.".to_string());
-    }
-    let mut expanded = 0u64;
-    for i in 0..archive.len() {
-        let mut item = archive.by_index(i).map_err(error_text)?;
-        expanded = expanded.saturating_add(item.size());
-        if expanded > MAX_NATIVE_EXPANDED_BYTES {
-            return Err("Native archive expands beyond the 512 MiB safety limit.".to_string());
-        }
-        let name = item.name().to_string();
-        if item.is_dir() || name.starts_with("META-INF/") || name.contains("..") {
-            continue;
-        }
-        let Some(file_name) = Path::new(&name).file_name() else {
-            continue;
-        };
-        let out = target.join(file_name);
-        let mut output = File::create(out).map_err(error_text)?;
-        io::copy(&mut item, &mut output).map_err(error_text)?;
-    }
-    Ok(())
+    unpack_zip_bounded(
+        file,
+        target,
+        true,
+        MAX_NATIVE_FILES,
+        MAX_NATIVE_EXPANDED_BYTES,
+        expanded,
+    )
 }
 
 fn native_artifact(library: &Library) -> Option<(String, String)> {
@@ -3879,11 +3987,6 @@ fn ensure_java_runtime(app: Option<&AppHandle>) -> Result<String, String> {
 
     let install_root = managed_root().join("runtime").join("temurin-21");
     let archive = managed_root().join("runtime").join("temurin-21-jre.zip");
-    if install_root.exists() {
-        fs::remove_dir_all(&install_root).map_err(error_text)?;
-    }
-    fs::create_dir_all(&install_root).map_err(error_text)?;
-
     let arch = match env::consts::ARCH {
         "aarch64" => "aarch64",
         _ => "x64",
@@ -3955,33 +4058,78 @@ fn find_java_under(root: &Path) -> Option<PathBuf> {
 
 fn extract_runtime_zip(zip_path: &Path, target: &Path) -> Result<(), String> {
     let file = File::open(zip_path).map_err(error_text)?;
-    let mut archive = ZipArchive::new(file).map_err(error_text)?;
-    if archive.len() > 4096 {
-        return Err("Managed Java archive contains too many files.".to_string());
-    }
+    extract_runtime_bounded(file, target, 4096, MAX_NATIVE_EXPANDED_BYTES)
+}
 
+fn extract_runtime_bounded<R: Read + Seek>(
+    reader: R,
+    target: &Path,
+    max_files: usize,
+    limit: u64,
+) -> Result<(), String> {
+    let staging = StagedDirectory::new(target).map_err(error_text)?;
     let mut expanded = 0u64;
+    unpack_zip_bounded(
+        reader,
+        staging.path(),
+        false,
+        max_files,
+        limit,
+        &mut expanded,
+    )?;
+    staging.install(target).map_err(error_text)
+}
+
+fn unpack_zip_bounded<R: Read + Seek>(
+    reader: R,
+    target: &Path,
+    flatten_natives: bool,
+    max_files: usize,
+    limit: u64,
+    expanded: &mut u64,
+) -> Result<(), String> {
+    let mut archive = ZipArchive::new(reader).map_err(error_text)?;
+    if archive.len() > max_files {
+        return Err("Archive contains too many files.".to_string());
+    }
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(error_text)?;
-        let relative = entry
-            .enclosed_name()
-            .ok_or_else(|| "Managed Java archive contains an unsafe path.".to_string())?
-            .to_path_buf();
-        let output = target.join(relative);
+        let relative = if flatten_natives {
+            let name = entry.name();
+            if entry.is_dir() || name.starts_with("META-INF/") || name.contains("..") {
+                // ZipArchive seeks to the next entry; skipped data is never inflated.
+                continue;
+            }
+            let Some(name) = Path::new(name).file_name() else {
+                continue;
+            };
+            PathBuf::from(name)
+        } else {
+            entry
+                .enclosed_name()
+                .ok_or_else(|| "Archive contains an unsafe path.".to_string())?
+        };
+        let output = target.join(&relative);
         if entry.is_dir() {
             fs::create_dir_all(&output).map_err(error_text)?;
             continue;
         }
-
-        expanded = expanded.saturating_add(entry.size());
-        if expanded > MAX_NATIVE_EXPANDED_BYTES {
-            return Err("Managed Java archive exceeds the expanded-size safety limit.".to_string());
+        let remaining = limit
+            .checked_sub(*expanded)
+            .ok_or_else(|| "Archive exceeds the expanded-size safety limit.".to_string())?;
+        let declared = entry.size();
+        if declared > remaining {
+            return Err("Archive exceeds the expanded-size safety limit.".to_string());
         }
         if let Some(parent) = output.parent() {
             fs::create_dir_all(parent).map_err(error_text)?;
         }
         let mut destination = File::create(&output).map_err(error_text)?;
-        io::copy(&mut entry, &mut destination).map_err(error_text)?;
+        let actual = copy_bounded(&mut entry, &mut destination, remaining).map_err(error_text)?;
+        *expanded += actual;
+        if actual != declared {
+            return Err("Archive entry size does not match its declared length.".to_string());
+        }
     }
     Ok(())
 }
@@ -4107,9 +4255,21 @@ fn is_64_bit() -> bool {
 }
 
 fn redacted_command(command: &[String]) -> String {
+    let mut secret_value = false;
     command
         .iter()
         .map(|arg| {
+            if secret_value {
+                secret_value = false;
+                return "<redacted>".to_string();
+            }
+            if matches!(
+                arg.as_str(),
+                "--accessToken" | "--access-token" | "--clientToken"
+            ) {
+                secret_value = true;
+                return arg.clone();
+            }
             if arg.len() > 60 && !arg.starts_with('-') {
                 "<token-or-path>".to_string()
             } else {
@@ -4233,7 +4393,7 @@ fn network_self_test() -> Result<(), String> {
         let url = format!("{SITE_URL}{path}");
         let response = send_first_party_request(&url, |client, target| client.get(target))?;
         let status = response.status();
-        let _ = response.text().map_err(error_text)?;
+        let _ = response.bounded_text().map_err(error_text)?;
         if !status.is_success() {
             return Err(format!("{label} returned HTTP {}.", status.as_u16()));
         }
@@ -4245,7 +4405,7 @@ fn network_self_test() -> Result<(), String> {
         .map_err(error_text)?
         .error_for_status()
         .map_err(error_text)?;
-    let bytes = response.bytes().map_err(error_text)?;
+    let bytes = response.bounded_bytes(781)?;
     if bytes.len() != 781 {
         return Err(format!(
             "Minecraft asset CDN returned an unexpected test object size: {}.",
@@ -4270,6 +4430,9 @@ fn main() {
         }
     }
     configure_launcher_webkit_environment();
+    // A previous launcher may have exited before its Java child. Only positively
+    // dead, marked native argument records are eligible; uncertainty is retained.
+    let _ = io_safety::cleanup_argument_files(&launcher_data_folder());
     write_launcher_startup_diagnostics();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -4712,8 +4875,7 @@ fn ensure_loader_jar(profile: &str, token: &str) -> Result<(), String> {
         return Err("Sign in before installing the standalone memory loader.".to_string());
     }
 
-    let staging = loader.with_extension("jar.part");
-    let result = (|| {
+    (|| {
         let body = json!({
             "fileName": LOADER_JAR_NAME,
             "displayName": "Gamble Client Launcher",
@@ -4731,7 +4893,7 @@ fn ensure_loader_jar(profile: &str, token: &str) -> Result<(), String> {
         })?;
         let status = response.status();
         if !status.is_success() {
-            let message = response.text().unwrap_or_default();
+            let message = response.bounded_text().unwrap_or_default();
             let parsed =
                 serde_json::from_str::<serde_json::Value>(&message).unwrap_or_else(|_| json!({}));
             let detail = json_string(&parsed, "message");
@@ -4744,29 +4906,20 @@ fn ensure_loader_jar(profile: &str, token: &str) -> Result<(), String> {
                 detail
             });
         }
-        let bytes = response.bytes().map_err(error_text)?;
-        if bytes.is_empty() || bytes.len() as u64 > MAX_LOADER_BYTES {
-            return Err("Standalone loader exceeds the 16 MiB safety limit.".to_string());
-        }
-        fs::write(&staging, &bytes).map_err(error_text)?;
-        if !is_memory_loader_jar(&staging) {
+        let staging = stage_download_response(response, &loader, MAX_LOADER_BYTES, true)?;
+        if !is_memory_loader_jar(staging.path()) {
             return Err("Server returned an obsolete standalone loader artifact.".to_string());
         }
-        if !has_launcher_managed_enrollment(&staging) {
+        if !has_launcher_managed_enrollment(staging.path()) {
             return Err("Server returned a loader without fresh managed enrollment.".to_string());
         }
-        restrict_private_file(&staging)?;
         quarantine_duplicate_loader_jars(&mods, &loader)?;
-        replace_file_with_rollback(&staging, &loader)?;
+        replace_file_with_rollback(staging.path(), &loader)?;
         if !is_memory_loader_jar(&loader) || !has_launcher_managed_enrollment(&loader) {
             return Err("Installed loader failed its post-write verification.".to_string());
         }
         Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&staging);
-    }
-    result
+    })()
 }
 
 fn replace_file_with_rollback(staging: &Path, target: &Path) -> Result<(), String> {
@@ -4841,10 +4994,10 @@ fn has_launcher_managed_enrollment(path: &Path) -> bool {
         Ok(entry) if entry.size() <= 16 * 1024 => entry,
         _ => return false,
     };
-    let mut bytes = Vec::new();
-    if entry.read_to_end(&mut bytes).is_err() {
-        return false;
-    }
+    let bytes = match read_zip_metadata(&mut entry, 16 * 1024) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
     let value = match serde_json::from_slice::<serde_json::Value>(&bytes) {
         Ok(value) => value,
         Err(_) => return false,
@@ -4873,7 +5026,7 @@ fn has_launcher_managed_enrollment(path: &Path) -> bool {
 }
 
 fn is_memory_loader_jar(path: &Path) -> bool {
-    let bytes = match fs::read(path) {
+    let bytes = match read_file_bounded(path, MAX_LOADER_BYTES) {
         Ok(bytes) => bytes,
         Err(_) => return false,
     };
@@ -4922,11 +5075,7 @@ fn verify_memory_loader_bytes(bytes: &[u8]) -> Result<(), String> {
 
     let metadata = {
         let mut entry = archive.by_name("fabric.mod.json").map_err(error_text)?;
-        if entry.size() > MAX_FABRIC_METADATA_BYTES {
-            return Err("Managed loader metadata is too large.".to_string());
-        }
-        let mut data = Vec::new();
-        entry.read_to_end(&mut data).map_err(error_text)?;
+        let data = read_zip_metadata(&mut entry, MAX_FABRIC_METADATA_BYTES)?;
         serde_json::from_slice::<serde_json::Value>(&data).map_err(error_text)?
     };
     if !is_expected_loader_fabric_metadata(&metadata) {
@@ -4942,11 +5091,7 @@ fn verify_memory_loader_bytes(bytes: &[u8]) -> Result<(), String> {
         let mut entry = archive
             .by_name(LOADER_PROVENANCE_ENTRY)
             .map_err(error_text)?;
-        if entry.size() > MAX_FABRIC_METADATA_BYTES {
-            return Err("Managed loader provenance is too large.".to_string());
-        }
-        let mut data = Vec::new();
-        entry.read_to_end(&mut data).map_err(error_text)?;
+        let data = read_zip_metadata(&mut entry, MAX_FABRIC_METADATA_BYTES)?;
         serde_json::from_slice::<LoaderProvenance>(&data).map_err(error_text)?
     };
     verify_loader_provenance(bytes, &provenance, metadata_version)
@@ -5203,11 +5348,7 @@ fn memory_loader_version(path: &Path) -> Option<String> {
     let file = File::open(path).ok()?;
     let mut archive = ZipArchive::new(file).ok()?;
     let mut metadata = archive.by_name("fabric.mod.json").ok()?;
-    if metadata.size() > MAX_FABRIC_METADATA_BYTES {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    metadata.read_to_end(&mut bytes).ok()?;
+    let bytes = read_zip_metadata(&mut metadata, MAX_FABRIC_METADATA_BYTES).ok()?;
     serde_json::from_slice::<serde_json::Value>(&bytes)
         .ok()?
         .get("version")?
@@ -5273,7 +5414,7 @@ fn fetch_modrinth_release(url: &str) -> Result<ModrinthRelease, String> {
         .map_err(error_text)?
         .error_for_status()
         .map_err(error_text)?
-        .json::<Vec<serde_json::Value>>()
+        .bounded_json::<Vec<serde_json::Value>>()
         .map_err(error_text)?;
     let version = versions.first().cloned().unwrap_or_else(|| json!({}));
     let files = version
@@ -5582,7 +5723,9 @@ fn request_minecraft_profile(minecraft_access_token: &str) -> Result<MinecraftPr
         .send()
         .map_err(error_text)?;
     let status = response.status();
-    let body = response.json::<serde_json::Value>().map_err(error_text)?;
+    let body = response
+        .bounded_json::<serde_json::Value>()
+        .map_err(error_text)?;
     if !status.is_success() {
         let message = json_string(&body, "message");
         return Err(if message.trim().is_empty() {
@@ -5714,7 +5857,7 @@ fn post_json(
         })?
     };
     let status = response.status();
-    let text = response.text().map_err(error_text)?;
+    let text = response.bounded_text().map_err(error_text)?;
     let body = if text.trim().is_empty() {
         json!({})
     } else {
@@ -5793,7 +5936,7 @@ fn fetch_launcher_version_info() -> Result<LauncherVersionResponse, String> {
         ));
     }
     response
-        .json::<LauncherVersionResponse>()
+        .bounded_json::<LauncherVersionResponse>()
         .map_err(error_text)
 }
 
@@ -5807,7 +5950,7 @@ fn fetch_standalone_loader_version() -> Result<String, String> {
         ));
     }
     let response = response
-        .json::<StandaloneLoaderVersionResponse>()
+        .bounded_json::<StandaloneLoaderVersionResponse>()
         .map_err(error_text)?;
     if response.version.trim().is_empty() {
         return Err("Backend did not return a standalone loader version.".to_string());
@@ -5978,6 +6121,53 @@ fn public_client_version(value: &str) -> String {
     text.to_string()
 }
 
+trait BoundedResponse {
+    fn bounded_bytes(self, limit: u64) -> Result<Vec<u8>, String>;
+    fn bounded_text(self) -> Result<String, String>;
+    fn bounded_json<T: serde::de::DeserializeOwned>(self) -> Result<T, String>;
+}
+
+impl BoundedResponse for reqwest::blocking::Response {
+    fn bounded_bytes(self, limit: u64) -> Result<Vec<u8>, String> {
+        let declared = self.content_length();
+        read_bounded(self, declared, limit).map_err(error_text)
+    }
+
+    fn bounded_text(self) -> Result<String, String> {
+        Ok(String::from_utf8_lossy(&self.bounded_bytes(MAX_TEXT_RESPONSE_BYTES)?).into_owned())
+    }
+
+    fn bounded_json<T: serde::de::DeserializeOwned>(self) -> Result<T, String> {
+        serde_json::from_slice(&self.bounded_bytes(MAX_TEXT_RESPONSE_BYTES)?).map_err(error_text)
+    }
+}
+
+fn read_file_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
+    let file = File::open(path).map_err(error_text)?;
+    let declared = file.metadata().map_err(error_text)?.len();
+    read_bounded(file, Some(declared), limit).map_err(error_text)
+}
+
+fn read_zip_metadata(entry: &mut zip::read::ZipFile<'_>, limit: u64) -> Result<Vec<u8>, String> {
+    let declared = entry.size();
+    let bytes = read_bounded(entry, Some(declared), limit).map_err(error_text)?;
+    if bytes.len() as u64 != declared {
+        return Err("Archive metadata size does not match its declared length.".to_string());
+    }
+    Ok(bytes)
+}
+
+fn stage_download_response(
+    response: reqwest::blocking::Response,
+    target: &Path,
+    limit: u64,
+    private: bool,
+) -> Result<StagedFile, String> {
+    let status = response.status().as_u16();
+    let declared = response.content_length();
+    stage_download(response, status, declared, target, limit, private).map_err(error_text)
+}
+
 fn http_client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .user_agent(format!("GambleClientLauncher/{VERSION}"))
@@ -5992,12 +6182,12 @@ fn http_client() -> Result<reqwest::blocking::Client, String> {
 fn trusted_download_http_client() -> Result<reqwest::blocking::Client, String> {
     let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
         if attempt.previous().len() >= MAX_DOWNLOAD_REDIRECTS {
-            return attempt.stop();
+            return attempt.error("Download followed too many redirects.");
         }
         if is_trusted_network_url(attempt.url()) {
             attempt.follow()
         } else {
-            attempt.stop()
+            attempt.error("Download redirect destination is not trusted.")
         }
     });
     reqwest::blocking::Client::builder()
@@ -6161,20 +6351,14 @@ fn read_trimmed(path: &Path) -> Result<String, String> {
 }
 
 fn write_private_file(path: &Path, data: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(error_text)?;
-    }
-    fs::write(path, data).map_err(error_text)?;
-    restrict_private_file(path)
-}
-
-fn restrict_private_file(path: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(error_text)?;
-    }
-    Ok(())
+    let mut staging = StagedFile::new(path, true).map_err(error_text)?;
+    staging.writer().write_all(data).map_err(error_text)?;
+    staging.close().map_err(error_text)?;
+    replace_path_with_rollback(
+        staging.path(),
+        path,
+        &path.with_extension("private.previous"),
+    )
 }
 
 fn timestamp() -> String {
@@ -6258,7 +6442,8 @@ mod tests {
         should_apply_amd_guard, trusted_download_http_client, trusted_launcher_update_url,
         trusted_network_url, validate_gpu_selector, verify_fabric_mod_id,
         verify_fabric_mod_identity, webkit_safe_mode_enabled, write_private_file, AssetDownload,
-        MANAGED_CLIENT_MOD_ID, MICROSOFT_REAUTH_REQUIRED, MINECRAFT_VERSION, VERSION_MANIFEST_URL,
+        BoundedResponse, MANAGED_CLIENT_MOD_ID, MICROSOFT_REAUTH_REQUIRED, MINECRAFT_VERSION,
+        VERSION_MANIFEST_URL,
     };
     use serde_json::json;
     use std::{env, fs, fs::File, io::Cursor, io::Write, path::PathBuf};
@@ -6401,7 +6586,7 @@ mod tests {
             .expect("Mojang version manifest request")
             .error_for_status()
             .expect("Mojang version manifest status")
-            .json::<serde_json::Value>()
+            .bounded_json::<serde_json::Value>()
             .expect("Mojang version manifest JSON");
         let version_url = manifest["versions"]
             .as_array()
@@ -6416,7 +6601,7 @@ mod tests {
             .expect("Minecraft version request")
             .error_for_status()
             .expect("Minecraft version status")
-            .json::<serde_json::Value>()
+            .bounded_json::<serde_json::Value>()
             .expect("Minecraft version JSON");
         let index_url = version["assetIndex"]["url"]
             .as_str()
@@ -6427,7 +6612,7 @@ mod tests {
             .expect("asset index request")
             .error_for_status()
             .expect("asset index status")
-            .json::<serde_json::Value>()
+            .bounded_json::<serde_json::Value>()
             .expect("asset index JSON");
         let mut hashes = index["objects"]
             .as_object()

@@ -3337,3 +3337,55 @@ input {
 *::-webkit-scrollbar-thumb:hover {
   background: #4b5661;
 }
+
+/* The first screen is a launch workspace, with setup and recovery in reach. */
+.play-overview {
+  grid-template-columns: minmax(0, 1fr) 260px;
+  align-items: stretch;
+}
+
+.play-overview .launch-panel {
+  grid-template-columns: 1fr;
+  align-content: space-between;
+  gap: 20px;
+  padding: 24px;
+}
+
+.play-overview h2 { margin: 8px 0 0; font-size: clamp(1.8rem, 3.8vw, 3rem); }
+.play-overview .launch-description { color: #bcc4cd; font-size: .9rem; line-height: 1.55; }
+.play-overview .launch-facts { margin-top: 16px; }
+.play-overview .launch-facts div { min-height: 76px; }
+.play-overview .launch-stack { gap: 8px; }
+.play-overview .launch-button { width: 100%; min-height: 58px; padding: 16px; }
+.play-overview .launch-version { margin: 0; text-align: center; color: var(--muted); font-size: .75rem; }
+.play-overview .launch-warning { max-width: none; margin: 4px 0 0; }
+.play-overview .account-panel { grid-template-columns: 1fr; align-content: start; gap: 14px; padding: 18px; }
+.play-overview .identity-card { padding: 0 0 14px; border-bottom: 1px solid var(--line); }
+.play-overview .identity-card strong { overflow-wrap: anywhere; }
+.play-overview .identity-manage { width: 100%; }
+.inline-link { padding: 4px 0; background: transparent; color: var(--amber); font-size: .75rem; text-decoration: underline; text-underline-offset: 3px; }
+.play-shortcuts { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.play-shortcuts .action-tile { min-height: 120px; padding: 15px; }
+.play-shortcuts .action-tile strong { font-size: .95rem; }
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 3px;
+}
+
+@media (max-width: 1100px) {
+  .play-overview { grid-template-columns: 1fr; }
+  .play-overview .launch-panel { grid-template-columns: minmax(0, 1fr) 190px; padding: 20px; }
+  .play-overview .account-panel { grid-template-columns: 1fr 1fr; align-items: center; }
+  .play-overview .identity-card { grid-column: auto; padding: 0; border: 0; }
+  .play-overview .identity-manage { grid-column: 1 / -1; }
+  .play-shortcuts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .play-overview .launch-panel, .play-overview .account-panel { grid-template-columns: 1fr; }
+  .play-overview .identity-manage { grid-column: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

@@ -19,7 +19,7 @@ final class DownloadConnectionTest {
         assertEquals(200, status);
         assertEquals(15_000, connection.getConnectTimeout());
         assertEquals(30_000, connection.getReadTimeout());
-        assertEquals("GambleClientLauncher/0.1.132", connection.userAgent);
+        assertEquals("GambleClientLauncher/0.1.133", connection.userAgent);
         assertTrue(connection.connectedForResponse);
     }
 

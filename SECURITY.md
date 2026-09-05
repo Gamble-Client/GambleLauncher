@@ -7,14 +7,15 @@ Do not publish a launcher vulnerability or a token from a local diagnostics file
 ## Current trust boundaries
 
 - The native launcher accepts API calls only under the Gamble Client launcher, Spotify status, and friends routes.
-- Browser links are restricted to HTTPS and an explicit host allowlist.
+- Browser links use an explicit host allowlist. Java's browser helper also permits loopback HTTP for local workflows; the native filesystem opener is a separate command, not the browser-URL guard.
 - Native API and metadata requests use an explicit HTTPS origin allowlist; bearer-token requests do not follow redirects.
 - Runtime downloads validate every redirect destination against the same allowlist and cap text responses before parsing them.
-- Client and launcher update artifacts require a server-provided byte length and SHA-256 match before use.
-- Downloads have compressed and expanded size limits, and archive paths are checked before extraction.
-- Launcher and Microsoft session files use owner-only permissions on Unix.
+- Personalized loaders require signed immutable-core provenance, platform validation and fresh enrollment. Native launcher updates require exact size/SHA-256 metadata. Java reports update links rather than installing updates itself; ordinary Mojang/Fabric caches are not equivalent to signed loader artifacts.
+- Downloads bound actual response bytes and archive expansion. Native/JRE extraction stages output before replacing active files; Java native extraction rejects bad lengths/checksums before publishing that archive. JavaFX resource-pack listing does not inflate Fabric mod metadata.
+- Launcher/Microsoft session and enrollment files are staged privately before sensitive bytes are written, using Unix owner-only permissions or Windows ACLs. Filesystems unable to protect secrets fail closed. These permissions are not encryption or protection from code running as the same user.
+- Minecraft authentication arguments use a private Java argument file, not OS-visible token arguments. Files are cleaned after child exit or failed spawn; the next startup/launch reclaims marked dead-child leftovers. Unknown/incomplete process records are retained conservatively for manual cleanup. Platform-native encoding must preserve the arguments exactly.
 - The Tauri webview uses a restrictive Content Security Policy; remote scripts, objects, frames, and forms are disabled.
-- Gamble Client launch tickets and downloaded artifacts are validated before use; the launcher has no remote-command feature.
+- Protected-client delivery, launch-ticket verification and entitlement enforcement belong to the separately reviewed standalone loader/backend, not this repository. The launcher has no remote-command feature.
 - The launcher does not hide module flags or implement scanner-evasion behavior. False-positive reports should be handled with provenance, reproducible source, and signed release artifacts.
 
 ## Remaining hardening work
@@ -29,3 +30,5 @@ The following defense-in-depth work remains:
 5. Commission an independent review of authentication, updater, archive extraction, local IPC, and release-publishing paths.
 
 The launcher must not be described as fully audited until those remaining items are complete.
+The local September 2026 audit patches are not a published release; Windows ACL,
+code-page, installer and real-account verification remain required before promotion.

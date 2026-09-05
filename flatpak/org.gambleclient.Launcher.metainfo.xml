@@ -23,6 +23,11 @@
   <url type="bugtracker">https://github.com/Gamble-Client/GambleLauncher/issues</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.1.133" date="2026-09-05">
+      <description>
+        <p>Simplifies Play and Dashboard access, protects sign-in files, and makes downloads and startup more resilient.</p>
+      </description>
+    </release>
     <release version="0.1.132" date="2026-09-03">
       <description>
         <p>Adds Linux-safe launcher startup, resilient backend gateways, and a bundled Java 21 runtime.</p>

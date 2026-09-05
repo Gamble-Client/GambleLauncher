@@ -8,6 +8,15 @@ on:
         required: false
         default: false
         type: boolean
+      build_run_id:
+        description: Optional successful Windows build run to test before promotion (must match this workflow source commit)
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  actions: read
+  contents: read
 
 jobs:
   smoke:
@@ -16,12 +25,42 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Checkout smoke-test source
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Download and install the public launcher
         shell: pwsh
+        env:
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
           $installer = Join-Path $env:RUNNER_TEMP "gamble-client-launcher-setup.exe"
-          Invoke-WebRequest -Uri "https://gambleclient.org/api/launcher/download/windows" -OutFile $installer
+          if ($env:BUILD_RUN_ID) {
+            if ($env:BUILD_RUN_ID -notmatch '^[0-9]+$') { throw "Invalid build run ID." }
+            $runJson = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:BUILD_RUN_ID"
+            if ($LASTEXITCODE -ne 0) { throw "Cannot inspect candidate build." }
+            $buildRun = $runJson | ConvertFrom-Json
+            if ($buildRun.head_sha -ne $env:GITHUB_SHA -or $buildRun.conclusion -ne "success" -or $buildRun.path -ne ".github/workflows/windows-tauri.yml") {
+              throw "Candidate must be a successful Windows build from this exact source commit."
+            }
+            $version = node -p "require('./package.json').version"
+            $candidateDir = Join-Path $env:RUNNER_TEMP "candidate-windows-installer"
+            gh run download $env:BUILD_RUN_ID --repo $env:GITHUB_REPOSITORY --name "gamble-client-launcher-windows-$version" --dir $candidateDir
+            if ($LASTEXITCODE -ne 0) { throw "Cannot download candidate installer." }
+            $candidates = @(Get-ChildItem $candidateDir -Recurse -Filter "*_x64-setup.exe")
+            if ($candidates.Count -ne 1) { throw "Expected exactly one candidate installer." }
+            Copy-Item $candidates[0].FullName $installer
+            Write-Host "Testing candidate version $version from $($buildRun.head_sha), run $env:BUILD_RUN_ID"
+            Get-FileHash $installer -Algorithm SHA256
+          } else {
+            Invoke-WebRequest -Uri "https://gambleclient.org/api/launcher/download/windows" -OutFile $installer
+          }
           $install = Start-Process -FilePath $installer -ArgumentList "/S" -Wait -PassThru
           if ($install.ExitCode -ne 0) {
             throw "The public Windows installer exited with code $($install.ExitCode)."
