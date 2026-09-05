@@ -328,6 +328,7 @@ mod windows_private {
     use windows_sys::Win32::{
         Foundation::{
             LocalFree, ERROR_INVALID_PARAMETER, FILETIME, GENERIC_WRITE, INVALID_HANDLE_VALUE,
+            WAIT_OBJECT_0, WAIT_TIMEOUT,
         },
         Globalization::{
             GetACP, MultiByteToWideChar, WideCharToMultiByte, CP_UTF8, WC_ERR_INVALID_CHARS,
@@ -346,8 +347,8 @@ mod windows_private {
             CreateDirectoryW, CreateFileW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ,
         },
         System::Threading::{
-            GetCurrentProcess, GetProcessTimes, OpenProcess, OpenProcessToken,
-            PROCESS_QUERY_LIMITED_INFORMATION,
+            GetCurrentProcess, GetProcessTimes, OpenProcess, OpenProcessToken, WaitForSingleObject,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
         },
     };
 
@@ -649,7 +650,11 @@ mod windows_private {
             return Err(invalid("Unknown Java process identity."));
         }
         unsafe {
-            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            let handle = OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                0,
+                pid,
+            );
             if handle.is_null() {
                 let error = io::Error::last_os_error();
                 return if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
@@ -659,6 +664,15 @@ mod windows_private {
                 };
             }
             let handle = OwnedHandle::from_raw_handle(handle);
+            // A terminated Windows process object can remain open while another
+            // process holds a handle. Its creation time still exists, so query
+            // the signaled state before treating it as a live/reused PID. Do not
+            // infer liveness from exit code 259, which can be a real exit code.
+            match WaitForSingleObject(handle.as_raw_handle(), 0) {
+                WAIT_OBJECT_0 => return Ok(None),
+                WAIT_TIMEOUT => {}
+                _ => return Err(io::Error::last_os_error()),
+            }
             let mut created: FILETIME = std::mem::zeroed();
             let mut exited: FILETIME = std::mem::zeroed();
             let mut kernel: FILETIME = std::mem::zeroed();

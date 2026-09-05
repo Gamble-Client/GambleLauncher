@@ -351,6 +351,21 @@ fn windows_argfile_encoding_is_lossless_or_rejected() {
 
 #[cfg(windows)]
 #[test]
+fn windows_exited_process_objects_are_dead_even_when_handles_remain_open() {
+    for exit_code in [0, 259] {
+        let mut child = Command::new("cmd.exe")
+            .args(["/C", "exit", &exit_code.to_string()])
+            .spawn()
+            .unwrap();
+        assert_eq!(child.wait().unwrap().code(), Some(exit_code));
+        assert_eq!(windows_private::process_identity(child.id()).unwrap(), None);
+        // Child intentionally retains the Windows process handle through the query.
+        drop(child);
+    }
+}
+
+#[cfg(windows)]
+#[test]
 fn windows_private_file_has_only_current_token_user_in_protected_dacl_before_bytes() {
     use std::{os::windows::ffi::OsStrExt, ptr};
     use windows_sys::Win32::{
