@@ -56,11 +56,18 @@ final class PrivateFileSecurity {
             // accept the best-effort path used for ordinary diagnostic files.
             var acl = Files.getFileAttributeView(file, AclFileAttributeView.class);
             if (acl != null) {
-                var owner = acl.getOwner();
+                // Elevated Windows tokens can default new-file ownership to the
+                // Administrators group. Private files must belong to this user,
+                // not that group, including for later orphan ownership checks.
+                var owner = file.getFileSystem().getUserPrincipalLookupService()
+                    .lookupPrincipalByName(System.getProperty("user.name"));
+                if (!acl.getOwner().equals(owner)) acl.setOwner(owner);
                 var expected = List.of(AclEntry.newBuilder().setType(AclEntryType.ALLOW)
                     .setPrincipal(owner).setPermissions(EnumSet.allOf(AclEntryPermission.class)).build());
                 acl.setAcl(expected);
-                if (!acl.getAcl().equals(expected)) throw new IOException("Could not restrict the private file's permissions.");
+                if (!acl.getOwner().equals(owner) || !acl.getAcl().equals(expected)) {
+                    throw new IOException("Could not restrict the private file's permissions.");
+                }
             }
             return file;
         } catch (IOException | RuntimeException error) {

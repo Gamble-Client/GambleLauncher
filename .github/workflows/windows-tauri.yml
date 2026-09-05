@@ -44,6 +44,14 @@ jobs:
         shell: pwsh
         run: .\gradlew.bat test
 
+      - name: Preserve Windows Java test receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-java-test-receipts
+          path: build/test-results/test/*.xml
+          if-no-files-found: warn
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 

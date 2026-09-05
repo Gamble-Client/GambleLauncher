@@ -23,6 +23,9 @@ final class PrivateFileSecurityTest {
     void temporaryFileIsPrivateBeforeAnySecretIsWritten() throws Exception {
         Path file = PrivateFileSecurity.createPrivateTempFile(temporaryDirectory, ".test-private-");
         assertEquals(0, Files.size(file));
+        assertEquals(file.getFileSystem().getUserPrincipalLookupService()
+            .lookupPrincipalByName(System.getProperty("user.name")), Files.getOwner(file),
+            "Private files must belong to this user even with an elevated Windows token");
         assertPrivate(file);
     }
 

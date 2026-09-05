@@ -268,12 +268,15 @@ final class JavaLaunchArgumentsTest {
     }
 
     private void roundTrip(List<String> values, String directoryName) throws Exception {
-        // A relative input directory and different child working directory ensure that
-        // the @file reference is absolute; both paths deliberately contain spaces.
+        // Use a relative input when the workspace and temp directory share a
+        // drive; Windows runners put them on D: and C:, where no relative path
+        // exists. Both cases still require an absolute @file for the child cwd.
         Path directory = temporaryDirectory.resolve(directoryName);
-        Path relative = Path.of("").toAbsolutePath().relativize(directory.toAbsolutePath());
+        Path workspace = Path.of("").toAbsolutePath();
+        Path inputDirectory = workspace.getRoot().equals(directory.toAbsolutePath().getRoot())
+            ? workspace.relativize(directory.toAbsolutePath()) : directory.toAbsolutePath();
         Path workingDirectory = Files.createDirectory(temporaryDirectory.resolve("game " + directoryName));
-        try (JavaLaunchArguments arguments = JavaLaunchArguments.create(relative, probeCommand(values))) {
+        try (JavaLaunchArguments arguments = JavaLaunchArguments.create(inputDirectory, probeCommand(values))) {
             Path file = argumentFile(arguments);
             assertOwnerOnly(file);
             Process process = arguments.start(builder(arguments).directory(workingDirectory.toFile()));
