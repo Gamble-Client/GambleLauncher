@@ -10,7 +10,8 @@ This chat owns both launcher and standalone loader. The loader source lives in `
 - Repository: `/home/theac/Desktop/gamble-client-launcher`
 - Current working branch: `codex/launcher-ui-security-pass-20260821`
 - Published artifact source: `209aff4319e331dbbf3198347f4a70842589f027`; later handoff-only commits do not change the package bytes.
-- Current public launcher: `0.1.133`; current standalone loader: `1.4.26`; current client build: `20260907183425` (`1.250`).
+- Current public launcher: `0.1.133`; current standalone loader: `1.4.26`; current client build: `20260907210005` (`1.250`).
+- Current client payload source: `19b199e4431d90627b8f9313c48a2f117e9b85ad`; Site release-state: `3a6a358`; Site handoff: `53b6727`. This later client-only release preserves loader source `f5ce16348f47b63edd2f3a8be3be075fda13d24d` and the original launcher/loader artifact bytes. The localized-Windows section below records the earlier fix's own release evidence.
 - Source-matched publication runs: Windows `33946836353`, Linux DEB/RPM `33946838214`, and Flatpak `33946839381`. Prepublication runs: Windows `33945840421`, Linux `33945841278`, Flatpak `33945842206`, and six-fixture WebView/diagnostic matrix `33945842974`.
 - Final staged installer smoke: `33947183098`; final live public-installer smoke: `33947469178`.
 - The universal JAR, Windows NSIS installer, DEB, RPM, and bundled-Java Flatpak are the current immutable artifacts. MSI remains intentionally unavailable.
@@ -25,7 +26,7 @@ The launcher supports the managed native workflow, the universal JavaFX JAR, and
 - Real Windows gates caught and fixed elevated-token file ownership, canonical Windows ACL descriptor comparisons, and cleanup when a terminated child still has an open process handle. Exact current-user ownership/permissions remain enforced; foreign writers and uncertain process identities do not get accepted.
 - Coordinated loader fixes address the consumed-Mixin-queue registration race and Windows staging ownership/ACL handling. Complete local client/loader suite: 676 tests, zero failures/errors/skips; focused baseline/production loader matrix: 112 cases plus a packaged-entrypoint test. Hosted Windows run `33946761073` passed 126 native/JNI and real Fabric/Knot loader checks, zero failures/errors/skips.
 - All five independently obfuscated tiers and three loader platforms were released. The exact `client/scripts/build-tiers.sh` replay passed in `/tmp/gamble-client-final-tiers.bzm4HK`, without changing canonical `/home/theac/Desktop/Built Jars`. All tier entry names and uncompressed contents match the release; four ZIP containers differ only in entry timestamps. Release tier and three loaders are byte-identical.
-- Site/backend: 214 tests and static build passed. Integrated release and remote byte/hash/provenance audits passed. Current Pages deployment: `https://c2b287be.gamble-client-b67.pages.dev`; canonical production: `https://gambleclient.org`.
+- Site/backend: 214 tests and static build passed. Integrated release and remote byte/hash/provenance audits passed. Current Pages deployment: `https://72446fda.gamble-client-b67.pages.dev`; canonical production: `https://gambleclient.org`.
 - See `docs/audit-2026-09-05.md` for scoped security findings, tests, published hashes and remaining hardening work.
 
 ## Published localized Windows correction (2026-09-07 UTC)
