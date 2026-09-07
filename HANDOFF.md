@@ -2,7 +2,7 @@
 
 Last updated: 2026-09-07 UTC
 
-This document covers the launcher repository only. Client behavior is in `/home/theac/Desktop/GambleClient/HANDOFF.md`; Site/API and publishing are in `/home/theac/Desktop/cg-mod-release/HANDOFF.md` and `/home/theac/Desktop/RELEASE_HANDOFF.md`.
+This chat owns both launcher and standalone loader. The loader source lives in `/home/theac/Desktop/GambleClient/client/standalone-loader`; the client chat owns payload features. Client behavior is in `/home/theac/Desktop/GambleClient/HANDOFF.md`; Site/API and publishing are in `/home/theac/Desktop/cg-mod-release/HANDOFF.md` and `/home/theac/Desktop/RELEASE_HANDOFF.md`.
 
 ## Source and current release
 
