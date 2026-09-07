@@ -1,6 +1,6 @@
 # Gamble Client Launcher — Launcher Handoff
 
-Last updated: 2026-09-05 UTC
+Last updated: 2026-09-07 UTC
 
 This document covers the launcher repository only. Client behavior is in `/home/theac/Desktop/GambleClient/HANDOFF.md`; Site/API and publishing are in `/home/theac/Desktop/cg-mod-release/HANDOFF.md` and `/home/theac/Desktop/RELEASE_HANDOFF.md`.
 
@@ -27,6 +27,15 @@ The launcher supports the managed native workflow, the universal JavaFX JAR, and
 - All five independently obfuscated tiers and three loader platforms were released. The exact `client/scripts/build-tiers.sh` replay passed in `/tmp/gamble-client-final-tiers.bzm4HK`, without changing canonical `/home/theac/Desktop/Built Jars`. All tier entry names and uncompressed contents match the release; four ZIP containers differ only in entry timestamps. Release tier and three loaders are byte-identical.
 - Site/backend: 199 tests and static build passed. Integrated release and remote byte/hash/provenance audits passed. Current Pages deployment: `https://85504fd0.gamble-client-b67.pages.dev`; canonical production: `https://gambleclient.org`.
 - See `docs/audit-2026-09-05.md` for scoped security findings, tests, published hashes and remaining hardening work.
+
+## Pending scoped release (2026-09-07 UTC)
+
+- `BB6258E0F5` exactly fingerprints the standalone loader's `IOException("Private data parent ACL allows replacement by another user.")`. This is a local folder-permission check, not a network failure.
+- A reproduced loader reporting bug can leave `cg-mod/loader-error.log` stale: writing that report uses the same rejected private-storage path, and the failure was silently ignored. The pending client-repository patch emits redacted diagnostics to the launcher console and includes them in Fabric's crash message when disk reporting fails. It preserves strict ownership/ACL checks.
+- Loader `1.4.25` is release-ready but publication is not yet confirmed. Tested client source `be106f652d4c50c12cb543702783b6c6b8ceddf2` also fixes a separate concurrent Administrators-to-current-user owner-snapshot race. Windows run `34055153680` passed 144 tests with zero failures/errors/skips; local 694 tests and exact five-tier/three-loader packaging passed. Client docs-only HEAD `69e4472c96de2ea7a737d7ab073b9fd35289076b` has no client-source diff from that tested source. The affected user supplied a `1.4.24` log; their actual folder ACL is still needed before claiming that their startup rejection is resolved.
+- Site/backend rate-limit mitigation `c6104813` is committed/pushed for the coordinated client-only promotion. Validated launcher sessions requesting managed enrollment receive a separate account-wide bucket of 12 requests per 15 minutes; browser/standalone sessions retain 6 per 15 minutes. Access/device validation and atomic account limits remain enforced. Focused 73 and full 208 backend tests passed. Retained production buckets did not establish saturation and no affected raw 429 trace was supplied, so this is a mitigation, not a proven diagnosis of the reported one-or-two-launch failures.
+- Release explicitly holds launcher `0.1.133` at artifact source `209aff4319e331dbbf3198347f4a70842589f027`. This follow-up changes launcher documentation only: no launcher source, version, or package bytes changed. The `knownLaunchMessage` blanket Microsoft attribution for generic 429 errors is a documented deferred UI fix; do not implement it or trigger a launcher rebuild during this scoped promotion.
+- Release chat owns remaining artifact/metadata synchronization, deployment and live verification. Do not overwrite immutable loader `1.4.24` or claim pending fixes are live before that verification.
 
 ## Current launch flow
 
