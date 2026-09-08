@@ -1,0 +1,57 @@
+name: Windows startup regression
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, codex/launcher-ui-security-pass-20260821]
+    paths:
+      - .github/workflows/windows-startup-regression.yml
+      - src/**
+      - src-tauri/**
+      - tests/**
+
+permissions:
+  contents: read
+
+jobs:
+  startup:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Delayed-exit UI regressions and frontend build
+        shell: pwsh
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed." }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw "UI regression tests failed." }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { throw "Frontend build failed." }
+      # The publishing Windows build also runs all these Rust tests before
+      # packaging/uploading. This quick workflow never uploads release objects.
+      - name: Real JVM lifecycle and native regression tests
+        shell: pwsh
+        working-directory: src-tauri
+        run: |
+          cargo test -- --nocapture 2>&1 | Tee-Object -FilePath windows-startup-tests.log
+          if ($LASTEXITCODE -ne 0) { throw "Native startup regression tests failed." }
+      - name: Preserve test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-startup-tests
+          path: src-tauri/windows-startup-tests.log
+          if-no-files-found: warn

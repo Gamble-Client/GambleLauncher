@@ -1864,13 +1864,17 @@ async function refreshMinecraftStatus(options = {}) {
         log(state.minecraftExit?.message || "Minecraft is no longer running.");
       }
     }
-    if (wasRunning && !state.minecraftRunning && options.showExitPopup && state.minecraftExit) {
+    const shortlyAfterLaunch = Number.isFinite(state.minecraftStartedAt)
+      && Date.now() - state.minecraftStartedAt < 120000;
+    if (wasRunning && !state.minecraftRunning && options.logExit !== false && state.minecraftExit
+      && (options.showExitPopup || shortlyAfterLaunch || state.minecraftExit.crashed)) {
       const exitMessage = state.minecraftExit.gpuFault
         ? knownLaunchMessage(state.minecraftExit.message)
         : state.minecraftExit.crashed
           ? `${knownLaunchMessage(state.minecraftExit.message)} Open Settings → Diagnostics for the latest launch log.`
-          : "Minecraft closed before its window appeared. Open Settings → Diagnostics for the latest launch log.";
-      showPopup("Minecraft stopped during startup", exitMessage, "launch");
+          : "Minecraft closed shortly after launch. Open Settings → Diagnostics for the latest launch log.";
+      showPopup(shortlyAfterLaunch || options.showExitPopup
+        ? "Minecraft stopped shortly after launch" : "Minecraft stopped unexpectedly", exitMessage, "launch");
     }
     const changed = wasRunning !== state.minecraftRunning
       || oldPid !== state.minecraftPid
@@ -2585,6 +2589,7 @@ app.addEventListener("click", async (event) => {
         state.minecraftPid = null;
       } else if (String(message).toLowerCase().includes("process started")) {
         state.minecraftRunning = true;
+        state.minecraftStartedAt = Date.now();
         state.minecraftPid = state.minecraftPid || null;
         state.minecraftExit = null;
       }

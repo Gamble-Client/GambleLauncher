@@ -1,5 +1,107 @@
 use super::*;
 
+// Run the real JVM through the same private @argfile boundary as Minecraft.
+// No account/network fixture and no production authorization bypass is involved.
+#[test]
+fn real_java_child_survives_startup_reports_exit_and_cleans_private_arguments() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    let root = folder();
+    let profile = root.path().join("Gamble Client café profile");
+    fs::create_dir(&profile).unwrap();
+    let source = profile.join("LaunchProbe.java");
+    fs::write(
+        &source,
+        r#"
+class LaunchProbe {
+  public static void main(String[] args) throws Exception {
+    if (!args[1].equals("space quote \" slash \\")) throw new AssertionError("argument corruption");
+    System.out.println("READY");
+    System.out.flush();
+    Thread.sleep(2000);
+    System.err.println("DIAGNOSTIC exit=" + args[0]);
+    System.exit(Integer.parseInt(args[0]));
+  }
+}
+"#,
+    )
+    .unwrap();
+    let java = std::env::var_os("JAVA_HOME")
+        .map(|home| {
+            PathBuf::from(home)
+                .join("bin")
+                .join(if cfg!(windows) { "java.exe" } else { "java" })
+        })
+        .unwrap_or_else(|| PathBuf::from("java"));
+    for code in [0, 73] {
+        let log = profile.join(format!("launch-{code}.log"));
+        let output = File::create(&log).unwrap();
+        let mut command = Command::new(&java);
+        command
+            .current_dir(&profile)
+            .stdout(Stdio::from(output.try_clone().unwrap()))
+            .stderr(Stdio::from(output));
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000); // production CREATE_NO_WINDOW
+        }
+        let mut child = PrivateChild::spawn(
+            command,
+            &[
+                source.to_str().unwrap().into(),
+                code.to_string(),
+                "space quote \" slash \\".into(),
+            ],
+            root.path(),
+        )
+        .expect("Java 21 is required for the launch lifecycle release gate");
+        let args = child.arguments.as_ref().unwrap().path().to_owned();
+        let record = args.with_extension("child");
+        assert!(args.exists() && record.exists());
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut ready_at = None;
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                args.exists(),
+                "a running JVM must retain its private arguments"
+            );
+            if ready_at.is_none() && fs::read_to_string(&log).unwrap().contains("READY") {
+                ready_at = Some(Instant::now());
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!(
+                    "JVM lifecycle deadline exceeded: {}",
+                    fs::read_to_string(&log).unwrap()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        };
+        let output = fs::read_to_string(&log).unwrap();
+        assert_eq!(status.code(), Some(code), "{output}");
+        assert!(
+            ready_at
+                .expect("must reach Java main, not merely spawn a PID")
+                .elapsed()
+                >= Duration::from_secs(1)
+        );
+        assert!(
+            output.contains(&format!("DIAGNOSTIC exit={code}")),
+            "{output}"
+        );
+        assert!(
+            !args.exists() && !record.exists(),
+            "exit must clean both private files"
+        );
+        assert_eq!(child.try_wait().unwrap().unwrap().code(), Some(code));
+    }
+}
+
 #[test]
 fn failed_spawn_exit_confirmation_is_bounded_and_accepts_only_confirmed_exit() {
     use std::time::{Duration, Instant};

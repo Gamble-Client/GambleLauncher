@@ -22,7 +22,7 @@ function harness(native) {
     canUseBuildForAccess, preferredBuildForAccess, launchState, tauriInvoke: native,
     logoUrl: "", navigator: {}, console
   });
-  vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn };`, context);
+  vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn, refreshMinecraftStatus };`, context);
   const { state } = context.apiForTest;
   Object.assign(state, { starting: false, token: "test-session", account: {
     email: "player@example.test", accessStatus: "owned", selectedPlan: "lifetime"
@@ -32,6 +32,38 @@ function harness(native) {
     click: () => handlers.get("click")({ target: { closest: (selector) => selector === "[data-action]" ? { dataset: { action: "launch" } } : null } })
   };
 }
+
+for (const code of [0, 1, -1073741819]) {
+  test(`routine polling exposes delayed startup exit ${code} exactly once`, async () => {
+    const ui = harness(async () => ({ running: false, exitCode: code,
+      crashed: code !== 0, message: `Minecraft exited with code ${code}.`,
+      logPath: "C:\\Users\\Test User\\launch.log" }));
+    Object.assign(ui.state, { minecraftRunning: true, minecraftStartedAt: Date.now() - 15000 });
+    await ui.refreshMinecraftStatus();
+    assert.ok(ui.state.popup, "a delayed exit must not silently return Play to idle");
+    assert.match(ui.state.popup.message, /Diagnostics/);
+    ui.state.popup = null;
+    await ui.refreshMinecraftStatus();
+    assert.equal(ui.state.popup, null, "do not reopen the dismissed error every poll");
+  });
+}
+
+test("a later crash is visible but a normal later exit or explicit Stop is not a startup failure", async () => {
+  let crashed = false;
+  const ui = harness(async () => ({ running: false, crashed,
+    exitCode: crashed ? 1 : 0, message: "Minecraft exited." }));
+  Object.assign(ui.state, { minecraftRunning: true, minecraftStartedAt: Date.now() - 600000 });
+  await ui.refreshMinecraftStatus();
+  assert.equal(ui.state.popup, null);
+  crashed = true;
+  ui.state.minecraftRunning = true;
+  await ui.refreshMinecraftStatus();
+  assert.ok(ui.state.popup);
+  ui.state.popup = null;
+  ui.state.minecraftRunning = false;
+  await ui.refreshMinecraftStatus();
+  assert.equal(ui.state.popup, null);
+});
 
 test("first-run Play reaches native automatic installation without an update detour", async () => {
   const calls = [];
