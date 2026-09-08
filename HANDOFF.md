@@ -1,6 +1,6 @@
 # Gamble Client Launcher — Launcher Handoff
 
-Last updated: 2026-09-07 UTC
+Last updated: 2026-09-08 UTC
 
 This chat owns both launcher and standalone loader. The loader source lives in `/home/theac/Desktop/GambleClient/client/standalone-loader`; the client chat owns payload features. Client behavior is in `/home/theac/Desktop/GambleClient/HANDOFF.md`; Site/API and publishing are in `/home/theac/Desktop/cg-mod-release/HANDOFF.md` and `/home/theac/Desktop/RELEASE_HANDOFF.md`.
 
@@ -9,11 +9,11 @@ This chat owns both launcher and standalone loader. The loader source lives in `
 - GitHub: [Gamble-Client/GambleLauncher](https://github.com/Gamble-Client/GambleLauncher)
 - Repository: `/home/theac/Desktop/gamble-client-launcher`
 - Current working branch: `codex/launcher-ui-security-pass-20260821`
-- Published artifact source: `209aff4319e331dbbf3198347f4a70842589f027`; later handoff-only commits do not change the package bytes.
-- Current public launcher: `0.1.133`; current standalone loader: `1.4.26`; current client build: `20260907210005` (`1.250`).
-- Current client payload source: `19b199e4431d90627b8f9313c48a2f117e9b85ad`; Site release-state: `3a6a358`; Site handoff: `53b6727`. This later client-only release preserves loader source `f5ce16348f47b63edd2f3a8be3be075fda13d24d` and the original launcher/loader artifact bytes. The localized-Windows section below records the earlier fix's own release evidence.
-- Source-matched publication runs: Windows `33946836353`, Linux DEB/RPM `33946838214`, and Flatpak `33946839381`. Prepublication runs: Windows `33945840421`, Linux `33945841278`, Flatpak `33945842206`, and six-fixture WebView/diagnostic matrix `33945842974`.
-- Final staged installer smoke: `33947183098`; final live public-installer smoke: `33947469178`.
+- Published artifact source: `39294cf0261e5dc56d047914af3c2bdddaed673f`; later workflow/test/handoff commits do not change the package bytes. Do not rebuild or overwrite the same version from later HEAD.
+- Current public launcher: `0.1.134`; current standalone loader: `1.4.26`; current client build: `20260907233226` (`1.250`).
+- Current client payload source: `4782952f1cfa3cba75fa70b2f55d63a7b4bcca5d`; Site launcher metadata/state commits: `14dd134` / `25c954c`. Loader source remains `f5ce16348f47b63edd2f3a8be3be075fda13d24d`. This launcher-only release changes neither payload nor loader; the generic metadata commit title incorrectly says client build.
+- Source-matched build runs: Windows `34176074656`, Linux DEB/RPM `34176075973`, Flatpak `34176059844`; diagnostic/six-account Windows WebView run `34176077251`. Flatpak branch-push run built but did not upload: release staged its exact CI artifact and manifest, without rebuilding.
+- Final candidate installer smoke: `34176463681`; stricter-gate live public-installer smoke: `34176985377`, both successful. Public Windows bytes independently match the candidate.
 - The universal JAR, Windows NSIS installer, DEB, RPM, and bundled-Java Flatpak are the current immutable artifacts. MSI remains intentionally unavailable.
 
 The launcher supports the managed native workflow, the universal JavaFX JAR, and the Swing fallback. The owner uses this standard Gamble Client launcher flow; old Prism directories are not current runtime evidence.
@@ -105,12 +105,14 @@ Useful live checks still worth repeating after launcher changes:
 - Fresh hosted Windows launcher run `34174715073` passed public install/reinstall/network/render and six-account diagnostic WebView matrix. Exact-source Windows loader run `34174824295` passed 153 checks (6 native,74 baseline,73 production), including genuinely renamed builtin Administrators. No authenticated Minecraft gameplay or fully translated Windows OS claim. Initial run `34174716524` correctly rejected a mismatched current payload source before testing; rerun used the existing exact-source loader branch.
 - Confirmed actionable UX defects: first Create-profile click after editing its name is swallowed by blur rerender (three fresh reproductions); generic backend429 guidance incorrectly blames Microsoft and suggests a minute even with longer retry metadata. Profile radio arrows/Escape dismissal need polish. Sponsor time remains a snapshot; Java downgrade selection differs from Tauri; syntactically valid corrupt profile IDs are not rejected by UI (native sanitizes them; no path escape found in reviewed path). No fixes applied under the testing request.
 
-## Launcher 0.1.134 candidate — 2026-09-08 UTC
+## Launcher 0.1.134 published — 2026-09-08 UTC
 
 - User authorized fixes and publication after the audit. Fixes: first-click profile creation, profile radio arrows/Home/End and Escape dismissal, invalid/duplicate saved profile IDs, service-neutral429 guidance preserving retry details, ticking sponsor displays and bounded Dashboard-return refresh in Tauri/Swing/JavaFX, and Java build downgrade selection after fresh authorization. Server checks remain authoritative; timers only update presentation.
 - New JavaFX reflection methods are explicitly preserved through ProGuard and checked in the hardened artifact. Loader1.4.26 and current client payload remain unchanged.
-- Local candidate verification:42 Node tests,42 Java tests, Vite build, hardened JAR90classes,96 browser screen combinations. Added reusable scripts/launcher-ux-regression.mjs; real Windows/native packaging gates pending before final promotion.
-- Release chat owns release-script corrections requested by this chat's audit; final source/manifest checks and live promotion must finish before this candidate is called published.
+- Candidate verification:42 Node tests,42 local Java tests, Vite build, hardened JAR90classes,57 Rust tests,96 browser screen combinations,9 browser interaction regressions and six browser account smoke fixtures. Windows passed39 Java tests with3 expected platform skips and57 Rust tests with1 ignored network test. Added reusable scripts/launcher-ux-regression.mjs. All native builds, candidate install/reinstall/network/render, diagnostic account matrix, and live Windows smoke passed.
+- Workflow-only follow-up:8842705/7026c98 require either nonblank client-area pixels or an actually successful installed-app DOM probe, explicitly propagate probe errors, and run9 negative/positive render-proof tests on Windows. Full Node suite is now51 passing. Real Microsoft login/gameplay and real ad-provider completion were not tested.
+- Native SHA-256: Windows `5e4024b9aaef5101dcc8c3adc0dd10a51a1b8717eb34c7dbc21455f242cc826f`; RPM `7c4c96add3f76f5e5e507078daae698557075b38b0ec759d7c3000afea4a9031`; DEB `1da2acea37d8807aedff9687c9aa9f015456791f514a58ada6a8d4e42e5f967f`; Flatpak `ec46341d18da4aff9e14440ffaed92f5dec5dbc98a2522df3adf3e5df8600640`. Every downloaded CI artifact matched its source/version/size/hash manifest. Universal JAR hash: `00e98c0bbf7a642b7e70c22dc2ce26cdbc955c738e109beda7a3d53852a85f8e`.
+- Release chat owns release-script corrections identified by this chat's audit. See RELEASE_HANDOFF.md for final workflow patch and remote audit details. CI/install/render receipts are in /tmp/launcher-134-release.yXSWnU.
 
 ## Verification commands
 
