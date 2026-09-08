@@ -146,6 +146,7 @@ jobs:
               throw "The launcher did not create a main window within 45 seconds."
             }
 
+            $domHealthy = $false
             $devtoolsDeadline = [DateTime]::UtcNow.AddSeconds(30)
             do {
               try {
@@ -199,6 +200,8 @@ jobs:
               $probePath = Join-Path $env:RUNNER_TEMP "probe-installed-launcher.mjs"
               $probe | Set-Content $probePath -Encoding utf8NoBOM
               node $probePath $target.webSocketDebuggerUrl
+              if ($LASTEXITCODE -ne 0) { throw "The installed launcher's DOM probe failed." }
+              $domHealthy = $true
             }
 
             $webviewDeadline = [DateTime]::UtcNow.AddSeconds(30)
@@ -275,9 +278,16 @@ jobs:
             if (-not $webviews) {
               throw "The launcher window opened without a WebView2 process."
             }
-            if ($mean -gt 240 -or $variance -lt 40 -or $range -lt 60 -or $buckets.Count -lt 12) {
-              Write-Warning "Desktop capture could not composite WebView2; the embedded DOM probe passed."
-            }
+            @{
+              webviewPresent = [bool]$webviews
+              domHealthy = $domHealthy
+              mean = $mean
+              variance = $variance
+              range = $range
+              colorBuckets = $buckets.Count
+              samples = $samples
+            } | ConvertTo-Json -Compress | node scripts/windows-render-proof.mjs
+            if ($LASTEXITCODE -ne 0) { throw "The installed launcher's render proof failed." }
           } finally {
             if (-not $launcher.HasExited) {
               Stop-Process -Id $launcher.Id -Force
