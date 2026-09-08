@@ -142,6 +142,9 @@ public class FxMain extends Application {
         stage.setMinHeight(720);
         stage.setScene(scene);
         stage.show();
+        stage.focusedProperty().addListener((observable, before, focused) -> {
+            if (focused) runSwing(() -> call("refreshSponsorOnReturn"));
+        });
 
         syncControlSelectionsFromBackend();
         syncToBackend();
@@ -1097,7 +1100,7 @@ public class FxMain extends Application {
         boolean required = objectFieldBoolean(ads, "required");
         boolean canWatch = objectFieldBoolean(ads, "canWatch");
         boolean active = objectFieldBoolean(ads, "active");
-        long remaining = objectFieldLong(ads, "remainingSeconds");
+        long remaining = Long.parseLong(backendString("adRemainingSeconds"));
         String message = objectFieldString(ads, "message");
         sidebarAd.setManaged(required);
         sidebarAd.setVisible(required);

@@ -50,6 +50,11 @@ final class LauncherAccessPolicy {
         };
     }
 
+    static String refreshedBuild(Account account, String selected) {
+        String next = canUseBuild(account, selected) ? normalize(selected) : preferredBuild(account);
+        return canUseBuild(account, next) ? next : "";
+    }
+
     static boolean hasOwnerAccess(Account account) {
         return account != null && !isBlocked(account.accessStatus()) && (account.ownerAccess()
             || "owner".equals(account.accessStatus())

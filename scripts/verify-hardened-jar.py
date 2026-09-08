@@ -39,6 +39,10 @@ with zipfile.ZipFile(archive_path) as archive:
         raise SystemExit(f"FAIL: launcher debug metadata leaked: {leaked}")
 
     application_bytes = b"".join(archive.read(name) for name in app_entries)
+    backend_classes = [archive.read(name) for name in app_entries
+                       if b"createRoot" in archive.read(name) and b"launcherUser" in archive.read(name)]
+    if not any(b"refreshSponsorOnReturn" in data and b"adRemainingSeconds" in data for data in backend_classes):
+        raise SystemExit("FAIL: JavaFX sponsor reflection bridge was not preserved")
     forbidden_markers = (
         b"license.txt",
         b"paste-your-license-key-here",

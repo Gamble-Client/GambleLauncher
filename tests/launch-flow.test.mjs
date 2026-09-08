@@ -22,7 +22,7 @@ function harness(native) {
     canUseBuildForAccess, preferredBuildForAccess, launchState, tauriInvoke: native,
     logoUrl: "", navigator: {}, console
   });
-  vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles };`, context);
+  vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn };`, context);
   const { state } = context.apiForTest;
   Object.assign(state, { starting: false, token: "test-session", account: {
     email: "player@example.test", accessStatus: "owned", selectedPlan: "lifetime"
@@ -46,6 +46,71 @@ test("first-run Play reaches native automatic installation without an update det
   assert.equal(calls.filter((x) => x === "launch_game").length, 1);
   assert.equal(ui.state.popup, null);
   assert.equal(ui.state.busy, false);
+});
+
+test("rate-limit recovery preserves the source and retry interval", () => {
+  const ui = harness(() => {});
+  const message = ui.knownLaunchMessage("HTTP 429: Gamble launcher limit. Retry after 600 seconds.");
+  assert.match(message, /Gamble launcher limit/);
+  assert.match(message, /600 seconds/);
+  assert.doesNotMatch(message, /Microsoft|Wait a minute/);
+});
+
+test("stored profiles reject aliases, traversal, duplicate ids and invalid labels", () => {
+  const ui = harness(() => {});
+  const rows = ui.normalizeStoredProfiles([null, {}, { id: "../../outside", label: "bad" },
+    { id: "fabric", label: "reserved" }, { id: "custom-test", label: "Équipe 日本" },
+    { id: "custom-test", label: "duplicate" }, { id: "upperCase", label: "alias" }, { id: "empty", label: " " }]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, "custom-test");
+});
+
+test("sponsor display counts elapsed time without changing server authorization", () => {
+  const ui = harness(() => {});
+  ui.applyAccount({ user: ui.state.account, ads: { required: true, active: true, remainingSeconds: 30 } });
+  ui.state.adsObservedAt -= 10_000;
+  assert.ok(ui.sponsorRemainingSeconds() <= 20);
+  ui.state.adsObservedAt -= 30_000;
+  assert.equal(ui.sponsorRemainingSeconds(), 0);
+  assert.equal(ui.state.ads.active, true, "display timer cannot grant or revoke server authorization");
+});
+
+test("Dashboard return coalesces focus events and rejects stale-session responses", async () => {
+  let release;
+  const barrier = new Promise(resolve => { release = resolve; });
+  let requests = 0;
+  const ui = harness(async command => {
+    assert.equal(command, "launcher_api");
+    requests++;
+    await barrier;
+    return { user: { email: "old@example.test" }, ads: { required: true, active: true } };
+  });
+  ui.state.ads = { required: true, active: false };
+  const first = ui.refreshSponsorOnReturn();
+  await ui.refreshSponsorOnReturn();
+  ui.state.token = "different-session";
+  release();
+  await first;
+  assert.equal(requests, 1);
+  assert.equal(ui.state.ads.active, false);
+  assert.notEqual(ui.state.account.email, "old@example.test");
+});
+
+for (const active of [true, false]) test(`fresh sponsor access ${active} overrides stale cached credit`, async () => {
+  const calls = [];
+  const free = { email: "free@example.test", accessStatus: "ad_tier", selectedPlan: "ad_tier", adTierAccess: true };
+  const ui = harness(async (command) => {
+    calls.push(command);
+    if (command === "launcher_api") return { user: free, ads: { required: true, active } };
+    if (command === "minecraft_status") return { running: calls.includes("launch_game") };
+    if (command === "launch_game") return "Minecraft process started.";
+    if (command === "open_url") return "";
+    throw new Error(command);
+  });
+  Object.assign(ui.state, { account: free, selectedBuild: "ad_tier", ads: { required: true, active: !active } });
+  await ui.click();
+  assert.equal(calls.includes("launch_game"), active);
+  assert.equal(calls.includes("open_url"), !active);
 });
 
 test("plain profiles never request Gamble access or a sponsor", async () => {

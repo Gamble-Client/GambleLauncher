@@ -21,7 +21,7 @@ const LAUNCHER_DISPLAY_NAME_KEY = "gamble.launcher.displayName";
 const CLIENT_DISPLAY_NAME_KEY = "gamble.client.displayName";
 const GRAPHICS_MODE_KEY = "gamble.launcher.graphicsMode";
 const GPU_SELECTOR_KEY = "gamble.launcher.gpuSelector";
-const LAUNCHER_VERSION = "0.1.133";
+const LAUNCHER_VERSION = "0.1.134";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 // Browser mocks are a development-only visual harness. A source-built CI
@@ -61,6 +61,7 @@ const state = {
   microsoft: null,
   microsoftAccounts: [],
   ads: null,
+  adsObservedAt: 0,
   social: null,
   friendUsername: "",
   selectedProfile: "gamble-client",
@@ -140,7 +141,14 @@ function writeStorage(key, value) {
 
 function normalizeStoredProfiles(value) {
   if (!Array.isArray(value)) return [];
-  return value.filter((profile) => profile && profile.id && profile.label).map((profile) => ({
+  const seen = new Set(profiles.map((profile) => profile.id));
+  return value.filter((profile) => {
+    if (!profile || typeof profile.id !== "string" || typeof profile.label !== "string"
+      || !profile.label.trim() || !/^[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?$/.test(profile.id)
+      || seen.has(profile.id)) return false;
+    seen.add(profile.id);
+    return true;
+  }).map((profile) => ({
     ...profile,
     loader: ["fabric", "vanilla"].includes(profile.loader) ? profile.loader : (profile.fabric === false ? "vanilla" : "fabric"),
     client: Boolean(profile.client),
@@ -574,6 +582,36 @@ function render() {
 }
 
 app.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    if (state.popup) state.popup = null;
+    else if (state.profileCreateOpen) {
+      state.profileCreateOpen = false;
+      render();
+      app.querySelector('[data-action="toggle-profile-create"]')?.focus();
+      event.preventDefault();
+      return;
+    } else return;
+    event.preventDefault();
+    render();
+    return;
+  }
+  const radio = event.target.closest('[role="radio"]');
+  if (radio && ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"].includes(event.key)) {
+    const group = radio.closest('[role="radiogroup"]');
+    const options = [...(group?.querySelectorAll('[role="radio"]:not(:disabled)') || [])];
+    if (!options.length || state.busy) return;
+    event.preventDefault();
+    const offset = ["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 1;
+    const index = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1
+      : (options.indexOf(radio) + offset + options.length) % options.length;
+    const target = options[index];
+    const action = target.dataset.action;
+    const valueKey = target.dataset.build ? "build" : "profile-type";
+    const value = target.getAttribute(`data-${valueKey}`);
+    target.click();
+    requestAnimationFrame(() => app.querySelector(`[data-action="${action}"][data-${valueKey}="${cssEscape(value)}"]`)?.focus());
+    return;
+  }
   const dialog = app.querySelector('[aria-modal="true"]');
   if (!dialog || event.key !== "Tab") return;
   const controls = [...dialog.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]')];
@@ -699,7 +737,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
     <section class="quick-grid main-quick-grid play-shortcuts">
       <article class="action-tile">
         <span>Dashboard access</span>
-        <strong>${escapeHtml(sponsorTitle())}</strong>
+        <strong data-sponsor-time>${escapeHtml(sponsorTitle())}</strong>
         <button type="button" data-action="open-dashboard" ${state.busy ? "disabled" : ""}>Open Dashboard</button>
       </article>
       <article class="action-tile">
@@ -1515,8 +1553,36 @@ function sponsorTitle() {
   if (!state.account) return "Sign in";
   if (!state.ads) return "Checking";
   if (!state.ads.required) return "Ads off";
-  if (state.ads.remainingSeconds > 0) return `${formatDuration(state.ads.remainingSeconds)} left`;
+  const remaining = sponsorRemainingSeconds();
+  if (remaining > 0) return `${formatDuration(remaining)} left`;
   return state.ads.canWatch ? "Sponsor required" : "Check Dashboard";
+}
+
+function sponsorClock() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+function sponsorRemainingSeconds() {
+  const elapsed = Math.max(0, sponsorClock() - state.adsObservedAt) / 1000;
+  return Math.max(0, Math.ceil(Number(state.ads?.remainingSeconds || 0) - elapsed));
+}
+
+let sponsorRefreshPending = false;
+let lastSponsorRefresh = -Infinity;
+async function refreshSponsorOnReturn() {
+  if (!state.token || !state.ads?.required || state.busy || state.starting || sponsorRefreshPending
+    || sponsorClock() - lastSponsorRefresh < 15000) return;
+  const token = state.token;
+  sponsorRefreshPending = true;
+  lastSponsorRefresh = sponsorClock();
+  try {
+    const body = await api("/api/launcher/account");
+    if (state.token !== token || state.busy) return;
+    applyAccount(body);
+    render();
+  } catch (error) {
+    log(`Could not refresh Dashboard access: ${publicMessage(error)}. Play will check again.`);
+  } finally { sponsorRefreshPending = false; }
 }
 
 function clientStatusLabel() {
@@ -1609,10 +1675,10 @@ function knownLaunchMessage(error) {
   if (lower.includes("amdgpu") || lower.includes("gpuvm") || lower.includes("gpu reset") || lower.includes("context is lost")) {
     return "The graphics driver reported a GPU reset while starting Minecraft. Open Settings → Graphics safety and try Safe graphics; use Software fallback only if Safe graphics still crashes. The launcher will keep its UI alive and will not auto-restart the game.";
   }
-  if (lower.includes("update") || lower.includes("outdated")) return "Update the client or launcher, then launch again.";
   if (lower.includes("429") || lower.includes("rate limit") || lower.includes("too many requests")) {
-    return "Microsoft or Minecraft auth is temporarily rate limited. Wait a minute, then launch again; the launcher will reuse cached Minecraft tokens after a successful sign-in.";
+    return `A service temporarily limited launch requests. Follow its retry time below before trying again; repeated clicks can extend the wait.\n\n${text}`;
   }
+  if (lower.includes("update") || lower.includes("outdated")) return "Update the client or launcher, then launch again.";
   if (lower.includes("microsoft") || lower.includes("account") || lower.includes("auth")) return "Link or refresh your Microsoft account, then launch again.";
   if (lower.includes("resources.download.minecraft.net") || lower.includes("minecraft asset") || lower.includes("mojang")) {
     return "Minecraft asset download failed from Mojang's CDN. Check VPN/proxy/DNS on this computer, then try Launch again.";
@@ -1655,6 +1721,13 @@ async function boot() {
   await refreshSocial();
   await refreshMinecraftStatus({ render: false });
   setInterval(() => refreshMinecraftStatus({ render: true }), 3500);
+  setInterval(() => {
+    for (const label of app.querySelectorAll('[data-sponsor-time]')) label.textContent = sponsorTitle();
+  }, 1000);
+  window.addEventListener("focus", refreshSponsorOnReturn);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshSponsorOnReturn();
+  });
   state.starting = false;
   state.status = "Ready";
   render();
@@ -1714,6 +1787,7 @@ async function refreshAccount() {
 function applyAccount(body) {
   state.account = body.user || null;
   state.ads = body.ads || body.adReward || null;
+  state.adsObservedAt = sponsorClock();
   const preferred = preferredBuildForAccount(state.account);
   if (!state.selectedBuild || !canUseBuild(state.selectedBuild, state.account) || (!state.selectedBuildExplicit && state.selectedBuild !== preferred)) {
     state.selectedBuild = preferred;
@@ -2691,6 +2765,7 @@ app.addEventListener("click", async (event) => {
   } else if (action === "create-profile") {
     if (!createProfile()) return;
     state.profileCreateOpen = false;
+    render();
     await refreshFiles();
     await refreshProfileLoaderStatus();
     await refreshAntiScreenshareStatus();
@@ -2802,6 +2877,9 @@ app.addEventListener("change", async (event) => {
     return;
   }
   state[field] = event.target.value;
+  // Input already updated this draft. Replacing the clicked Create/Send
+  // button during blur cancels the user's first pointer click.
+  if (field === "newProfileName" || field === "friendUsername") return;
   if (field === "username") writeStorage("gamble.launcher.username", state.username);
   if (field === "javaArgs") writeStorage("gamble.launcher.javaArgs", state.javaArgs);
   if (field === "memory") writeStorage("gamble.launcher.memory", state.memory);

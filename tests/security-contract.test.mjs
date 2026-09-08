@@ -242,7 +242,8 @@ test("Java sponsor eligibility is checked after refreshing account access and on
     const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
     const launch = java.slice(java.indexOf("private void launch()"), java.indexOf("private LauncherAccount refreshLauncherAccountBlocking"));
     assert.match(launch, /if \(launchProfile\.includesGambleClient\) \{\s*LauncherAccount account = refreshLauncherAccountBlocking\(\);/);
-    assert.ok(launch.indexOf("refreshLauncherAccountBlocking()") < launch.indexOf("!sponsoredAccessActiveFor(build)"));
+    assert.ok(launch.indexOf("refreshLauncherAccountBlocking()") < launch.indexOf("!sponsoredAccessActiveFor(launchBuild)"));
+    assert.match(launch, /LauncherAccessPolicy\.refreshedBuild/);
     assert.match(launch, /SponsorRequiredException[\s\S]*openDashboardForAds\(\)/);
 });
 

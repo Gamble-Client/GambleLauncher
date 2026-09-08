@@ -11,6 +11,18 @@ final class LauncherAccessPolicyTest {
     private static final Set<String> BUILDS = Set.of("ad_tier", "release", "beta_plus", "media", "dev");
 
     @Test
+    void refreshedSelectionDowngradesAndRejectsBlockedAccounts() {
+        var free = account("free@example.test", "ad_tier", "ad_tier", false, false, false, false, false, true);
+        assertEquals("ad_tier", LauncherAccessPolicy.refreshedBuild(free, "media"));
+        var paid = account("paid@example.test", "lifetime", "owned", false, false, false, false, false, false);
+        assertEquals("release", LauncherAccessPolicy.refreshedBuild(paid, "ad_tier"));
+        assertEquals("release", LauncherAccessPolicy.refreshedBuild(paid, "release"));
+        var blocked = account("blocked@example.test", "owner", "banned", true, true, false, true, true, true);
+        assertEquals("", LauncherAccessPolicy.refreshedBuild(blocked, "dev"));
+        assertEquals("", LauncherAccessPolicy.refreshedBuild(null, "release"));
+    }
+
+    @Test
     void representativeAccountsReceiveOnlyTheirServerAuthorizedBuilds() {
         assertAccess(account("free.river@example.test", "ad_tier", "ad_tier", false, false, false, false, false, true),
             "ad_tier", Set.of("ad_tier"));

@@ -137,7 +137,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.133";
+    private static final String LAUNCHER_VERSION = "0.1.134";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -324,6 +324,8 @@ public class Main {
     private final Deque<String> recentLaunchLines = new ArrayDeque<>();
     private LauncherUser launcherUser;
     private LauncherAds launcherAds;
+    private boolean sponsorRefreshPending;
+    private long lastSponsorRefreshNanos;
     private SwingWorker<LauncherSession, Void> launcherSignInWorker;
     private SwingWorker<MicrosoftAccount, Void> microsoftSignInWorker;
     private volatile Runnable microsoftSignInCancel;
@@ -357,6 +359,12 @@ public class Main {
         frame.pack();
         frame.setLocationRelativeTo(null);
         frame.setVisible(true);
+        frame.addWindowFocusListener(new java.awt.event.WindowAdapter() {
+            @Override public void windowGainedFocus(java.awt.event.WindowEvent event) { refreshSponsorOnReturn(); }
+        });
+        new javax.swing.Timer(1000, event -> {
+            if (launcherAds != null && launcherAds.required) updateAdUi();
+        }).start();
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
@@ -3104,11 +3112,12 @@ public class Main {
 
     private void refreshLauncherAccount() {
         if (launcherToken == null || launcherToken.trim().isEmpty()) return;
+        final String requestedToken = launcherToken;
 
         new SwingWorker<LauncherAccount, Void>() {
             @Override
             protected LauncherAccount doInBackground() throws Exception {
-                ApiResponse response = apiRequest("GET", "/api/launcher/account", "", launcherToken, 200);
+                ApiResponse response = apiRequest("GET", "/api/launcher/account", "", requestedToken, 200);
                 return parseLauncherAccount(response.body);
             }
 
@@ -3116,6 +3125,7 @@ public class Main {
             protected void done() {
                 try {
                     LauncherAccount account = get();
+                    if (!requestedToken.equals(launcherToken) || !buildBox.isEnabled()) return;
                     launcherUser = account.user;
                     launcherAds = account.ads;
                     selectBestBuildForUser(account.user);
@@ -3123,9 +3133,26 @@ public class Main {
                     updateAdUi();
                 } catch (Exception e) {
                     log("Account refresh failed: " + rootMessage(e));
+                } finally {
+                    sponsorRefreshPending = false;
                 }
             }
         }.execute();
+    }
+
+    private void refreshSponsorOnReturn() {
+        long now = System.nanoTime();
+        if (launcherAds == null || !launcherAds.required || launcherToken == null || launcherToken.isBlank()
+            || !buildBox.isEnabled() || sponsorRefreshPending
+            || (lastSponsorRefreshNanos != 0 && now - lastSponsorRefreshNanos < TimeUnit.SECONDS.toNanos(15))) return;
+        sponsorRefreshPending = true;
+        lastSponsorRefreshNanos = now;
+        refreshLauncherAccount();
+    }
+
+    private long adRemainingSeconds() {
+        return launcherAds == null ? 0 : Math.max(0, launcherAds.remainingSeconds
+            - TimeUnit.NANOSECONDS.toSeconds(Math.max(0, System.nanoTime() - launcherAds.observedNanos)));
     }
 
     private void openDashboardForAds() {
@@ -3207,8 +3234,9 @@ public class Main {
 
         adTitle.setText("Dashboard Sponsor");
         adStatus.setText(launcherAds.message.isEmpty() ? "Sponsored access available." : compactText(launcherAds.message, 34));
-        adMeta.setText(launcherAds.remainingSeconds > 0
-            ? "Remaining: " + compactDuration(launcherAds.remainingSeconds)
+        long remaining = adRemainingSeconds();
+        adMeta.setText(remaining > 0
+            ? "Remaining: " + compactDuration(remaining)
             : "Watch 30 seconds in Dashboard, then return.");
         adButton.setText(launcherAds.canWatch ? "Open Dashboard" : "Capped");
         adButton.setEnabled(launcherAds.canWatch);
@@ -3501,14 +3529,17 @@ public class Main {
         new SwingWorker<Process, Void>() {
             @Override
             protected Process doInBackground() throws Exception {
+                Build launchBuild = build;
                 if (launchProfile.includesGambleClient) {
                     LauncherAccount account = refreshLauncherAccountBlocking();
-                    if (!canUseBuild(account.user, build.id)) {
+                    launchBuild = findBuild(LauncherAccessPolicy.refreshedBuild(accessPolicyAccount(account.user), build.id));
+                    if (launchBuild == null) {
                         throw new IOException("This account no longer has access to " + build.label + ".");
                     }
+                    if (!launchBuild.id.equals(build.id)) selectBestBuildForUser(account.user);
                     // Refresh first: the user may just have completed the sponsor
                     // check in the Dashboard while this launcher was open.
-                    if (!sponsoredAccessActiveFor(build)) throw new SponsorRequiredException();
+                    if (!sponsoredAccessActiveFor(launchBuild)) throw new SponsorRequiredException();
                 }
                 if (launchProfile.includesGambleClient) {
                     // The standalone loader owns authorization, update selection, and
@@ -3523,7 +3554,7 @@ public class Main {
                 }
                 LaunchIdentity identity = resolveLaunchIdentity(name);
                 return launchMinecraftProcess(launchProfile, identity, memory, extraJavaArgs,
-                    launchProfile.includesGambleClient ? canonicalBuildId(build.id) : "",
+                    launchProfile.includesGambleClient ? canonicalBuildId(launchBuild.id) : "",
                     selectedGraphicsMode, selectedGpuSelector);
             }
 
@@ -7035,6 +7066,7 @@ public class Main {
         final String message;
         final int adSeconds;
         final long remainingSeconds;
+        final long observedNanos = System.nanoTime();
 
         LauncherAds(boolean required, boolean paid, boolean canWatch, boolean active, String tier, String message, int adSeconds, long remainingSeconds) {
             this.required = required;

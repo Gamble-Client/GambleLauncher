@@ -55,6 +55,8 @@
     private boolean readSlotWinSoundsEnabled();
     private void installSelectedBuild(boolean);
     private void launch();
+    private void refreshSponsorOnReturn();
+    private long adRemainingSeconds();
     private void copyLauncherLog();
     private void saveAutoCheckUpdates(boolean);
     private void saveSlotSoundsEnabled(boolean);

@@ -98,6 +98,20 @@ Useful live checks still worth repeating after launcher changes:
 4. AMD automatic/safe/DRI_PRIME modes while confirming the launcher remains accelerated and the game child does not inherit WebKit software-rendering flags.
 5. Two real Microsoft accounts with global default/profile override independence.
 
+## UI/UX audit — 2026-09-08 UTC
+
+- Testing-only pass; no launcher/loader runtime edits or publication. Full report and reproducible extra harnesses: `/home/theac/Documents/Codex/2026-08-26/i-usually-will-have-one-chat-2/outputs/launcher-ux-audit/REPORT.md`; screenshots/receipts: `/tmp/launcher-ux-audit.vYdunn`.
+- Fresh verification: 36 JS, 41 Java, 57 Rust +1 live Mojang downloader, 68+67 loader tests, Vite build; six browser smoke fixtures; 96 view/account/size screens with no automated WCAG A/AA findings or horizontal overflow; 360 navigation changes +45 mock launch/stop cycles over five browser locales/three DPRs. Additional handler assertions include deliberate reproductions of known UX limitations, not fixes.
+- Fresh hosted Windows launcher run `34174715073` passed public install/reinstall/network/render and six-account diagnostic WebView matrix. Exact-source Windows loader run `34174824295` passed 153 checks (6 native,74 baseline,73 production), including genuinely renamed builtin Administrators. No authenticated Minecraft gameplay or fully translated Windows OS claim. Initial run `34174716524` correctly rejected a mismatched current payload source before testing; rerun used the existing exact-source loader branch.
+- Confirmed actionable UX defects: first Create-profile click after editing its name is swallowed by blur rerender (three fresh reproductions); generic backend429 guidance incorrectly blames Microsoft and suggests a minute even with longer retry metadata. Profile radio arrows/Escape dismissal need polish. Sponsor time remains a snapshot; Java downgrade selection differs from Tauri; syntactically valid corrupt profile IDs are not rejected by UI (native sanitizes them; no path escape found in reviewed path). No fixes applied under the testing request.
+
+## Launcher 0.1.134 candidate — 2026-09-08 UTC
+
+- User authorized fixes and publication after the audit. Fixes: first-click profile creation, profile radio arrows/Home/End and Escape dismissal, invalid/duplicate saved profile IDs, service-neutral429 guidance preserving retry details, ticking sponsor displays and bounded Dashboard-return refresh in Tauri/Swing/JavaFX, and Java build downgrade selection after fresh authorization. Server checks remain authoritative; timers only update presentation.
+- New JavaFX reflection methods are explicitly preserved through ProGuard and checked in the hardened artifact. Loader1.4.26 and current client payload remain unchanged.
+- Local candidate verification:42 Node tests,42 Java tests, Vite build, hardened JAR90classes,96 browser screen combinations. Added reusable scripts/launcher-ux-regression.mjs; real Windows/native packaging gates pending before final promotion.
+- Release chat owns release-script corrections requested by this chat's audit; final source/manifest checks and live promotion must finish before this candidate is called published.
+
 ## Verification commands
 
 ```bash
