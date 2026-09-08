@@ -39,6 +39,15 @@ The launcher supports the managed native workflow, the universal JavaFX JAR, and
 - Launcher stays at `0.1.133`, artifact source `209aff4319e331dbbf3198347f4a70842589f027`. No launcher code/package changes. Generic 429-to-Microsoft wording remains deferred.
 - Earlier loader 1.4.25 added sanitized console/Fabric diagnostics when private disk logging fails and corrected the concurrent owner snapshot race. Site rate-limit mitigation `c6104813` is live: validated managed launcher preparation uses 12/15 minutes per account; browser/standalone retain 6/15 minutes. The reported one-or-two-launch 429 cause remains unproven without an affected raw trace.
 
+## Unreleased Windows startup regression work — 2026-09-08
+
+- Public artifacts remain0.1.134/source39294cf; commits722555f/28285ba are NOT published. A new unique launcher version and normal release validation are required before packaging these runtime changes for users.
+- User reports Windows “launches then stops,” without logs or certainty whether Minecraft or the launcher closes. Underlying user failure remains unproven. Do not call this a Minecraft crash fix.
+- Confirmed separate bug: only the immediate post-launch status poll requested an exit popup. Routine polling silently returned to idle for delayed exits. Four red-before/green-after handler regressions now cover delayed clean/nonzero/Windows-style exits, later crashes, normal closure, intentional Stop and popup deduplication. The UI now reports these delayed failures with Diagnostics guidance.
+- Added a realJava21 lifecycle test through production PrivateChild/private-argument handling: profile path with spaces/accent, escaped arguments, actual Java main/readiness, sustained process, stdout/stderr capture, exit0/73 and private-file cleanup. This is not a real Minecraft/authenticated gameplay test.
+- Nonpublishing Windows workflow34186300637 correctly failed on a CRLF-sensitive test harness. Fixed normalization and found Windows packaging could mask npmtest failure behind subsequent successful npmbuild; explicit exit-code guards plus regression assertion now block that. These are test/gate corrections, not a user-crash root cause.
+- Local 56 Node tests, 42 Java tests, 58 native tests (1 ignored network test), frontend build and diff checks pass. Windows rerun [34186467758](https://github.com/Gamble-Client/GambleLauncher/actions/runs/34186467758) passed all 56 Node and 58 native tests (1 ignored network test) at exact source `28285ba7202ff298f022a7f16bf1bdb64480126d`, including the real-JVM lifecycle test. No public artifacts changed. Release task acknowledges publication hold; underlying user failure remains unconfirmed.
+
 ## Current launch flow
 
 - A Gamble Client profile installs the authenticated standalone loader into the selected profile’s `mods` folder and removes only proven old `cg-mod` artifacts. Fabric API remains required for plain Fabric/Client profiles; the Gamble loader is required only for Gamble Client profiles.
