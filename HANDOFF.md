@@ -9,7 +9,7 @@ Updated 2026-09-08 UTC. This chat owns the launcher **and standalone loader**. T
 - Public launcher: **0.1.135**, immutable artifact source `9cde361e88d0d23890f77c79d4b5632de3a8c8ca`. Later documentation commits are not package sources. Do not rebuild or overwrite this version from a later HEAD.
 - Unchanged client payload: `20260907233226` / version `1.250`, source `4782952f1cfa3cba75fa70b2f55d63a7b4bcca5d`.
 - Unchanged standalone loader: `1.4.26`, source `f5ce16348f47b63edd2f3a8be3be075fda13d24d`. Source directory: /home/theac/Desktop/GambleClient/client/standalone-loader.
-- Launcher-only Site metadata/state commits: `c7f6c56` / `c0a2f63`. Canonical production: https://gambleclient.org.
+- Launcher-only Site metadata/state commits: `c7f6c56` / `c0a2f63`. Canonical production: https://gambleclient.org; Pages deployment: https://96744311.gamble-client-b67.pages.dev.
 - Current artifacts: Windows NSIS installer, RPM, DEB, bundled-Java Flatpak and universal JavaFX JAR. MSI is intentionally unavailable.
 - Public Windows and JAR downloads were independently compared byte-for-byte with the tested/staged artifacts. Final JAR was checked after the release workflow's macOS native merge, including a hardened verification of the downloaded public bytes.
 
@@ -89,6 +89,8 @@ Earlier audit/release evidence: docs/audit-2026-09-05.md and workspace outputs/l
 ## Release ownership and verification
 
 Release chat owns publication/scripts. Runnable /home/theac/Desktop/release-gamble-client.sh and tracked Site copy must stay byte-identical. Native metadata requires exact source/version/hash/size manifests. Preserve unrelated changes; never rebuild/overwrite an already-published version. R2 read-before-put is not atomic across hosts.
+
+Site commit `d464b05` is pushed: permanent final-JAR verification after macOS merge and before staging, with order regression. Independently reran release fixtures, negative ordering probes, script-copy/syntax/diff checks, all238 Site tests, local release audit and Pages build successfully. Release reports remote R2 byte/hash/provenance audit passed.
 
 Required launcher checks: npm run build; ./gradlew test; npm test; cargo test --manifest-path src-tauri/Cargo.toml; git diff --check. Use the existing .tauri-sysroot pkg-config configuration on this host. Real Java startup regression requires Java21 rather than silently skipping. For JAR release, perform macOS merge then standalone scripts/verify-hardened-jar.py.
 
