@@ -8,6 +8,7 @@ import { launchState } from "../src/launch-state.js";
 // Execute the actual event handler with a fake native boundary. Browser layout
 // is covered by the separate UI smoke; no test hook ships in the app.
 const source = (await readFile(new URL("../src/main.js", import.meta.url), "utf8"))
+  .replaceAll("\r\n", "\n")
   .replace(/^import .*;\n/gm, "")
   .replaceAll("import.meta.env.VITE_LAUNCHER_TEST_FIXTURES", "undefined")
   .replaceAll("import.meta.env.DEV", "false")

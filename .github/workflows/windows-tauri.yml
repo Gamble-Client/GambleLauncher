@@ -71,9 +71,12 @@ jobs:
         run: npm ci
 
       - name: Build frontend test assets
+        shell: pwsh
         run: |
           npm test
+          if ($LASTEXITCODE -ne 0) { throw "Frontend regression tests failed; release build blocked." }
           npm run build
+          if ($LASTEXITCODE -ne 0) { throw "Frontend build failed; release build blocked." }
 
       - name: Test native launcher on Windows
         working-directory: src-tauri

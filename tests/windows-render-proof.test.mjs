@@ -8,6 +8,12 @@ import { verifyRenderProof } from "../scripts/windows-render-proof.mjs";
 const healthy = { webviewPresent: true, domHealthy: false,
   mean: 55, variance: 120, range: 180, colorBuckets: 32, samples: 1000 };
 
+test("Windows packaging cannot hide failed frontend tests behind a successful build", () => {
+  const workflow = readFileSync(new URL("../.github/workflows/windows-tauri.yml", import.meta.url), "utf8");
+  assert.match(workflow, /npm test\s+if \(\$LASTEXITCODE -ne 0\) \{ throw/);
+  assert.match(workflow, /npm run build\s+if \(\$LASTEXITCODE -ne 0\) \{ throw/);
+});
+
 test("production pixels are sufficient with DevTools disabled", () => {
   assert.equal(verifyRenderProof(healthy).evidence, "desktop-pixels");
 });
