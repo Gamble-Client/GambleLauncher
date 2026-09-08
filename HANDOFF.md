@@ -7,7 +7,7 @@ Updated 2026-09-08 UTC. This chat owns the launcher **and standalone loader**. T
 - Repository: /home/theac/Desktop/gamble-client-launcher; GitHub: https://github.com/Gamble-Client/GambleLauncher.
 - Branch: `codex/launcher-ui-security-pass-20260821`.
 - Public launcher: **0.1.135**, immutable artifact source `9cde361e88d0d23890f77c79d4b5632de3a8c8ca`. Later documentation commits are not package sources. Do not rebuild or overwrite this version from a later HEAD.
-- Unchanged client payload: `20260907233226` / version `1.250`, source `4782952f1cfa3cba75fa70b2f55d63a7b4bcca5d`.
+- Current client payload: `20260908205647` / version `1.251`, source `df67f6152af94489f7f1ff7410079c593afcc327`; client-only AntiScreenshare fix, no launcher/loader artifact change.
 - Unchanged standalone loader: `1.4.26`, source `f5ce16348f47b63edd2f3a8be3be075fda13d24d`. Source directory: /home/theac/Desktop/GambleClient/client/standalone-loader.
 - Launcher-only Site metadata/state commits: `c7f6c56` / `c0a2f63`. Canonical production: https://gambleclient.org; Pages deployment: https://96744311.gamble-client-b67.pages.dev.
 - Current artifacts: Windows NSIS installer, RPM, DEB, bundled-Java Flatpak and universal JavaFX JAR. MSI is intentionally unavailable.
@@ -47,6 +47,8 @@ Artifact SHA-256:
 - Final universal JAR: `51751ed40eab05232f81f043992978e4d3502fefa1fbcf4a0c34114ea2078ed3` (11397979 bytes). Preflight JAR hash differed because the normal release repeated the ZIP/native merge; the final staged and public bytes were reverified.
 
 ## Earlier fixes retained
+
+- Client1.251/build20260908205647 fixes the confirmed AntiScreenshare duplicate Gson fieldZPx startup error:21ConfigFile and4RememberedDevice stable JSON names, per-tier fresh-JVM obfuscated read/write/restart gate,607client tests and all5tiers/packaging checks passed. Exact oldBeta fails both read and write; every actual publication JAR passes. Site metadata/state36b9cfe/3028456, Pages https://0b2cfe62.gamble-client-b67.pages.dev; remote hash/provenance audit passed per release. Users restart through the launcher; no config deletion/ACL change. Loader1.4.26 is expected. This proves the reported codec defect, not every Windows crash or authenticated gameplay. Full report: /home/theac/Documents/Codex/2026-08-26/i-usually-will-have-one-chat-2/outputs/antiscreenshare-fix.md.
 
 - 0.1.134 fixed first-click profile creation, profile radio arrows/Home/End and Escape dismissal, invalid/duplicate saved profile IDs, service-neutral429 advice preserving retry details, ticking sponsor displays and bounded Dashboard-return refresh, and Java build downgrade selection after fresh authorization.
 - Windows render gates require nonblank client-area evidence or an actually successful installed-app DOM probe, and propagate probe failure. Merely creating a window is insufficient.
