@@ -23,7 +23,7 @@ function harness(native) {
     canUseBuildForAccess, preferredBuildForAccess, launchState, tauriInvoke: native,
     logoUrl: "", navigator: {}, console
   });
-  vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn, refreshMinecraftStatus };`, context);
+  vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn, refreshMinecraftStatus, refreshSocial, refreshSpotifyStatus, refreshAccount, pollSignIn };`, context);
   const { state } = context.apiForTest;
   Object.assign(state, { starting: false, token: "test-session", account: {
     email: "player@example.test", accessStatus: "owned", selectedPlan: "lifetime"
@@ -32,6 +32,54 @@ function harness(native) {
     ...context.apiForTest,
     click: () => handlers.get("click")({ target: { closest: (selector) => selector === "[data-action]" ? { dataset: { action: "launch" } } : null } })
   };
+}
+
+test("cancelling sign-in rejects an already in-flight ready response", async () => {
+  let finish, started;
+  const requested = new Promise(resolve => { started = resolve; });
+  const calls = [];
+  const ui = harness(async command => {
+    calls.push(command);
+    if (command === "launcher_api") return new Promise(resolve => { finish = resolve; started(); });
+    throw new Error(`Cancelled sign-in must not invoke ${command}`);
+  });
+  ui.state.token = "";
+  ui.state.signInGeneration = 1;
+  ui.state.signInActive = true;
+  const pending = ui.pollSignIn({ code: "fixture", expiresAt: Date.now() / 1000 + 60 }, 1);
+  await requested;
+  ui.state.signInGeneration++;
+  ui.state.signInActive = false;
+  finish({ status: "ready", token: "must-not-be-saved" });
+  await pending;
+  assert.equal(ui.state.token, "");
+  assert.deepEqual(calls, ["launcher_api"]);
+});
+
+test("an older status poll cannot undo a newer running process", async () => {
+  let finish;
+  let calls = 0;
+  const ui = harness(async () => ++calls === 1 ? new Promise(resolve => { finish = resolve; }) : { running: true, pid: 123 });
+  const old = ui.refreshMinecraftStatus();
+  await ui.refreshMinecraftStatus();
+  finish({ running: false, crashed: true, message: "An earlier process exited." });
+  await old;
+  assert.equal(ui.state.minecraftRunning, true);
+  assert.equal(ui.state.minecraftPid, 123);
+  assert.equal(ui.state.popup, null);
+});
+
+for (const method of ["refreshSocial", "refreshSpotifyStatus", "refreshAccount", "refreshManifest"]) {
+  test(`${method} discards a response from before sign-out`, async () => {
+    let finish;
+    const ui = harness(async () => new Promise(resolve => { finish = resolve; }));
+    const pending = ui[method]();
+    ui.state.token = "";
+    ui.state.account = ui.state.social = ui.state.spotify = ui.state.manifest = ui.state.clientStatus = null;
+    finish({ user: { username: "old-user" }, friends: [{ username: "old-friend" }], configured: true, message: "old metadata" });
+    await pending;
+    for (const field of ["account", "social", "spotify", "manifest", "clientStatus"]) assert.equal(ui.state[field], null, field);
+  });
 }
 
 for (const code of [0, 1, -1073741819]) {

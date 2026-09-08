@@ -23,6 +23,11 @@
   <url type="bugtracker">https://github.com/Gamble-Client/GambleLauncher/issues</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.1.135" date="2026-09-08">
+      <description>
+        <p>Reports delayed game exits, prevents stale account and process status, and improves keyboard focus and diagnostics layout.</p>
+      </description>
+    </release>
     <release version="0.1.134" date="2026-09-08">
       <description>
         <p>Fixes profile creation, keyboard navigation, access refresh and launch recovery guidance.</p>

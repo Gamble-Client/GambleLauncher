@@ -21,7 +21,7 @@ const LAUNCHER_DISPLAY_NAME_KEY = "gamble.launcher.displayName";
 const CLIENT_DISPLAY_NAME_KEY = "gamble.client.displayName";
 const GRAPHICS_MODE_KEY = "gamble.launcher.graphicsMode";
 const GPU_SELECTOR_KEY = "gamble.launcher.gpuSelector";
-const LAUNCHER_VERSION = "0.1.134";
+const LAUNCHER_VERSION = "0.1.135";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 // Browser mocks are a development-only visual harness. A source-built CI
@@ -486,7 +486,12 @@ function cssEscape(value) {
 function render() {
   const focused = document.activeElement;
   const focusField = focused?.dataset?.field;
-  const focusAction = focused?.dataset?.action;
+  // Actions repeat (one Select/Enable per row). Restore the exact control,
+  // including row identity, rather than the first button with that action.
+  const focusSelector = ["data-field", "data-action", "data-profile", "data-build", "data-path", "data-kind",
+    "data-profile-type", "data-request", "data-username", "data-view", "data-setting-toggle", "data-privacy-field"]
+    .filter(name => focused?.hasAttribute?.(name))
+    .map(name => `[${name}="${cssEscape(focused.getAttribute(name))}"]`).join("");
   const previousDialog = app.querySelector('[role="dialog"]')?.getAttribute("aria-label");
   const selection = focusField && typeof focused.selectionStart === "number"
     ? [focused.selectionStart, focused.selectionEnd] : null;
@@ -567,10 +572,9 @@ function render() {
   const dialog = app.querySelector('[aria-modal="true"]');
   for (const background of app.querySelectorAll(".shell > .rail, .shell > .content")) background.inert = Boolean(dialog);
   if (state.busy) {
-    for (const control of app.querySelectorAll("[data-field], [data-action=select-profile]")) control.disabled = true;
+    for (const control of app.querySelectorAll("[data-field], [data-action=select-profile], [data-setting-toggle], [data-privacy-field]")) control.disabled = true;
   }
-  const focusTarget = focusField ? app.querySelector(`[data-field="${cssEscape(focusField)}"]`)
-    : focusAction ? app.querySelector(`[data-action="${cssEscape(focusAction)}"]`) : null;
+  const focusTarget = focusSelector ? app.querySelector(focusSelector) : null;
   if (dialog && (previousDialog !== dialog.getAttribute("aria-label") || !dialog.contains(focusTarget))) {
     (dialog.querySelector("button:not(:disabled)") || dialog).focus({ preventScroll: true });
   } else if (focusTarget && !focusTarget.disabled) {
@@ -1409,10 +1413,10 @@ function fileRow(kind, file) {
   return `
     <article class="file-row">
       <div>
-        <strong>${escapeHtml(title)}</strong>
+        <strong title="${escapeAttr(title)}">${escapeHtml(title)}</strong>
         <span>${escapeHtml(file.enabled ? "Enabled" : "Disabled")} · ${formatBytes(file.size)}${file.locked ? " · Required" : ""}${escapeHtml(filename)}</span>
       </div>
-      <button type="button" data-action="toggle-file" data-kind="${kind}" data-path="${escapeAttr(file.path)}" ${file.locked ? "disabled" : ""}>${file.enabled ? "Disable" : "Enable"}</button>
+      <button type="button" data-action="toggle-file" data-kind="${kind}" data-path="${escapeAttr(file.path)}" aria-label="${file.enabled ? "Disable" : "Enable"} ${escapeAttr(title)}" ${file.locked ? "disabled" : ""}>${file.enabled ? "Disable" : "Enable"}</button>
     </article>
   `;
 }
@@ -1777,8 +1781,10 @@ async function refreshVersion() {
 }
 
 async function refreshAccount() {
-  if (!state.token) return;
+  const token = state.token;
+  if (!token) return;
   const body = await api("/api/launcher/account");
+  if (state.token !== token) return;
   applyAccount(body);
   await refreshSpotifyStatus();
   await refreshSocial();
@@ -1841,9 +1847,12 @@ function updateSelectedProfileLabel(label) {
   saveCustomProfiles();
 }
 
+let minecraftStatusRequest = 0;
 async function refreshMinecraftStatus(options = {}) {
+  const request = ++minecraftStatusRequest;
   try {
     const status = await invoke("minecraft_status");
+    if (request !== minecraftStatusRequest) return;
     const wasRunning = state.minecraftRunning;
     const oldPid = state.minecraftPid;
     const oldExitKey = JSON.stringify(state.minecraftExit || null);
@@ -1881,7 +1890,7 @@ async function refreshMinecraftStatus(options = {}) {
       || oldExitKey !== JSON.stringify(state.minecraftExit || null);
     if (options.render !== false && changed) render();
   } catch (error) {
-    if (options.logError) log(`Process status failed: ${error.message || error}`);
+    if (request === minecraftStatusRequest && options.logError) log(`Process status failed: ${error.message || error}`);
   }
 }
 
@@ -1937,6 +1946,7 @@ async function pollSignIn(start, generation) {
         throw new Error(String(error));
       }
     }
+    if (generation !== state.signInGeneration || !state.signInActive) return;
     if (body.status === "pending") {
       state.status = `Waiting ${formatDuration(Math.max(0, start.expiresAt - Math.floor(Date.now() / 1000)))}`;
       render();
@@ -1962,6 +1972,7 @@ async function pollSignIn(start, generation) {
 
 async function refreshManifest() {
   const profile = currentProfile();
+  const token = state.token;
   if (!state.token || !profile?.client) {
     state.clientStatus = null;
     state.manifest = null;
@@ -1972,10 +1983,10 @@ async function refreshManifest() {
   const result = await invoke("client_install_status", {
     profile: profileId,
     build: build.id,
-    token: state.token
+    token
   });
   // A profile switch can finish before a slower metadata request returns.
-  if (state.selectedProfile !== profileId || buildForAccount().id !== build.id) return;
+  if (state.token !== token || state.selectedProfile !== profileId || buildForAccount().id !== build.id) return;
   state.clientStatus = result;
   state.manifest = state.clientStatus;
   state.lastManifestCheckAt = Date.now();
@@ -2020,27 +2031,35 @@ async function refreshLauncherStateForUpdate() {
 }
 
 async function refreshSpotifyStatus() {
-  if (!state.token) {
+  const token = state.token;
+  if (!token) {
     state.spotify = null;
     return;
   }
   try {
-    state.spotify = await api("/api/spotify/status");
+    const result = await api("/api/spotify/status");
+    if (state.token !== token) return;
+    state.spotify = result;
   } catch (error) {
+    if (state.token !== token) return;
     state.spotify = { configured: false, connected: false, message: publicMessage(error) };
   }
 }
 
 async function refreshSocial() {
-  if (!state.token) {
+  const token = state.token;
+  if (!token) {
     state.social = null;
     state.lastSocialCheckAt = Date.now();
     return;
   }
   try {
-    state.social = await api("/api/friends");
+    const result = await api("/api/friends");
+    if (state.token !== token) return;
+    state.social = result;
     state.lastSocialCheckAt = Date.now();
   } catch (error) {
+    if (state.token !== token) return;
     state.social = { friends: [], incomingRequests: [], outgoingRequests: [], settings: {}, message: publicMessage(error) };
     state.lastSocialCheckAt = Date.now();
   }

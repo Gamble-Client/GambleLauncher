@@ -1140,6 +1140,13 @@ option {
   gap: 5px;
 }
 
+.file-row > div > strong {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .file-row strong,
 .file-row span,
 .diagnostic-row strong,
@@ -1149,7 +1156,16 @@ option {
 
 .diagnostic-row {
   min-height: 78px;
+  padding: 14px;
+  display: grid;
+  gap: 5px;
   border-left: 4px solid var(--amber);
+}
+
+.diagnostic-row span {
+  color: var(--muted);
+  font-size: .85rem;
+  line-height: 1.5;
 }
 
 .diagnostic-row.ok {

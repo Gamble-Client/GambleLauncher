@@ -39,9 +39,16 @@ The launcher supports the managed native workflow, the universal JavaFX JAR, and
 - Launcher stays at `0.1.133`, artifact source `209aff4319e331dbbf3198347f4a70842589f027`. No launcher code/package changes. Generic 429-to-Microsoft wording remains deferred.
 - Earlier loader 1.4.25 added sanitized console/Fabric diagnostics when private disk logging fails and corrected the concurrent owner snapshot race. Site rate-limit mitigation `c6104813` is live: validated managed launcher preparation uses 12/15 minutes per account; browser/standalone retain 6/15 minutes. The reported one-or-two-launch 429 cause remains unproven without an affected raw trace.
 
-## Unreleased Windows startup regression work — 2026-09-08
+## Launcher 0.1.135 candidate — 2026-09-08
 
-- Public artifacts remain0.1.134/source39294cf; commits722555f/28285ba are NOT published. A new unique launcher version and normal release validation are required before packaging these runtime changes for users.
+- User explicitly authorized releasing verified fixes even though the original Windows launch-stop report is unresolved. The earlier hold is lifted for these scoped fixes; publish only after uniquely versioned, exact-source native/installer gates pass. Preserve payload20260907233226 and loader1.4.26.
+- Includes the startup reporting and CI gate corrections below, plus red-before/green-after tests for out-of-order process polling, late account/friends/Spotify/manifest responses after sign-out, and cancellation while a sign-in response is in flight.
+- Browser regressions reproduce/fix wrong profile focus, lost checkbox focus, and misleading enabled checkboxes while busy. Long filename cards now use two-line titles with full hover text and descriptive toggle labels. Diagnostics have consistent padding and line spacing. Existing visual style retained.
+- Local62 Node tests,42 Java tests, hardened JAR90classes,5 edge browser checks,9 interaction checks and six account smoke fixtures passed. Source-stable native/Windows/Flatpak packaging and final96-screen accessibility run must finish before promotion. New reproducible browser suite: scripts/launcher-edge-ux-regression.mjs.
+
+### Startup regression evidence (included in this candidate)
+
+- Public artifacts remain0.1.134/source39294cf until promotion; verified commits722555f/28285ba are included in candidate0.1.135.
 - User reports Windows “launches then stops,” without logs or certainty whether Minecraft or the launcher closes. Underlying user failure remains unproven. Do not call this a Minecraft crash fix.
 - Confirmed separate bug: only the immediate post-launch status poll requested an exit popup. Routine polling silently returned to idle for delayed exits. Four red-before/green-after handler regressions now cover delayed clean/nonzero/Windows-style exits, later crashes, normal closure, intentional Stop and popup deduplication. The UI now reports these delayed failures with Diagnostics guidance.
 - Added a realJava21 lifecycle test through production PrivateChild/private-argument handling: profile path with spaces/accent, escaped arguments, actual Java main/readiness, sustained process, stdout/stderr capture, exit0/73 and private-file cleanup. This is not a real Minecraft/authenticated gameplay test.
