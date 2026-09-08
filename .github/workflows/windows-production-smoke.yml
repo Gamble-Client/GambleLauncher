@@ -33,6 +33,12 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Verify render proof failure cases
+        shell: pwsh
+        run: |
+          node --test tests/windows-render-proof.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Render proof regression tests failed." }
+
       - name: Download and install the public launcher
         shell: pwsh
         env:
