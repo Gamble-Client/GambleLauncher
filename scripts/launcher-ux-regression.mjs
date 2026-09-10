@@ -58,7 +58,17 @@ try{
  await check('advanced settings reachable at minimum size',async()=>{await page.getByRole('button',{name:'Show Advanced',exact:true}).click();const input=page.locator('[data-field="javaArgs"]');await input.focus();assert.equal(await input.isVisible(),true);});
  await check('all settings inputs have a visible focus destination',async()=>{
   const inputs=page.locator('[data-view-frame="settings"] input,[data-view-frame="settings"] select');
-  for(let i=0;i<await inputs.count();i++){const e=inputs.nth(i);if(!await e.isVisible()||await e.isDisabled())continue;await e.focus();assert.equal(await e.evaluate(n=>n===document.activeElement),true);const rect=await e.boundingBox();assert.ok(rect && rect.y>=0 && rect.y+rect.height<=560,'Focused setting stays in viewport');}return await inputs.count();
+  for(let i=0;i<await inputs.count();i++){
+   const e=inputs.nth(i);if(!await e.isVisible()||await e.isDisabled())continue;
+   await e.focus();
+   // Focus scrolling and async rerenders settle on a rendering frame. Resolve
+   // the current control each time instead of retaining a detached DOM node.
+   await page.waitForFunction(index=>{
+    const n=document.querySelectorAll('[data-view-frame="settings"] input,[data-view-frame="settings"] select')[index];
+    if(!n||n!==document.activeElement)return false;
+    const r=n.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;
+   },i,{timeout:5000});
+  }return await inputs.count();
  });
 }finally{await writeFile(`${root}/interaction-results.json`,JSON.stringify(results,null,2));console.log(JSON.stringify(results,null,2));await browser.close();}
 
