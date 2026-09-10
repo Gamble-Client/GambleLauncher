@@ -33,7 +33,7 @@ try {
         await page.locator('[data-view-frame="profiles"]').waitFor();
         await page.locator(`[data-action="select-profile"][data-profile="${profile}"]`).click();
         await page.locator(`[data-action="select-profile"][data-profile="${profile}"][aria-pressed="true"]`).waitFor();
-        await page.locator('button[data-view="play"]').click();
+        await page.locator('button[data-view="play"]').first().click();
         await page.locator('[data-view-frame="play"]').waitFor();
         assert.equal((await play.innerText()).trim().toLowerCase(), "play");
         await play.click();
@@ -48,7 +48,7 @@ try {
     }
     await page.getByRole("button", { name: "Open diagnostics", exact: true }).click();
     await page.getByText("Java 21 available", { exact: true }).waitFor();
-    await page.locator('button[data-view="play"]').click();
+    await page.locator('button[data-view="play"]').first().click();
     await page.locator('[data-view-frame="play"]').waitFor();
     await page.getByRole("button", { name: "Sign out", exact: true }).click();
     await page.getByRole("button", { name: "Sign in to play", exact: true }).waitFor();

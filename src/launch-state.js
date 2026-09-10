@@ -3,9 +3,8 @@ export function launchState({ profile, signedIn, running, starting, busy, buildI
   if (starting) return { action: "wait", label: "Starting launcher", detail: "Checking your saved accounts and profiles.", disabled: true };
   if (running) return { action: "stop", label: "Stop Minecraft", detail: "Minecraft is running. Your launcher stays here when you finish.", disabled: busy };
   if (!signedIn) return { action: "signin", label: "Sign in to play", detail: "Connect your Gamble account. Minecraft accounts are managed separately.", disabled: busy };
-  if (profile.client && buildId === "ad_tier" && !ads?.active) {
-    return { action: "dashboard", label: "Open Dashboard", detail: "Watch the 30-second sponsor in your browser, then return and press Play. Access is checked again when you play.", disabled: busy };
-  }
+  // Sponsor access is checked on Play, not advertised on the landing page.
+  // Keep the authoritative account refresh and gate in the launch handler.
   return {
     action: "play",
     label: updateAvailable && profile.client ? "Set up & play" : "Play",

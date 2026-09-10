@@ -1,6 +1,14 @@
 # Gamble Client Launcher — current handoff
 
-Updated 2026-09-08 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
+Updated 2026-09-10 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
+
+## Unreleased workspace refresh (2026-09-10 UTC)
+
+- User requested visual cleanup. Frontend now uses unboxed single page titles, a vertical profile list with a focused editor and inline custom-profile renaming, compact settings with keyboard/click/hover help, always-visible memory, and collapsible diagnostics.
+- Play no longer shows a sponsor tile or sponsor CTA. Only a failed fresh ad-tier access check after Play opens the existing Dashboard notice/browser flow; paid and plain profiles retain normal launch behavior. No native authorization, loader or payload changes.
+- Verified: 62 Node tests, 42 Java tests (forced rerun), 58 Rust tests (one existing live-network test ignored), frontend build; six account smoke fixtures; five edge and nine interaction regressions; new layout/rename/help/conditional-sponsor regression at 820/1120/1440px. Screenshots personally inspected. These are browser fixtures and local tests, not Windows installed-package or authenticated Minecraft tests.
+- Source only; NOT package-release-ready. Public 0.1.135 stays unchanged. A future publication needs a new version, exact-source package builds and Windows installed-candidate render/startup verification. Release has been notified to keep publication paused.
+- Evidence and reproduction: docs/workspace-refresh.md; scripts/launcher-layout-regression.mjs.
 
 ## Current publication and source
 

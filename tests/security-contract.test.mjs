@@ -12,9 +12,9 @@ test("Ad Tier launchers send users to the Dashboard instead of embedding sponsor
     assert.doesNotMatch(frontend, /\/api\/launcher\/ad-reward\//);
     assert.doesNotMatch(java, /\/api\/launcher\/ad-reward\//);
     assert.doesNotMatch(javaFx, /\/api\/launcher\/ad-reward\//);
-    assert.match(await source("src/launch-state.js"), /profile\.client && buildId === "ad_tier" && !ads\?\.active/);
+    assert.match(frontend, /buildForAccount\(\)\.id === "ad_tier" && !state\.ads\?\.active/);
     assert.match(frontend, /DASHBOARD_FREE_URL/);
-    assert.match(frontend, /data-action="open-dashboard"/);
+    assert.match(frontend, /await openDashboardForAds\(\)/);
     assert.match(java, /openDashboardForAds\(\)/);
     assert.match(java, /30-second sponsor break/);
     assert.doesNotMatch(java, /Watch Sponsor First/);

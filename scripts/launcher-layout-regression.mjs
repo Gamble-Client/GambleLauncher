@@ -1,0 +1,65 @@
+import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
+const { chromium } = await import(process.env.LAUNCHER_PLAYWRIGHT_MODULE || "playwright");
+const [base = "http://127.0.0.1:5187", output = "/tmp/launcher-layout"] = process.argv.slice(2);
+assert.ok(["localhost", "127.0.0.1"].includes(new URL(base).hostname));
+await mkdir(output, { recursive: true });
+const browser = await chromium.launch({ headless: true,
+  ...(process.env.LAUNCHER_CHROMIUM ? { executablePath: process.env.LAUNCHER_CHROMIUM } : {}) });
+try {
+  for (const width of [820, 1120, 1440]) {
+    const page = await browser.newPage({ viewport: { width, height: 800 }, reducedMotion: "reduce" });
+    const errors = [];
+    page.on("pageerror", error => errors.push(error.message));
+    await page.route("https://**/*", route => route.abort());
+    await page.goto(`${base}/?preview=ad-tier`);
+    await page.waitForFunction(() => !document.querySelector('[data-action="launch"]')?.disabled);
+    assert.equal(await page.locator('[data-sponsor-time]').count(), 0);
+    assert.doesNotMatch(await page.locator('.launch-panel').innerText(), /sponsor|dashboard|watch.*ad/i);
+    await page.screenshot({ path: `${output}/play-${width}.png` });
+    await page.locator('[data-action="launch"]').click();
+    await page.getByRole('dialog', { name: 'Dashboard sponsor check' }).waitFor();
+    await page.getByRole('button', { name: 'OK', exact: true }).click();
+    await page.locator('[data-view="profiles"]').first().click();
+    await page.locator('[data-view-frame="profiles"]').waitFor();
+    const rows = page.locator('.profile-switch');
+    assert.ok(await rows.count() >= 3);
+    const first = await rows.nth(0).boundingBox(), second = await rows.nth(1).boundingBox();
+    assert.ok(second.y >= first.y + first.height, 'Profiles form a vertical list');
+    await page.locator('[data-profile="vanilla"]').click();
+    await page.locator('[data-profile="vanilla"][aria-pressed="true"]').waitFor();
+    assert.equal(await page.locator('[data-field="profileAccount"]').count(), 1);
+    await page.screenshot({ path: `${output}/profiles-${width}.png` });
+    await page.getByRole('button', { name: 'Create profile', exact: true }).click();
+    await page.locator('[data-field="newProfileName"]').fill('Creative setup');
+    await page.locator('[data-action="create-profile"]').click();
+    const rename = page.locator('[data-field="selectedProfileLabel"]');
+    await rename.waitFor();
+    await rename.fill('Recording setup');
+    await rename.press('Tab');
+    await page.locator('.profile-switch[aria-pressed="true"]').filter({ hasText: 'Recording setup' }).waitFor();
+    await page.reload();
+    await page.locator('[data-view="profiles"]').first().click();
+    await page.locator('.profile-switch').filter({ hasText: 'Recording setup' }).waitFor();
+    await page.locator('[data-view="settings"]').first().click();
+    await page.locator('[data-view-frame="settings"]').waitFor();
+    assert.equal(await page.locator('[data-field="memory"]').isVisible(), true);
+    assert.equal(await page.locator('[data-field="javaArgs"]').count(), 0);
+    const help = page.locator('[data-help="graphics"]');
+    await page.mouse.move(0, 0);
+    assert.equal(await help.locator('.help-copy').isVisible(), false);
+    await help.locator('button').focus();
+    assert.equal(await help.locator('.help-copy').isVisible(), true);
+    await page.keyboard.press('Enter');
+    assert.equal(await help.locator('button').getAttribute('aria-expanded'), 'true');
+    await page.keyboard.press('Enter');
+    await page.locator('[data-field="memory"]').focus();
+    assert.equal(await help.locator('.help-copy').isVisible(), false);
+    await page.screenshot({ path: `${output}/settings-${width}.png` });
+    assert.equal(await page.locator('h1').count(), 1);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    assert.deepEqual(errors, []);
+    await page.close();
+  }
+  console.log('Layout, sponsor-on-Play, profile selection, keyboard help: passed at 820/1120/1440px');
+} finally { await browser.close(); }

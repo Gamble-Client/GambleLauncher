@@ -489,7 +489,7 @@ function render() {
   // Actions repeat (one Select/Enable per row). Restore the exact control,
   // including row identity, rather than the first button with that action.
   const focusSelector = ["data-field", "data-action", "data-profile", "data-build", "data-path", "data-kind",
-    "data-profile-type", "data-request", "data-username", "data-view", "data-setting-toggle", "data-privacy-field"]
+    "data-profile-type", "data-request", "data-username", "data-view", "data-setting-toggle", "data-privacy-field", "data-help-toggle"]
     .filter(name => focused?.hasAttribute?.(name))
     .map(name => `[${name}="${cssEscape(focused.getAttribute(name))}"]`).join("");
   const previousDialog = app.querySelector('[role="dialog"]')?.getAttribute("aria-label");
@@ -680,7 +680,6 @@ function topbar(signedIn) {
   return `
     <header class="topbar">
       <div>
-        <span class="eyebrow">${escapeHtml(profileLabel())}</span>
         <h1>${viewTitle()}</h1>
       </div>
       <div class="top-actions">
@@ -702,8 +701,8 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
     <section class="play-stage play-overview">
       <section class="launch-panel">
         <div class="launch-copy">
-          <span class="eyebrow">${escapeHtml(profile.client ? state.clientDisplayName : "Minecraft")}</span>
-          <h2>${escapeHtml(profile.client ? selectedBuild.label : profile.label)}</h2>
+          <span class="eyebrow">Minecraft 1.21.11</span>
+          <h2>${escapeHtml(profile.custom || !profile.client ? profile.label : state.clientDisplayName)}</h2>
           <p class="launch-description">${escapeHtml(ready.detail)}</p>
           <div class="launch-facts">
             <div>
@@ -740,11 +739,6 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
 
     <section class="quick-grid main-quick-grid play-shortcuts">
       <article class="action-tile">
-        <span>Dashboard access</span>
-        <strong data-sponsor-time>${escapeHtml(sponsorTitle())}</strong>
-        <button type="button" data-action="open-dashboard" ${state.busy ? "disabled" : ""}>Open Dashboard</button>
-      </article>
-      <article class="action-tile">
         <span>Mods</span>
         <strong>${profileHasMods(profile) ? `${enabledMods} enabled` : "Vanilla"}</strong>
         <button type="button" data-view="mods" ${profileHasMods(profile) ? "" : "disabled"}>Manage mods</button>
@@ -767,8 +761,7 @@ function accountsView(signedIn) {
   return `
     <section class="screen-band">
       <div>
-        <span class="eyebrow">Identity</span>
-        <h2>Accounts</h2>
+        <p>Choose the Minecraft account you play with.</p>
       </div>
       <div class="top-actions">
         <button class="ghost" type="button" data-action="microsoft" ${state.busy ? "disabled" : ""}>Add Microsoft</button>
@@ -783,15 +776,6 @@ function accountsView(signedIn) {
 
 function socialView() {
   return `
-    <section class="screen-band">
-      <div>
-        <span class="eyebrow">Social</span>
-        <h2>Friends</h2>
-      </div>
-      <div class="top-actions">
-        <button class="ghost" type="button" data-action="refresh" ${state.busy ? "disabled" : ""}>Refresh</button>
-      </div>
-    </section>
     ${friendsPanel()}
   `;
 }
@@ -908,8 +892,7 @@ function updatesView(profile, selectedBuild, canInstall, signedIn) {
   return `
     <section class="screen-band">
       <div>
-        <span class="eyebrow">Updates</span>
-        <h2>Updates</h2>
+        <p>Your launcher and client, up to date.</p>
       </div>
       <div class="top-actions">
         <button class="ghost" type="button" data-action="check-updates" ${state.busy ? "disabled" : ""}>Check</button>
@@ -944,11 +927,10 @@ function profilesView(profile, selectedBuild) {
   return `
     <section class="screen-band profile-page-head">
       <div>
-        <span class="eyebrow">Launch setup</span>
-        <p>Pick a folder, choose its account and build, then play.</p>
+        <p>Separate setups for the way you play.</p>
       </div>
       <div class="profile-create-anchor">
-        <button class="profile-add-button" type="button" data-action="toggle-profile-create" aria-label="Create profile" title="Create profile" ${state.busy ? "disabled" : ""}>+</button>
+        <button class="profile-add-button" type="button" data-action="toggle-profile-create" aria-label="Create profile" ${state.busy ? "disabled" : ""}>+ New profile</button>
         ${state.profileCreateOpen ? `
           <div class="profile-create-menu" data-profile-create-menu role="dialog" aria-label="Create profile">
             <div class="profile-create-menu-head">
@@ -977,25 +959,27 @@ function profilesView(profile, selectedBuild) {
         ` : ""}
       </div>
     </section>
+    <div class="profiles-layout">
     <section class="profile-switcher-shell" aria-label="Launch profiles">
+      <div class="profile-list-heading">Your profiles <span>${profilesList.length}</span></div>
       <div class="profile-switcher" data-scroll-key="profile-switcher">
         ${profilesList.map((item) => {
           const mark = item.client ? "G" : item.loader === "fabric" ? "F" : "V";
           return `<button class="profile-switch ${item.id === profile.id ? "active" : ""}" type="button" data-action="select-profile" data-profile="${escapeAttr(item.id)}" aria-pressed="${item.id === profile.id}"><span class="profile-switch-mark">${mark}</span><span><strong>${escapeHtml(item.label)}</strong><small>${escapeHtml(profileTypeLabel(item))}</small></span></button>`;
         }).join("")}
       </div>
-      <span class="profile-switcher-count">${profilesList.length}</span>
     </section>
     <section class="profile-workspace">
       <header class="profile-workspace-head">
         <div class="profile-workspace-title">
           <span class="profile-current-mark">${profileMark}</span>
-          <div><span class="eyebrow">Selected folder</span><h3>${escapeHtml(profile.label)}</h3><p>${escapeHtml(profileTypeLabel(profile))} · ${escapeHtml(profileAccountLabel(profile))}</p></div>
+          <div><span class="eyebrow">Selected profile</span><h3>${escapeHtml(profile.label)}</h3><p>${escapeHtml(profileTypeLabel(profile))} · ${escapeHtml(profileAccountLabel(profile))}</p></div>
         </div>
         ${profile.custom ? `<button class="profile-delete-action" type="button" data-action="request-delete-profile" data-profile="${escapeAttr(profile.id)}" ${state.busy || state.minecraftRunning ? "disabled" : ""}>Delete</button>` : `<span class="profile-built-in">Built in</span>`}
       </header>
       <div class="profile-workspace-grid">
         <section class="profile-setup-panel">
+          ${profile.custom ? `<label class="profile-name-field"><span>Profile name</span><input data-field="selectedProfileLabel" value="${escapeAttr(profile.label)}" maxlength="48"></label>` : ""}
           <div class="profile-panel-title"><div><span class="eyebrow">Launch as</span><h3>Account &amp; build</h3></div></div>
           <div class="profile-account-control">
             <span class="profile-account-mark">${escapeHtml(accountMark)}</span>
@@ -1037,22 +1021,36 @@ function profilesView(profile, selectedBuild) {
             <div><strong>Profile data</strong><small>Settings, saves, screenshots, and logs</small></div>
             <div class="profile-folder-actions"><button type="button" data-action="open-data">Open</button></div>
           </article>
-          <code class="profile-root-path">${escapeHtml(profileRootPath)}</code>
+          ${contextHelp("profile-location", "Folder location", profileRootPath)}
         </section>
       </div>
         ${profile.loader === "fabric" ? `
           <footer class="profile-loader-strip"><div><span class="profile-folder-mark">F</span><div><strong>${escapeHtml(state.profileLoaderStatus?.version ? `Fabric Loader ${state.profileLoaderStatus.version}` : "Fabric Loader")}</strong><small>${escapeHtml(state.profileLoaderStatus?.updateAvailable ? `Update ${state.profileLoaderStatus.latestVersion} available` : "Used only by this profile")}</small></div></div><button class="ghost" type="button" data-action="update-loader" ${state.busy ? "disabled" : ""}>${state.profileLoaderStatus?.updateAvailable ? "Update" : "Check"}</button></footer>
         ` : ""}
+      <footer class="profile-play-footer"><span>Changes save automatically</span><button class="primary-small" type="button" data-view="play">Back to Play</button></footer>
     </section>
+    </div>
   `;
 }
+
+function contextHelp(id, label, text) {
+  return `<div class="context-help" data-help="${escapeAttr(id)}"><button type="button" data-help-toggle="${escapeAttr(id)}" aria-expanded="false" aria-controls="help-${escapeAttr(id)}">${escapeHtml(label)} <span aria-hidden="true">?</span></button><div class="help-copy" id="help-${escapeAttr(id)}">${escapeHtml(text)}</div></div>`;
+}
+
+app.addEventListener("click", event => {
+  const help = event.target.closest("[data-help-toggle]");
+  if (help) {
+    const open = help.getAttribute("aria-expanded") !== "true";
+    help.setAttribute("aria-expanded", String(open));
+    help.parentElement.classList.toggle("help-open", open);
+  }
+});
 
 function settingsView(profile, selectedBuild) {
   return `
     <section class="screen-band">
       <div>
-        <span class="eyebrow">Launcher</span>
-        <h2>Settings</h2>
+        <p>Make yourself at home. Changes save automatically.</p>
       </div>
       <div class="top-actions">
         <button class="ghost" type="button" data-action="toggle-advanced">${state.showAdvancedSettings ? "Hide Advanced" : "Show Advanced"}</button>
@@ -1064,7 +1062,7 @@ function settingsView(profile, selectedBuild) {
         <div>
           <span class="eyebrow">Appearance</span>
           <strong id="identity-settings-title">Launcher and client names</strong>
-          <small>Changes visible branding only. Install folders, update IDs, and security checks keep their canonical Gamble Client names.</small>
+          ${contextHelp("branding", "About display names", "Changes visible branding only. Install folders, update IDs, and security checks keep their canonical Gamble Client names.")}
         </div>
         <div class="identity-fields">
           <label>
@@ -1081,7 +1079,7 @@ function settingsView(profile, selectedBuild) {
         <div>
           <span class="eyebrow">Graphics safety</span>
           <strong id="graphics-settings-title">Game rendering path</strong>
-          <small>Automatic keeps the launcher UI hardware-accelerated and applies the client’s AMD compatibility guard before Minecraft starts. Safe disables the risky threaded/ACO paths without forcing software rendering. Software is an emergency fallback and may be slow.</small>
+          ${contextHelp("graphics", "Choosing a graphics mode", "Automatic keeps the launcher UI hardware-accelerated and applies the client’s AMD compatibility guard before Minecraft starts. Safe disables risky threaded/ACO paths without forcing software rendering. Software is an emergency fallback and may be slow.")}
         </div>
         <div class="identity-fields">
           <label>
@@ -1092,18 +1090,18 @@ function settingsView(profile, selectedBuild) {
               <option value="software" ${state.graphicsMode === "software" ? "selected" : ""}>Software fallback</option>
             </select>
           </label>
-          <label>
-            <span>GPU selector (DRI_PRIME)</span>
-            <input data-field="gpuSelector" maxlength="128" value="${escapeAttr(state.gpuSelector)}" placeholder="Blank = default GPU" autocomplete="off" spellcheck="false">
-          </label>
+          <div>
+            <label><span>GPU selector (DRI_PRIME)</span>
+            <input data-field="gpuSelector" maxlength="128" value="${escapeAttr(state.gpuSelector)}" placeholder="Blank = default GPU" autocomplete="off" spellcheck="false"></label>
+            ${contextHelp("gpu", "GPU selector help", "Linux / Mesa only. Examples: 1, 1!, or a Mesa PCI selector. Leave blank unless this computer has more than one GPU.")}
+          </div>
         </div>
-        <small class="setting-help">Examples: <code>1</code>, <code>1!</code>, or a Mesa PCI selector. Leave blank unless this computer has more than one GPU.</small>
       </section>
       ${state.microsoft ? `
         <div class="setting-note">
-          <span>Offline username</span>
+          <span>Minecraft account</span>
           <strong>${escapeHtml(state.microsoft.name)}</strong>
-          <small>Hidden because a Microsoft account is linked.</small>
+          <button class="inline-link" type="button" data-view="accounts">Manage accounts</button>
         </div>
       ` : `
         <label>
@@ -1115,20 +1113,23 @@ function settingsView(profile, selectedBuild) {
       ${privacyToggle("allowFriendRequests", "Friend requests", state.social?.settings?.allowFriendRequests !== false)}
       ${privacyToggle("showServerToFriends", "Show server to friends", Boolean(state.social?.settings?.showServerToFriends))}
       ${privacyToggle("shareSpotifyToFriends", "Share Spotify with friends", Boolean(state.social?.settings?.shareSpotifyToFriends))}
-      ${state.showAdvancedSettings ? `
         <label>
           <span>Memory</span>
           <select data-field="memory">
             ${["2", "3", "4", "5", "6", "7", "8", "10", "12", "16"].map((item) => `<option value="${item}" ${item === state.memory ? "selected" : ""}>${item} GB</option>`).join("")}
           </select>
         </label>
+      ${state.showAdvancedSettings ? `
         <label class="wide-field">
           <span>Java Args</span>
           <input data-field="javaArgs" value="${escapeAttr(state.javaArgs)}" placeholder="-XX:+UseZGC">
         </label>
       ` : ""}
     </section>
-    ${diagnosticsPanel()}
+    <details class="settings-diagnostics" ${state.diagnostics.length ? "open" : ""}>
+      <summary>Diagnostics &amp; launcher log</summary>
+      ${diagnosticsPanel()}
+    </details>
   `;
 }
 
@@ -1475,7 +1476,7 @@ function viewTitle() {
   if (state.view === "mods") return "Mods";
   if (state.view === "packs") return "Resource Packs";
   if (state.view === "settings") return "Launcher Settings";
-  return "Launch Gamble Client";
+  return "Play";
 }
 
 function profileLabel() {

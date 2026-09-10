@@ -5,8 +5,9 @@ import { launchState } from "../src/launch-state.js";
 const free = { profile: { client: true }, signedIn: true, running: false, starting: false,
   busy: false, buildId: "ad_tier", ads: { active: false }, updateAvailable: true };
 
-test("sponsor requirement belongs only to Gamble profiles", () => {
-  assert.equal(launchState(free).action, "dashboard");
+test("Play stays sponsor-free even when ad access must be renewed", () => {
+  assert.equal(launchState(free).action, "play");
+  assert.doesNotMatch(launchState(free).detail, /sponsor|ad|dashboard/i);
   for (const loader of ["vanilla", "fabric"]) {
     const result = launchState({ ...free, profile: { client: false, loader } });
     assert.equal(result.action, "play");
