@@ -2,26 +2,26 @@
 
 Updated 2026-09-10 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
 
-## Unreleased workspace refresh (2026-09-10 UTC)
+## Released workspace refresh — 0.1.136 (2026-09-10 UTC)
 
 - User requested visual cleanup. Frontend now uses unboxed single page titles, a vertical profile list with a focused editor and inline custom-profile renaming, compact settings with keyboard/click/hover help, always-visible memory, and collapsible diagnostics.
 - Play no longer shows a sponsor tile or sponsor CTA. Only a failed fresh ad-tier access check after Play opens the existing Dashboard notice/browser flow; paid and plain profiles retain normal launch behavior. No native authorization, loader or payload changes.
 - Verified: 62 Node tests, 42 Java tests (forced rerun), 58 Rust tests (one existing live-network test ignored), frontend build; six account smoke fixtures; five edge and nine interaction regressions; new layout/rename/help/conditional-sponsor regression at 820/1120/1440px. Screenshots personally inspected. These are browser fixtures and local tests, not Windows installed-package or authenticated Minecraft tests.
-- Source only; NOT package-release-ready. Public 0.1.135 stays unchanged. A future publication needs a new version, exact-source package builds and Windows installed-candidate render/startup verification. Release has been notified to keep publication paused.
+- Released 0.1.136. Exact-source Windows startup `34429550987` and six-tier WebView `34429623600` passed. Final installer candidate `34430964295` and live public download `34431338322` passed clean install, same-version reinstall, packaged networking and nonblank rendering; screenshots personally inspected. Public installer matches approved bytes. Public universal JAR passed hardened verification (90 classes). No real Microsoft login, authenticated Minecraft playthrough or real ad completion is claimed.
 - Evidence and reproduction: docs/workspace-refresh.md; scripts/launcher-layout-regression.mjs.
 
 ## Current publication and source
 
 - Repository: /home/theac/Desktop/gamble-client-launcher; GitHub: https://github.com/Gamble-Client/GambleLauncher.
 - Branch: `codex/launcher-ui-security-pass-20260821`.
-- Public launcher: **0.1.135**, immutable artifact source `9cde361e88d0d23890f77c79d4b5632de3a8c8ca`. Later documentation commits are not package sources. Do not rebuild or overwrite this version from a later HEAD.
+- Public launcher: **0.1.136**, immutable artifact source `c511b8cc2165c2f8fe0c11917d8cb526aa2f164f`. Later documentation commits are not package sources. Do not rebuild or overwrite this version from a later HEAD.
 - Current client payload: `20260908205647` / version `1.251`, source `df67f6152af94489f7f1ff7410079c593afcc327`; client-only AntiScreenshare fix, no launcher/loader artifact change.
 - Unchanged standalone loader: `1.4.26`, source `f5ce16348f47b63edd2f3a8be3be075fda13d24d`. Source directory: /home/theac/Desktop/GambleClient/client/standalone-loader.
-- Launcher-only Site metadata/state commits: `c7f6c56` / `c0a2f63`. Canonical production: https://gambleclient.org; Pages deployment: https://96744311.gamble-client-b67.pages.dev.
+- Launcher-only Site metadata/state commits: `53411cb` / `0ec267f`. Canonical production: https://gambleclient.org; Pages deployment: https://ebfbebcc.gamble-client-b67.pages.dev.
 - Current artifacts: Windows NSIS installer, RPM, DEB, bundled-Java Flatpak and universal JavaFX JAR. MSI is intentionally unavailable.
 - Public Windows and JAR downloads were independently compared byte-for-byte with the tested/staged artifacts. Final JAR was checked after the release workflow's macOS native merge, including a hardened verification of the downloaded public bytes.
 
-## 0.1.135 fixes and proof
+## Previous 0.1.135 fixes and proof
 
 User explicitly authorized publishing independently verified fixes while the original affected-user crash remains unconfirmed. The earlier publication hold is lifted; this release is live.
 
@@ -46,7 +46,7 @@ Verification:
 
 Evidence: /tmp/launcher-135-release.NrfoNQ. Full release report and hashes: /home/theac/Documents/Codex/2026-08-26/i-usually-will-have-one-chat-2/outputs/launcher-ux-audit/RELEASE-0.1.135.md. Reusable browser scripts: scripts/launcher-edge-ux-regression.mjs, scripts/launcher-ux-regression.mjs and scripts/launcher-ui-smoke.mjs.
 
-Artifact SHA-256:
+Historical 0.1.135 artifact SHA-256 (not current downloads):
 
 - Windows: `db73af98662a6a1528479c727cc522b9d8a8f4687fd0d349992ac7464b5fbf7e` (2733617 bytes).
 - RPM: `0337230534389a2a73f6980fcbdac85130c164204507830ee3b9ad9e9388be53`.

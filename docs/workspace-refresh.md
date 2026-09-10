@@ -1,6 +1,6 @@
 # Launcher workspace refresh
 
-Source-only UI update, 2026-09-10 UTC. Public version 0.1.135 is unchanged.
+Released in launcher 0.1.136, 2026-09-10 UTC, from immutable source `c511b8cc2165c2f8fe0c11917d8cb526aa2f164f`.
 
 ## Changes
 
@@ -22,4 +22,6 @@ Browser suites (local synthetic accounts, no external traffic):
 
 Run these with a local Vite server, e.g. `npm run dev -- --port 5187`, and a Playwright installation via `LAUNCHER_PLAYWRIGHT_MODULE` (optional `LAUNCHER_CHROMIUM`). Scripts accept local URL and screenshot output directory arguments. Screenshots from this run: `/tmp/launcher-layout`, `/tmp/launcher-refresh-smoke`, `/tmp/launcher-refresh-edge`, `/tmp/launcher-refresh-ux`; Play, Profiles and Settings screenshots personally inspected.
 
-No claim of Windows package validation, real Microsoft sign-in, real ad-provider completion or authenticated Minecraft playthrough. No loader, payload, release script, installer or published version changed. Future publication requires a new version and normal exact-candidate Windows/package verification.
+Windows startup run `34429550987` and six-account WebView run `34429623600` passed. Final publishable installer run `34430964295` and live public installer run `34431338322` passed clean install, same-version reinstall, packaged networking and nonblank rendering. Both screenshots were personally inspected. The public installer matches the approved bytes; the final public universal JAR passes hardened verification with 90 protected classes.
+
+No real Microsoft sign-in, real ad-provider completion or authenticated Minecraft playthrough is claimed. Same-version reinstall is not proof of a 0.1.135-to-0.1.136 migration. No loader or payload changes were included.
