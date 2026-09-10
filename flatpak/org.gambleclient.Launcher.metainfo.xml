@@ -23,9 +23,9 @@
   <url type="bugtracker">https://github.com/Gamble-Client/GambleLauncher/issues</url>
   <content_rating type="oars-1.1" />
   <releases>
-    <release version="0.1.135" date="2026-09-08">
+    <release version="0.1.136" date="2026-09-10">
       <description>
-        <p>Reports delayed game exits, prevents stale account and process status, and improves keyboard focus and diagnostics layout.</p>
+        <p>Quietens window headers, improves profiles and settings, and shows sponsor prompts only when Play needs them.</p>
       </description>
     </release>
     <release version="0.1.134" date="2026-09-08">
