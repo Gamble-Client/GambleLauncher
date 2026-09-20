@@ -1,6 +1,13 @@
 # Gamble Client Launcher — current handoff
 
-Updated 2026-09-10 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
+Updated 2026-09-20 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
+
+## Current visual work (source, not a published package)
+
+- Removed Play's redundant launcher-account/Signed in card; retained one Minecraft account row and account management. Adopted ClientTheme charcoal surfaces, flatter controls, quieter typography and a prominent amber Play button.
+- Opening motion animates the persistent root once, never on polling renders. Minecraft preparation has a decorative orbit indicator tied to the existing real launch-progress lifecycle. Reduced motion and the saved animations setting are honored; no launch delay or authorization changes.
+- Verification: 62 Node tests, forced Java test rerun, frontend build; six synthetic account smoke fixtures and layout/profile/help regressions at 820/1120/1440. Added scripts/launcher-motion-regression.mjs for one-shot startup, progress completion, reduced motion and disabled animations. Screenshots under /tmp/launcher-modern-layout and /tmp/launcher-motion.
+- These are local/browser fixtures, not Windows installed-package or authenticated Minecraft proof. Public package version is unchanged; do not rebuild/overwrite 0.1.136. A future release requires a new version and exact-candidate Windows verification.
 
 ## Released workspace refresh — 0.1.136 (2026-09-10 UTC)
 

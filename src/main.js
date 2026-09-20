@@ -483,6 +483,8 @@ function cssEscape(value) {
   return String(value).replaceAll('"', '\\"').replaceAll("\\", "\\\\");
 }
 
+let openingMotionPlayed = false;
+
 function render() {
   const focused = document.activeElement;
   const focusField = focused?.dataset?.field;
@@ -568,6 +570,14 @@ function render() {
   `;
 
   renderedView = state.view;
+  // Animate the persistent root once, not the replaced markup on every poll.
+  if (!openingMotionPlayed) {
+    openingMotionPlayed = true;
+    if (state.animationsEnabled && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      app.animate([{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'translateY(0)' }],
+        { duration: 420, easing: 'cubic-bezier(.16,1,.3,1)' });
+    }
+  }
   if (preserveScroll) restoreScrollState(scrollState);
   const dialog = app.querySelector('[aria-modal="true"]');
   for (const background of app.querySelectorAll(".shell > .rail, .shell > .content")) background.inert = Boolean(dialog);
@@ -727,12 +737,11 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
         <div class="identity-card">
           <div class="avatar" style="${escapeAttr(avatarStyle(activeMicrosoft))}">${avatarText(avatarStyle(activeMicrosoft), activeMicrosoft?.name)}</div>
           <div>
-            <span class="eyebrow">Active identity</span>
+            <span class="eyebrow">Minecraft account</span>
             <strong>${escapeHtml(activeMicrosoft?.name || accountTitle())}</strong>
             <small>${escapeHtml(activeMicrosoft ? `Launching with ${profileAccountLabel(profile)}` : "Offline session · online servers require Microsoft")}</small>
           </div>
         </div>
-        ${accountRow("Launcher", accountTitle(), accountMeta(), signedIn ? "Signed in" : "Required", launcherAvatarStyle())}
         <button class="ghost identity-manage" type="button" data-view="accounts">Manage accounts</button>
       </aside>
     </section>
@@ -1225,6 +1234,7 @@ function launchProgressModal() {
   return `
     <section class="modal-scrim">
       <article class="update-modal launch-progress-modal" role="dialog" aria-modal="true" aria-label="Launch progress" tabindex="-1">
+        <div class="launch-emblem" aria-hidden="true"><img src="${escapeAttr(logoUrl)}" alt=""></div>
         <span class="eyebrow">Launch progress</span>
         <h2>Preparing Minecraft</h2>
         <p role="status">${escapeHtml(progress.message)}</p>
