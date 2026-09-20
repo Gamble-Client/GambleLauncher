@@ -2,12 +2,13 @@
 
 Updated 2026-09-20 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
 
-## Current visual work (source, not a published package)
+## Released visual refresh — 0.1.137
 
 - Removed Play's redundant launcher-account/Signed in card; retained one Minecraft account row and account management. Adopted ClientTheme charcoal surfaces, flatter controls, quieter typography and a prominent amber Play button.
 - Opening motion animates the persistent root once, never on polling renders. Minecraft preparation has a decorative orbit indicator tied to the existing real launch-progress lifecycle. Reduced motion and the saved animations setting are honored; no launch delay or authorization changes.
 - Verification: 62 Node tests, forced Java test rerun, frontend build; six synthetic account smoke fixtures and layout/profile/help regressions at 820/1120/1440. Added scripts/launcher-motion-regression.mjs for one-shot startup, progress completion, reduced motion and disabled animations. Screenshots under /tmp/launcher-modern-layout and /tmp/launcher-motion.
-- These are local/browser fixtures, not Windows installed-package or authenticated Minecraft proof. Public package version is unchanged; do not rebuild/overwrite 0.1.136. A future release requires a new version and exact-candidate Windows verification.
+- Exact-source Windows startup `35484401587` and WebView/six-account fixtures `35484411837` passed. Final publication installer candidate `35485290426` and live public install `35485521743` passed clean install, same-version reinstall, packaged networking and nonblank render proof; screenshots personally inspected. Public installer matches approved final bytes; public JAR passes hardened verification (90 classes). No authenticated gameplay or prior-version migration is claimed.
+- Final Windows SHA-256 `3a8adce1a453f4685527787fb1ac62287a16c201fb00f4b95b488e8ea18b2f65` (2734021 bytes); JAR `7a1e5ae0164efb5d3b72ff3c010a23e9a5a8610e0d411a5e9e02f759cbea5e12` (11397978 bytes). Builds: Windows `35484986408`, Linux `35484986389`, Flatpak `35484986589`. Evidence: /tmp/launcher-137-qa.cddZ4I and workspace outputs/launcher-ux-audit/RELEASE-0.1.137.md.
 
 ## Released workspace refresh — 0.1.136 (2026-09-10 UTC)
 
@@ -21,10 +22,10 @@ Updated 2026-09-20 UTC. This chat owns the launcher **and standalone loader**. T
 
 - Repository: /home/theac/Desktop/gamble-client-launcher; GitHub: https://github.com/Gamble-Client/GambleLauncher.
 - Branch: `codex/launcher-ui-security-pass-20260821`.
-- Public launcher: **0.1.136**, immutable artifact source `c511b8cc2165c2f8fe0c11917d8cb526aa2f164f`. Later documentation commits are not package sources. Do not rebuild or overwrite this version from a later HEAD.
-- Current client payload: `20260908205647` / version `1.251`, source `df67f6152af94489f7f1ff7410079c593afcc327`; client-only AntiScreenshare fix, no launcher/loader artifact change.
+- Public launcher: **0.1.137**, immutable artifact source `fed6b257d0aec306075e59485ff4ee678a8bde53`. Later documentation commits are not package sources. Do not rebuild or overwrite this version from a later HEAD.
+- Current client payload: `20260920011754` / version `1.263`, source `583c1f0beb4b36abc468f361dd6dace1002af85c`; preserved unchanged by this launcher release.
 - Unchanged standalone loader: `1.4.26`, source `f5ce16348f47b63edd2f3a8be3be075fda13d24d`. Source directory: /home/theac/Desktop/GambleClient/client/standalone-loader.
-- Launcher-only Site metadata/state commits: `53411cb` / `0ec267f`. Canonical production: https://gambleclient.org; Pages deployment: https://ebfbebcc.gamble-client-b67.pages.dev.
+- Launcher-only Site metadata/state commits: `4b181e8` / `cb3bbe3`. Canonical production: https://gambleclient.org; Pages deployment: https://9e14b151.gamble-client-b67.pages.dev.
 - Current artifacts: Windows NSIS installer, RPM, DEB, bundled-Java Flatpak and universal JavaFX JAR. MSI is intentionally unavailable.
 - Public Windows and JAR downloads were independently compared byte-for-byte with the tested/staged artifacts. Final JAR was checked after the release workflow's macOS native merge, including a hardened verification of the downloaded public bytes.
 
