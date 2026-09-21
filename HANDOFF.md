@@ -2,12 +2,14 @@
 
 Updated 2026-09-21 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
 
-## Candidate 0.1.139 — optional client shader compatibility preference
+## Released 0.1.139 — optional client shader compatibility preference
 
-- User authorized coordinated publication; hold deployment until the client task provides explicit release-ready source and five-tier receipt. Production remains 0.1.138 until that integrated pass. Loader1.4.26 is unchanged.
+- Published with client build20260921031846. Immutable launcher source8cd3d6d1bab210e93c25173a127c167ad62484b3; loader1.4.26 unchanged. Do not rebuild or overwrite version0.1.139 from a later documentation HEAD.
 - Graphics settings adds persistent “Disable client shaders”, default off. Native/web, Swing and JavaFX pass -Dgamble.shaders.disabled=true only when enabled; unchecked omits it. Conflicting inherited/custom copies of this exact property are removed without changing other JVM options. Applies on next Minecraft start, affects optional Gamble effects, not Iris or required renderer shaders.
 - JavaFX reflected preference field/save method are retained through ProGuard. Added frontend forwarding, Rust legacy-default/override/idempotence and Java override/idempotence tests. Browser script scripts/launcher-shaders-regression.mjs verifies default, reload persistence both ways, help and widths820/1120/1440. Screenshots /tmp/launcher-shaders inspected.
-- Local checks: Node64, Java43, Rust62 passed/one existing live-network ignored; frontend build passed. Platform/final-artifact gates still pending; no claim of released status or authenticated gameplay.
+- Local checks: Node64, Java43, Rust62 passed/one existing live-network ignored; frontend build and hardened90classes passed. Six account fixtures, layout/motion, five edge and nine interaction checks passed. No authenticated gameplay is claimed by this launcher task.
+- Exact-source Windows startup35554515426, WebView diagnostic35554531307, Windowsbuild35554532952, Linux35554534627 and Flatpak35554515379 passed. Windows Java40 passed/three expected platform skips. Candidate35554910716 and final public35557788070 passed clean install, same-version reinstall, packaged networking and nonblank rendering; screenshots inspected. Same-version reinstall is not a prior-version migration test.
+- Public Windows SHA256ed001d4a085446b702b5ca1735de4403f2e192d1ddb5cfc8af8432be88105f27 (2738024bytes), byte-identical to approved candidate. Four approved native artifacts and three manifests were directly staged without rebuilding, then downloaded/cmp verified. Release reports final JAR/native/client-tier R2 audit passed. Evidence /tmp/launcher-139-qa.fc7i4F and task outputs/launcher-ux-audit/RELEASE-0.1.139.md.
 
 ## Released 0.1.138 — GPU recovery false positive
 
@@ -37,10 +39,10 @@ Updated 2026-09-21 UTC. This chat owns the launcher **and standalone loader**. T
 
 - Repository: /home/theac/Desktop/gamble-client-launcher; GitHub: https://github.com/Gamble-Client/GambleLauncher.
 - Branch: `codex/launcher-ui-security-pass-20260821`.
-- Public launcher: **0.1.138**, immutable artifact source `e05f5233e79104b1f5d05a7b1ad50d71e0096ec1`. Later documentation commits are not package sources. Do not rebuild or overwrite this version from a later HEAD.
-- Current client payload: `20260921004407` / version `1.264`, source `c253ef9d1ba31df1708aa415a12a8ff8c58746e4`; published by release in the coordinated integrated pass.
+- Public launcher: **0.1.139**, immutable artifact source `8cd3d6d1bab210e93c25173a127c167ad62484b3`. Later documentation commits are not package sources. Do not rebuild or overwrite this version from a later HEAD.
+- Current client payload: `20260921031846` / version `1.264`, source `ed85751305e0a080155f7ec544fd389d1e53ff17`; published by release in the coordinated integrated pass.
 - Unchanged standalone loader: `1.4.26`, source `f5ce16348f47b63edd2f3a8be3be075fda13d24d`. Source directory: /home/theac/Desktop/GambleClient/client/standalone-loader.
-- Integrated Site metadata/state commits: `29bb605` / `9159d44`. Canonical production: https://gambleclient.org; Pages deployment: https://89d883c3.gamble-client-b67.pages.dev.
+- Integrated Site metadata/state commits: `f5a8dbf` / `567ec86`. Canonical production: https://gambleclient.org; Pages deployment: https://33585c91.gamble-client-b67.pages.dev.
 - Current artifacts: Windows NSIS installer, RPM, DEB, bundled-Java Flatpak and universal JavaFX JAR. MSI is intentionally unavailable.
 - Public Windows and JAR downloads were independently compared byte-for-byte with the tested/staged artifacts. Final JAR was checked after the release workflow's macOS native merge, including a hardened verification of the downloaded public bytes.
 
