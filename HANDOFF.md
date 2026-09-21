@@ -4,7 +4,7 @@ Updated 2026-09-21 UTC. This chat owns the launcher **and standalone loader**. T
 
 ## Client-only publication — 2026-09-21
 
-- Client source `091a9d0da2f71d78ccf29d9b0e1ec832041375ca` is now published at build `20260921210548` / public version `1.264`.
+- Client source `f1e2ec00cf63523d743aaca70ed832cba2ccc58d` is now published at build `20260921223858` / public version `1.264`.
 - Launcher `0.1.139` and standalone loader `1.4.27` were intentionally preserved byte-for-byte; no launcher/loader rebuild or source publication was part of this pass.
 - Pages `https://7d490428.gamble-client-b67.pages.dev` and canonical `https://gambleclient.org` passed the release workflow's remote artifact/provenance audit. Continue resolving launcher package provenance against immutable source `8cd3d6d1bab210e93c25173a127c167ad62484b3`.
 
@@ -53,9 +53,9 @@ Updated 2026-09-21 UTC. This chat owns the launcher **and standalone loader**. T
 - Repository: /home/theac/Desktop/gamble-client-launcher; GitHub: https://github.com/Gamble-Client/GambleLauncher.
 - Branch: `codex/launcher-ui-security-pass-20260821`.
 - Public launcher: **0.1.139**, immutable artifact source `8cd3d6d1bab210e93c25173a127c167ad62484b3`. Later documentation commits are not package sources. Do not rebuild or overwrite this version from a later HEAD.
-- Current client payload: `20260921210548` / version `1.264`, source `091a9d0da2f71d78ccf29d9b0e1ec832041375ca`; published by the client-only release after the coordinated integrated pass.
+- Current client payload: `20260921223858` / version `1.264`, source `f1e2ec00cf63523d743aaca70ed832cba2ccc58d`; published by the client-only release after the coordinated integrated pass.
 - Current standalone loader: `1.4.27`, source `052f9a4eeb44c89e1989e38c6d6adcceacc9d407`. Source directory: /home/theac/Desktop/GambleClient/client/standalone-loader.
-- Integrated Site metadata/state commits: `6f3ff99` / `4c74afd`. Canonical production: https://gambleclient.org; Pages deployment: https://7d490428.gamble-client-b67.pages.dev.
+- Integrated Site metadata/state commits: `d2dcc62` / `fca702d`. Canonical production: https://gambleclient.org; Pages deployment: https://50b61f64.gamble-client-b67.pages.dev.
 - Current artifacts: Windows NSIS installer, RPM, DEB, bundled-Java Flatpak and universal JavaFX JAR. MSI is intentionally unavailable.
 - Public Windows and JAR downloads were independently compared byte-for-byte with the tested/staged artifacts. Final JAR was checked after the release workflow's macOS native merge, including a hardened verification of the downloaded public bytes.
 
