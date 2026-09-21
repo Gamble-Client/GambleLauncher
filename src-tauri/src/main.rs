@@ -517,6 +517,8 @@ struct LaunchRequest {
     java_args: String,
     #[serde(rename = "antiScreenshare")]
     anti_screenshare: bool,
+    #[serde(default, rename = "disableClientShaders")]
+    disable_client_shaders: bool,
     #[serde(default, rename = "clientDisplayName")]
     client_display_name: String,
     #[serde(default, rename = "graphicsMode")]
@@ -2023,6 +2025,7 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         input.memory.max(2).min(16),
         &input.java_args,
         input.anti_screenshare,
+        input.disable_client_shaders,
         &input.client_display_name,
         &graphics_mode,
         &gpu_selector,
@@ -3549,6 +3552,13 @@ fn extract_natives_with_progress(
     Ok(target)
 }
 
+fn apply_client_shader_preference(command: &mut Vec<String>, disabled: bool) {
+    command.retain(|arg| arg != "-Dgamble.shaders.disabled" && !arg.starts_with("-Dgamble.shaders.disabled="));
+    if disabled {
+        command.push("-Dgamble.shaders.disabled=true".to_string());
+    }
+}
+
 fn build_minecraft_command(
     game_dir: &Path,
     profile_id: &str,
@@ -3561,6 +3571,7 @@ fn build_minecraft_command(
     memory: u8,
     extra_java_args: &str,
     anti_screenshare: bool,
+    disable_client_shaders: bool,
     client_display_name: &str,
     graphics_mode: &str,
     gpu_selector: &str,
@@ -3604,6 +3615,7 @@ fn build_minecraft_command(
         }
     }
     command.extend(split_args(extra_java_args)?);
+    apply_client_shader_preference(&mut command, disable_client_shaders);
     if matches!(
         profile_kind(profile_id),
         ProfileKind::Fabric | ProfileKind::Client
@@ -6444,6 +6456,24 @@ fn open_external(target: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn client_shader_preference_is_authoritative_and_idempotent() {
+        for disabled in [false, true] {
+            let mut command: Vec<String> = ["java", "-Xmx4G", "-Dgamble.shaders.disabled=false", "-Dgamble.shaders.disabled=true", "-Dgamble.shaders.disabled", "-Dgamble.shaders.disabled.other=keep"].iter().map(|s| s.to_string()).collect();
+            let mut expected: Vec<String> = ["java", "-Xmx4G", "-Dgamble.shaders.disabled.other=keep"].iter().map(|s| s.to_string()).collect();
+            if disabled { expected.push("-Dgamble.shaders.disabled=true".to_string()); }
+            super::apply_client_shader_preference(&mut command, disabled);
+            assert_eq!(command, expected);
+            super::apply_client_shader_preference(&mut command, disabled);
+            assert_eq!(command, expected);
+        }
+    }
+
+    #[test]
+    fn legacy_launch_request_defaults_client_shaders_on() {
+        let request: super::LaunchRequest = serde_json::from_value(serde_json::json!({"profile":"gamble-client", "build":"beta", "token":"", "username":"fixture", "memory":4, "javaArgs":"", "antiScreenshare":false})).unwrap();
+        assert!(!request.disable_client_shaders);
+    }
     use super::{
         asset_worker_count, download_missing_assets, ensure_download_parent,
         first_party_request_urls, has_launcher_managed_enrollment, is_browser_url,

@@ -2,6 +2,13 @@
 
 Updated 2026-09-21 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
 
+## Candidate 0.1.139 — optional client shader compatibility preference
+
+- User authorized coordinated publication; hold deployment until the client task provides explicit release-ready source and five-tier receipt. Production remains 0.1.138 until that integrated pass. Loader1.4.26 is unchanged.
+- Graphics settings adds persistent “Disable client shaders”, default off. Native/web, Swing and JavaFX pass -Dgamble.shaders.disabled=true only when enabled; unchecked omits it. Conflicting inherited/custom copies of this exact property are removed without changing other JVM options. Applies on next Minecraft start, affects optional Gamble effects, not Iris or required renderer shaders.
+- JavaFX reflected preference field/save method are retained through ProGuard. Added frontend forwarding, Rust legacy-default/override/idempotence and Java override/idempotence tests. Browser script scripts/launcher-shaders-regression.mjs verifies default, reload persistence both ways, help and widths820/1120/1440. Screenshots /tmp/launcher-shaders inspected.
+- Local checks: Node64, Java43, Rust62 passed/one existing live-network ignored; frontend build passed. Platform/final-artifact gates still pending; no claim of released status or authenticated gameplay.
+
 ## Released 0.1.138 — GPU recovery false positive
 
 - Published in integrated build 20260921004407. Immutable launcher source e05f5233e79104b1f5d05a7b1ad50d71e0096ec1; standalone loader1.4.26 preserved. Do not rebuild or overwrite version0.1.138.

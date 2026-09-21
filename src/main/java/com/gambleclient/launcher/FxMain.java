@@ -290,6 +290,16 @@ public class FxMain extends Application {
         VBox body = new VBox(14);
         body.getStyleClass().addAll("content", "screen");
         HBox header = screenHeader("Launcher Settings");
+        javafx.scene.control.CheckBox shaders = new javafx.scene.control.CheckBox("Disable client shaders");
+        shaders.setSelected(swingCheckBoxSelected("disableClientShaders"));
+        shaders.setTooltip(new javafx.scene.control.Tooltip("Applies on the next Minecraft start. Disables optional Gamble shader effects, not Iris or Minecraft's required renderer."));
+        shaders.setOnAction(e -> {
+            boolean disabled = shaders.isSelected();
+            runSwing(() -> {
+                ((javax.swing.JCheckBox) field("disableClientShaders")).setSelected(disabled);
+                call("saveGraphicsSettings");
+            });
+        });
         boolean[] autoEnabled = { swingCheckBoxSelected("autoCheckUpdates") };
         boolean[] slotSounds = { backendBoolean("readSlotSoundsEnabled") };
         boolean[] slotWinSounds = { backendBoolean("readSlotWinSoundsEnabled") };
@@ -346,7 +356,7 @@ public class FxMain extends Application {
                 label("Visible names only; managed folders and update identifiers stay canonical.", "muted"),
                 controlField("Launcher name", launcherName), controlField("Client name", clientName)),
             section("Versions", chip("Minecraft", "1.21.11"), chip("Fabric Loader", "0.19.3+ (profile selectable)")),
-            section("Runtime", controlField("Memory", memoryBox), controlField("Java Args", javaArgs), controlField("Graphics mode", graphicsMode), controlField("GPU selector (DRI_PRIME)", gpuSelector)),
+            section("Runtime", controlField("Memory", memoryBox), controlField("Java Args", javaArgs), controlField("Graphics mode", graphicsMode), controlField("GPU selector (DRI_PRIME)", gpuSelector), controlField("Next Minecraft start", shaders)),
             section("Updates", label("Launcher and client update checks", "muted"), buttonRow(autoCheck, checkUpdatesButton())),
             section("Slots", label("Slot sounds are quiet reel ticks. Win sounds are separate.", "muted"), buttonRow(slotSoundToggle, slotWinSoundToggle)),
             section("Links", buttonRow(review, website, credits)),

@@ -202,7 +202,8 @@ test("the hardened universal JAR keeps every JavaFX reflection bridge member", a
         "getResourcePacksFolder",
         "getMinecraftFolder"
     ];
-    const bridgeFields = ["launcherDisplayName", "clientDisplayName", "graphicsMode", "gpuSelector"];
+    bridgeMethods.push("saveGraphicsSettings");
+    const bridgeFields = ["launcherDisplayName", "clientDisplayName", "graphicsMode", "gpuSelector", "disableClientShaders"];
 
     for (const member of bridgeMethods) {
         assert.match(proguard, new RegExp(`${member}\\(`), `missing kept method: ${member}`);

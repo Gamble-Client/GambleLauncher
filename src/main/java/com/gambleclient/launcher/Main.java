@@ -137,7 +137,7 @@ public class Main {
     private static final Color HOVER = new Color(38, 32, 42);
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.138";
+    private static final String LAUNCHER_VERSION = "0.1.139";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -267,6 +267,7 @@ public class Main {
     private final JTextField javaArgs = new JTextField("");
     private final JComboBox<String> graphicsMode = new JComboBox<>(new String[] {"Automatic", "Safe graphics", "Software fallback"});
     private final JTextField gpuSelector = new JTextField("");
+    private final JCheckBox disableClientShaders = new JCheckBox("Disable client shaders");
     private final JTextField launcherDisplayName = new JTextField("Gamble Client Launcher");
     private final JTextField clientDisplayName = new JTextField("Gamble Client");
     private final JLabel heroTitle = new JLabel("Gamble Client");
@@ -760,7 +761,11 @@ public class Main {
         addSettingsField(panel, gbc, 2, "Java Args", javaArgs);
         addSettingsField(panel, gbc, 3, "Graphics mode", graphicsMode);
         addSettingsField(panel, gbc, 4, "GPU selector (DRI_PRIME)", gpuSelector);
-        gbc.gridy = 5;
+        disableClientShaders.setOpaque(false);
+        disableClientShaders.setForeground(TEXT);
+        disableClientShaders.setToolTipText("Applies on the next Minecraft start. Disables optional Gamble shader effects, not Iris or Minecraft's required renderer.");
+        addSettingsField(panel, gbc, 5, "Next Minecraft start", disableClientShaders);
+        gbc.gridy = 6;
         gbc.insets = new Insets(0, 0, 0, 0);
         panel.add(label("Safe graphics keeps hardware acceleration but disables the known risky Mesa paths. Software fallback is CPU-rendered.", 12, Font.PLAIN, MUTED), gbc);
         return panel;
@@ -857,6 +862,7 @@ public class Main {
         selectStoredBuild();
         graphicsMode.addActionListener(e -> saveGraphicsSettings());
         gpuSelector.addActionListener(e -> saveGraphicsSettings());
+        disableClientShaders.addActionListener(e -> saveGraphicsSettings());
         gpuSelector.addFocusListener(new java.awt.event.FocusAdapter() {
             @Override
             public void focusLost(java.awt.event.FocusEvent event) {
@@ -1354,6 +1360,7 @@ public class Main {
         clientDisplayName.setText(sanitizeDisplayName(Json.string(settings.get("clientDisplayName")), "Gamble Client"));
         graphicsMode.setSelectedItem(graphicsModeLabel(Json.string(settings.get("graphicsMode"))));
         gpuSelector.setText(sanitizeGpuSelector(Json.string(settings.get("gpuSelector"))));
+        disableClientShaders.setSelected(Boolean.TRUE.equals(settings.get("disableClientShaders")));
         applyDisplayNames();
     }
 
@@ -1395,6 +1402,7 @@ public class Main {
         Map<String, Object> settings = readLauncherSettings();
         settings.put("graphicsMode", selectedGraphicsMode());
         settings.put("gpuSelector", sanitizeGpuSelector(gpuSelector.getText()));
+        settings.put("disableClientShaders", disableClientShaders.isSelected());
         saveLauncherSettings(settings, "Graphics settings saved.");
     }
 
@@ -1434,7 +1442,8 @@ public class Main {
                 + "\"launcherDisplayName\":\"" + jsonEscape(sanitizeDisplayName(Json.string(settings.get("launcherDisplayName")), "Gamble Client Launcher")) + "\","
                 + "\"clientDisplayName\":\"" + jsonEscape(sanitizeDisplayName(Json.string(settings.get("clientDisplayName")), "Gamble Client")) + "\","
                 + "\"graphicsMode\":\"" + jsonEscape(selectedGraphicsMode()) + "\","
-                + "\"gpuSelector\":\"" + jsonEscape(sanitizeGpuSelector(gpuSelector.getText())) + "\""
+                + "\"gpuSelector\":\"" + jsonEscape(sanitizeGpuSelector(gpuSelector.getText())) + "\","
+                + "\"disableClientShaders\":" + disableClientShaders.isSelected()
                 + "}" + System.lineSeparator();
             Files.write(getLauncherSettingsFile().toPath(), json.getBytes(StandardCharsets.UTF_8));
             log(successMessage);
@@ -3502,6 +3511,7 @@ public class Main {
         final int memory = selectedMemory instanceof Number ? ((Number) selectedMemory).intValue() : 4;
         final String selectedGraphicsMode = selectedGraphicsMode();
         final String selectedGpuSelector = sanitizeGpuSelector(gpuSelector.getText());
+        final boolean selectedDisableClientShaders = disableClientShaders.isSelected();
         final List<String> extraJavaArgs;
         try {
             extraJavaArgs = splitArgs(javaArgs.getText());
@@ -3555,7 +3565,7 @@ public class Main {
                 LaunchIdentity identity = resolveLaunchIdentity(name);
                 return launchMinecraftProcess(launchProfile, identity, memory, extraJavaArgs,
                     launchProfile.includesGambleClient ? canonicalBuildId(launchBuild.id) : "",
-                    selectedGraphicsMode, selectedGpuSelector);
+                    selectedGraphicsMode, selectedGpuSelector, selectedDisableClientShaders);
             }
 
             @Override
@@ -3830,7 +3840,7 @@ public class Main {
 
     private Process launchMinecraftProcess(LaunchProfile launchProfile, LaunchIdentity identity, int memory,
                                           List<String> extraJavaArgs, String launchBuild,
-                                          String graphicsMode, String gpuSelector) throws IOException {
+                                          String graphicsMode, String gpuSelector, boolean disableShaders) throws IOException {
         File gameDir = getMinecraftFolder(launchProfile);
         File versionsDir = new File(gameDir, "versions");
         if (!versionsDir.exists() && !versionsDir.mkdirs()) {
@@ -3861,7 +3871,7 @@ public class Main {
 
         setProgress(82, "Launching");
         try {
-            List<String> command = buildLaunchCommand(gameDir, profile, classpath, nativesDir, identity, memory, versionId, extraJavaArgs, launchProfile, launchBuild, graphicsMode, gpuSelector);
+            List<String> command = buildLaunchCommand(gameDir, profile, classpath, nativesDir, identity, memory, versionId, extraJavaArgs, launchProfile, launchBuild, graphicsMode, gpuSelector, disableShaders);
             LaunchValidation validation = validateLaunchSetup(gameDir, profile, classpath, nativesDir, versionId, launchProfile, identity);
             logValidationReport(validation);
             logLaunchCommandDetails(command, profile.mainClass, gameDir);
@@ -4378,7 +4388,7 @@ public class Main {
         diagnosticLog("OpenGL/Mesa/Vulkan renderer: emitted by the client after Minecraft creates its graphics context.");
     }
 
-    private List<String> buildLaunchCommand(File gameDir, VersionProfile profile, List<File> classpath, File nativesDir, LaunchIdentity identity, int memory, String versionId, List<String> extraJavaArgs, LaunchProfile launchProfile, String launchBuild, String graphicsMode, String gpuSelector) {
+    private List<String> buildLaunchCommand(File gameDir, VersionProfile profile, List<File> classpath, File nativesDir, LaunchIdentity identity, int memory, String versionId, List<String> extraJavaArgs, LaunchProfile launchProfile, String launchBuild, String graphicsMode, String gpuSelector, boolean disableShaders) {
         List<String> command = new ArrayList<>();
         command.add(javaExecutable());
         command.add("-Xmx" + memory + "G");
@@ -4403,6 +4413,7 @@ public class Main {
         }
         addDefaultCapeProviderProperties(command);
         command.addAll(extraJavaArgs);
+        applyClientShaderPreference(command, disableShaders);
         if (launchProfile.fabric) {
             // Keep Fabric tied to this launcher's selected managed profile even
             // when old inherited/custom JVM args contain a different mod path.
@@ -4434,6 +4445,11 @@ public class Main {
         }
 
         return command;
+    }
+
+    private static void applyClientShaderPreference(List<String> command, boolean disabled) {
+        command.removeIf(arg -> arg.equals("-Dgamble.shaders.disabled") || arg.startsWith("-Dgamble.shaders.disabled="));
+        if (disabled) command.add("-Dgamble.shaders.disabled=true");
     }
 
     private boolean isLauncherManagedJvmArg(String arg) {
@@ -6311,6 +6327,7 @@ public class Main {
         javaArgs.setEnabled(!busy && !running);
         graphicsMode.setEnabled(!busy && !running);
         gpuSelector.setEnabled(!busy && !running);
+        disableClientShaders.setEnabled(!busy && !running);
     }
 
     private boolean sponsoredAccessActiveFor(Build build) {

@@ -34,6 +34,18 @@ function harness(native) {
   };
 }
 
+for (const disabled of [false, true]) test(`launch forwards client shaders preference ${disabled}`, async () => {
+  let input;
+  const ui = harness(async (command, args) => {
+    if (command === "minecraft_status") return { running: !!input };
+    if (command === "launch_game") { input = args.input; return "Minecraft process started."; }
+    throw new Error(command);
+  });
+  Object.assign(ui.state, { selectedProfile: "fabric", disableClientShaders: disabled });
+  await ui.click();
+  assert.equal(input.disableClientShaders, disabled);
+});
+
 test("cancelling sign-in rejects an already in-flight ready response", async () => {
   let finish, started;
   const requested = new Promise(resolve => { started = resolve; });

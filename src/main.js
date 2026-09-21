@@ -21,7 +21,7 @@ const LAUNCHER_DISPLAY_NAME_KEY = "gamble.launcher.displayName";
 const CLIENT_DISPLAY_NAME_KEY = "gamble.client.displayName";
 const GRAPHICS_MODE_KEY = "gamble.launcher.graphicsMode";
 const GPU_SELECTOR_KEY = "gamble.launcher.gpuSelector";
-const LAUNCHER_VERSION = "0.1.138";
+const LAUNCHER_VERSION = "0.1.139";
 const UPDATE_CHECK_TTL_MS = 5 * 60 * 1000;
 const SOCIAL_CHECK_TTL_MS = 60 * 1000;
 // Browser mocks are a development-only visual harness. A source-built CI
@@ -77,6 +77,7 @@ const state = {
   username: defaultUsername(),
   javaArgs: defaultJavaArgs(),
   graphicsMode: defaultGraphicsMode(),
+  disableClientShaders: readStorage("gamble.launcher.disableClientShaders") === "true",
   gpuSelector: defaultGpuSelector(),
   antiScreenshare: defaultAntiScreenshare(),
   showAdvancedSettings: defaultAdvancedSettings(),
@@ -1103,6 +1104,10 @@ function settingsView(profile, selectedBuild) {
             <label><span>GPU selector (DRI_PRIME)</span>
             <input data-field="gpuSelector" maxlength="128" value="${escapeAttr(state.gpuSelector)}" placeholder="Blank = default GPU" autocomplete="off" spellcheck="false"></label>
             ${contextHelp("gpu", "GPU selector help", "Linux / Mesa only. Examples: 1, 1!, or a Mesa PCI selector. Leave blank unless this computer has more than one GPU.")}
+          </div>
+          <div>
+            ${privacyToggle("disableClientShaders", "Disable client shaders", state.disableClientShaders, "setting")}
+            ${contextHelp("client-shaders", "Client shaders help", "Applies on the next Minecraft start. Disables optional Gamble shader effects, not Iris or Minecraft’s required renderer.")}
           </div>
         </div>
       </section>
@@ -2609,6 +2614,7 @@ app.addEventListener("click", async (event) => {
           memory: Number(state.memory) || 4,
           javaArgs: state.javaArgs,
           antiScreenshare: state.antiScreenshare,
+          disableClientShaders: state.disableClientShaders,
           clientDisplayName: state.clientDisplayName,
           graphicsMode: state.graphicsMode,
           gpuSelector: state.gpuSelector
@@ -2875,6 +2881,12 @@ app.addEventListener("click", async (event) => {
 app.addEventListener("change", async (event) => {
   if (state.busy) return;
   const settingToggle = event.target.closest("[data-setting-toggle]")?.dataset.settingToggle;
+  if (settingToggle === "disableClientShaders") {
+    state.disableClientShaders = event.target.checked;
+    writeStorage("gamble.launcher.disableClientShaders", state.disableClientShaders ? "true" : "false");
+    render();
+    return;
+  }
   if (settingToggle === "animationsEnabled") {
     state.animationsEnabled = event.target.checked;
     writeStorage(ANIMATIONS_KEY, state.animationsEnabled ? "true" : "false");

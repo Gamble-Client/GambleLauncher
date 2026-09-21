@@ -45,12 +45,14 @@
     *** clientDisplayName;
     *** graphicsMode;
     *** gpuSelector;
+    *** disableClientShaders;
     *** launcherAds;
     *** accountStatus;
 
     private javax.swing.JPanel createRoot();
     private void loadDisplayNames();
     private void saveDisplayNames();
+    private void saveGraphicsSettings();
     private boolean readSlotSoundsEnabled();
     private boolean readSlotWinSoundsEnabled();
     private void installSelectedBuild(boolean);

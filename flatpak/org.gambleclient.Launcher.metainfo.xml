@@ -23,6 +23,11 @@
   <url type="bugtracker">https://github.com/Gamble-Client/GambleLauncher/issues</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.1.139" date="2026-09-21">
+      <description>
+        <p>Adds a saved compatibility preference to disable optional Gamble shader effects on the next Minecraft start.</p>
+      </description>
+    </release>
     <release version="0.1.138" date="2026-09-21">
       <description>
         <p>Corrects native GPU recovery classification so a preventive AMD safeguard notice does not select the alternate GPU.</p>
