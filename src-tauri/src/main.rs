@@ -1436,10 +1436,22 @@ fn should_apply_amd_guard(graphics_mode: &str, has_amd_drm: bool) -> bool {
 }
 
 fn launch_log_has_gpu_fault(contents: &str) -> bool {
-    let lower = contents.to_ascii_lowercase();
-    GPU_FAULT_MARKERS
-        .iter()
-        .any(|marker| lower.contains(marker))
+    contents.lines().any(|line| {
+        let lower = line.to_ascii_lowercase();
+        // The client describes a preventive workaround, not an observed reset.
+        // Remove only that known explanatory phrase, not the whole WARN line:
+        // genuine fault text on this line or any other line must still count.
+        let evidence = if lower.contains(
+            "[gpucompatibility] disabled persistent gl buffer storage for linux amd/radeon (",
+        ) {
+            lower.replacen(" to avoid amdgpu gpu resets.", "", 1)
+        } else {
+            lower
+        };
+        GPU_FAULT_MARKERS
+            .iter()
+            .any(|marker| evidence.contains(marker))
+    })
 }
 
 fn resolve_gpu_selector(graphics_mode: &str, requested_selector: &str) -> (String, bool) {
@@ -6715,6 +6727,27 @@ mod tests {
         assert!(!should_apply_amd_guard("automatic", false));
         assert!(should_apply_amd_guard("safe", false));
         assert!(should_apply_amd_guard("software", false));
+    }
+
+    #[test]
+    fn gpu_fault_detection_does_not_treat_buffer_guard_notice_as_a_reset() {
+        let precaution = "[19:15:48] [Render thread/WARN]: [GpuCompatibility] Disabled persistent GL buffer storage for Linux AMD/Radeon (AMD Radeon RX 6800) to avoid amdgpu GPU resets. Set -Dgamble.allowAmdBufferStorage=true to override.";
+        assert!(!launch_log_has_gpu_fault(precaution));
+        assert!(!launch_log_has_gpu_fault(&precaution.to_uppercase()));
+        assert!(!launch_log_has_gpu_fault(&format!("{precaution}\r\n[Render thread/INFO]: Stopping!")));
+    }
+
+    #[test]
+    fn gpu_fault_detection_keeps_real_faults_alongside_precautions() {
+        let precaution = "[GpuCompatibility] Disabled persistent GL buffer storage for Linux AMD/Radeon (RX 6800) to avoid amdgpu GPU resets.";
+        for fault in super::GPU_FAULT_MARKERS {
+            assert!(launch_log_has_gpu_fault(&format!("{precaution}\n{fault}")), "{fault}");
+            assert!(launch_log_has_gpu_fault(&format!("{fault}\n{precaution}")), "{fault}");
+            assert!(launch_log_has_gpu_fault(&format!("{precaution} Actual failure: {fault}")), "{fault}");
+        }
+        assert!(launch_log_has_gpu_fault("amdgpu: GPU reset begin!"));
+        assert!(launch_log_has_gpu_fault("amdgpu: GPU reset succeeded, trying to avoid further failures"));
+        assert!(launch_log_has_gpu_fault("[GpuCompatibility] GPU reset detected"));
     }
 
     #[test]

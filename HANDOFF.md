@@ -2,6 +2,13 @@
 
 Updated 2026-09-20 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
 
+## Pending integrated fix — GPU recovery false positive
+
+- Owner authorized coordinated publication. Preparing launcher 0.1.138; release task alone owns deployment. Keep loader 1.4.26 unchanged and require exact-source platform builds and final Windows candidate verification before metadata promotion.
+- The previous AMD session archive 2026-09-20-5.log.gz contains the preventive GpuCompatibility message “to avoid amdgpu GPU resets.” The substring detector matched “gpu reset” and the next launch used Intel. Exact overwritten launcher log is unavailable; archive reproduction identifies a concrete false positive, not a measured FPS improvement.
+- Detector now removes only that explanatory phrase when the known buffer-storage safeguard message is present. All existing fault markers, AMD environment guards, GPU choice policy and owner settings remain unchanged. Real faults before, after, or on the same line still count.
+- Tests: new precaution regression failed before the patch and passed afterward; full Rust suite 60 passed/one existing live-network test ignored, Node62 passed, npm build passed, forced Java test rerun passed, git diff --check passed. No Minecraft launch or owner settings change performed. Publication pending platform gates.
+
 ## Released visual refresh — 0.1.137
 
 - Removed Play's redundant launcher-account/Signed in card; retained one Minecraft account row and account management. Adopted ClientTheme charcoal surfaces, flatter controls, quieter typography and a prominent amber Play button.
