@@ -1,13 +1,14 @@
 # Gamble Client Launcher — current handoff
 
-Updated 2026-09-20 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
+Updated 2026-09-21 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
 
-## Pending integrated fix — GPU recovery false positive
+## Released 0.1.138 — GPU recovery false positive
 
-- Owner authorized coordinated publication. Preparing launcher 0.1.138; release task alone owns deployment. Keep loader 1.4.26 unchanged and require exact-source platform builds and final Windows candidate verification before metadata promotion.
+- Published in integrated build 20260921004407. Immutable launcher source e05f5233e79104b1f5d05a7b1ad50d71e0096ec1; standalone loader1.4.26 preserved. Do not rebuild or overwrite version0.1.138.
 - The previous AMD session archive 2026-09-20-5.log.gz contains the preventive GpuCompatibility message “to avoid amdgpu GPU resets.” The substring detector matched “gpu reset” and the next launch used Intel. Exact overwritten launcher log is unavailable; archive reproduction identifies a concrete false positive, not a measured FPS improvement.
 - Detector now removes only that explanatory phrase when the known buffer-storage safeguard message is present. All existing fault markers, AMD environment guards, GPU choice policy and owner settings remain unchanged. Real faults before, after, or on the same line still count.
-- Tests: new precaution regression failed before the patch and passed afterward; full Rust suite 60 passed/one existing live-network test ignored, Node62 passed, npm build passed, forced Java test rerun passed, git diff --check passed. No Minecraft launch or owner settings change performed. Publication pending platform gates.
+- Tests: precaution regression red before/green after; Rust60 passed/one existing ignored, Node62, Java42, frontend build and diff checks passed. Windows startup35548678552 and WebView35548683332 passed; final candidate35549380175 and live public35549647405 passed install/reinstall/network/nonblank rendering, screenshots inspected. No owner settings change or Minecraft launch by this task.
+- Final Windows SHA25632e3184f97f136f7ae45fc3906c97eccf192530cc0be66b89453e6cfb4bc373a (2734500bytes); public download identical to approved candidate. JAR70b21aa4f34e26e0a100a956cbe1011c61ada5ce219ecd25a14433e9382c340b (11397979bytes), hardened90classes PASS. Windows35548957815/Linux35548957858/Flatpak35548957616 manifests verified. Evidence /tmp/launcher-138-qa.2AsodC and outputs/launcher-ux-audit/RELEASE-0.1.138.md. Same-version reinstall is not a prior-version migration test.
 
 ## Released visual refresh — 0.1.137
 
@@ -29,10 +30,10 @@ Updated 2026-09-20 UTC. This chat owns the launcher **and standalone loader**. T
 
 - Repository: /home/theac/Desktop/gamble-client-launcher; GitHub: https://github.com/Gamble-Client/GambleLauncher.
 - Branch: `codex/launcher-ui-security-pass-20260821`.
-- Public launcher: **0.1.137**, immutable artifact source `fed6b257d0aec306075e59485ff4ee678a8bde53`. Later documentation commits are not package sources. Do not rebuild or overwrite this version from a later HEAD.
-- Current client payload: `20260920011754` / version `1.263`, source `583c1f0beb4b36abc468f361dd6dace1002af85c`; preserved unchanged by this launcher release.
+- Public launcher: **0.1.138**, immutable artifact source `e05f5233e79104b1f5d05a7b1ad50d71e0096ec1`. Later documentation commits are not package sources. Do not rebuild or overwrite this version from a later HEAD.
+- Current client payload: `20260921004407` / version `1.264`, source `c253ef9d1ba31df1708aa415a12a8ff8c58746e4`; published by release in the coordinated integrated pass.
 - Unchanged standalone loader: `1.4.26`, source `f5ce16348f47b63edd2f3a8be3be075fda13d24d`. Source directory: /home/theac/Desktop/GambleClient/client/standalone-loader.
-- Launcher-only Site metadata/state commits: `4b181e8` / `cb3bbe3`. Canonical production: https://gambleclient.org; Pages deployment: https://9e14b151.gamble-client-b67.pages.dev.
+- Integrated Site metadata/state commits: `29bb605` / `9159d44`. Canonical production: https://gambleclient.org; Pages deployment: https://89d883c3.gamble-client-b67.pages.dev.
 - Current artifacts: Windows NSIS installer, RPM, DEB, bundled-Java Flatpak and universal JavaFX JAR. MSI is intentionally unavailable.
 - Public Windows and JAR downloads were independently compared byte-for-byte with the tested/staged artifacts. Final JAR was checked after the release workflow's macOS native merge, including a hardened verification of the downloaded public bytes.
 
