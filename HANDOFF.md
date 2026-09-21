@@ -2,6 +2,13 @@
 
 Updated 2026-09-21 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
 
+## Current loader release — 1.4.27
+
+- Published in integrated client build20260921105521/version1.264, source052f9a4eeb44c89e1989e38c6d6adcceacc9d407. Launcher0.1.139 artifacts remain immutable at source8cd3d6d1bab210e93c25173a127c167ad62484b3; no launcher rebuild or code change was needed. Public loader1.4.26 was not overwritten.
+- Fixed confirmed late-DEFAULT memory mixin selection: after another mixin has applied in the same environment, Sponge's automatic selection can leave newly registered configurations pending. Loader now uses the existing processor selection/preparation path before payload entrypoints, under its actual monitor and re-entrance protection. Existing applied state, authorization and provenance checks remain intact.
+- Both normal/compatibility Knot regressions failed before and passed after the fix on production Fabric0.19.3/Sponge0.17.3 and baseline0.18.2/0.16.5. Exact-source Windows35591333969 passed157 tests (native6, baseline76, production75), zero failures/errors/skips, including both new regressions, renamed built-in Administrators, NTFS ACL/JNI and obfuscated entrypoint checks. Fresh local loader and five-tier checks passed per client receipt. This is not proof of authenticated installed-profile gameplay.
+- Windows evidence: /tmp/loader-1427-windows-35591333969. Release reports completed publication at https://46ca40cd.gamble-client-b67.pages.dev, Site statea24b5be. Later handoff commits are documentation only; release must resolve immutable package sources rather than rebuilding published versions from documentation HEADs.
+
 ## Released 0.1.139 — optional client shader compatibility preference
 
 - Published with client build20260921031846. Immutable launcher source8cd3d6d1bab210e93c25173a127c167ad62484b3; loader1.4.26 unchanged. Do not rebuild or overwrite version0.1.139 from a later documentation HEAD.
@@ -40,9 +47,9 @@ Updated 2026-09-21 UTC. This chat owns the launcher **and standalone loader**. T
 - Repository: /home/theac/Desktop/gamble-client-launcher; GitHub: https://github.com/Gamble-Client/GambleLauncher.
 - Branch: `codex/launcher-ui-security-pass-20260821`.
 - Public launcher: **0.1.139**, immutable artifact source `8cd3d6d1bab210e93c25173a127c167ad62484b3`. Later documentation commits are not package sources. Do not rebuild or overwrite this version from a later HEAD.
-- Current client payload: `20260921031846` / version `1.264`, source `ed85751305e0a080155f7ec544fd389d1e53ff17`; published by release in the coordinated integrated pass.
-- Unchanged standalone loader: `1.4.26`, source `f5ce16348f47b63edd2f3a8be3be075fda13d24d`. Source directory: /home/theac/Desktop/GambleClient/client/standalone-loader.
-- Integrated Site metadata/state commits: `f5a8dbf` / `567ec86`. Canonical production: https://gambleclient.org; Pages deployment: https://33585c91.gamble-client-b67.pages.dev.
+- Current client payload: `20260921105521` / version `1.264`, source `052f9a4eeb44c89e1989e38c6d6adcceacc9d407`; published by release in the coordinated integrated pass.
+- Current standalone loader: `1.4.27`, source `052f9a4eeb44c89e1989e38c6d6adcceacc9d407`. Source directory: /home/theac/Desktop/GambleClient/client/standalone-loader.
+- Integrated Site metadata/state commits: `f8a416f` / `a24b5be`; launcher-hash preservation `a900fa4`. Canonical production: https://gambleclient.org; Pages deployment: https://46ca40cd.gamble-client-b67.pages.dev.
 - Current artifacts: Windows NSIS installer, RPM, DEB, bundled-Java Flatpak and universal JavaFX JAR. MSI is intentionally unavailable.
 - Public Windows and JAR downloads were independently compared byte-for-byte with the tested/staged artifacts. Final JAR was checked after the release workflow's macOS native merge, including a hardened verification of the downloaded public bytes.
 
