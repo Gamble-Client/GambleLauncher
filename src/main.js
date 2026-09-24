@@ -1420,7 +1420,7 @@ function friendAvatarStyle(friend = {}) {
 function remoteAvatarStyle(url, sizing = "cover") {
   const clean = String(url || "").trim();
   if (!/^https?:\/\//i.test(clean)) return "";
-  return `background-image:linear-gradient(rgba(21, 30, 33, 0.35), rgba(21, 30, 33, 0.35)), url("${cssUrl(clean)}");background-size:${sizing};background-position:center;background-repeat:no-repeat;`;
+  return `background-image:linear-gradient(rgba(20, 20, 24, 0.35), rgba(20, 20, 24, 0.35)), url("${cssUrl(clean)}");background-size:${sizing};background-position:center;background-repeat:no-repeat;`;
 }
 
 function cssUrl(value) {

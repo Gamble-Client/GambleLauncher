@@ -551,22 +551,23 @@
     -fx-effect: dropshadow(gaussian, rgba(104, 141, 187, 0.26), 8, 0.2, 0, 0);
 }
 
-/* Gamble design system v1 — graphite surfaces (#080C0D/#0C1113/#101719/#151E21),
-   1px rgba(210,235,230,0.09) borders, mint #63DDB6 only for the primary action,
-   selection, progress and focus. No gradients, glows or drop shadows. */
+/* Gamble design system v2 — matte black surfaces (#08080A/#0E0E11/#141418/#1B1B20),
+   1px rgba(255,255,255,0.07) borders, silver #C3C7CD for selection, progress and
+   focus, and the brushed-metal fill only on the primary action. No glows or
+   drop shadows. */
 .app {
-    -fx-background-color: #080c0d;
+    -fx-background-color: #08080a;
     -fx-font-family: "Inter", "Inter Variable", "Segoe UI", "System", sans-serif;
     -fx-font-size: 13px;
-    -fx-text-fill: #f0f4f3;
+    -fx-text-fill: #ecedef;
 }
 
 .sidebar {
     -fx-padding: 16 10 12 10;
     -fx-spacing: 4;
-    -fx-background-color: #080c0d;
+    -fx-background-color: #08080a;
     -fx-background-radius: 0;
-    -fx-border-color: rgba(210, 235, 230, 0.09);
+    -fx-border-color: rgba(255, 255, 255, 0.07);
     -fx-border-width: 0 1 0 0;
     -fx-border-radius: 0;
     -fx-effect: null;
@@ -578,17 +579,17 @@
     -fx-background-color: transparent;
 }
 
-.title { -fx-font-size: 20px; -fx-font-weight: 600; -fx-text-fill: #f0f4f3; }
-.heading { -fx-font-size: 18px; -fx-font-weight: 600; -fx-text-fill: #f0f4f3; }
-.section-title, .account-name { -fx-text-fill: #f0f4f3; }
-.muted, .chip-name, .field-label { -fx-text-fill: #a5aeac; }
+.title { -fx-font-size: 20px; -fx-font-weight: 600; -fx-text-fill: #ecedef; }
+.heading { -fx-font-size: 18px; -fx-font-weight: 600; -fx-text-fill: #ecedef; }
+.section-title, .account-name { -fx-text-fill: #ecedef; }
+.muted, .chip-name, .field-label { -fx-text-fill: #a3a6ac; }
 
 .card,
 .log-card,
 .modal {
-    -fx-background-color: #0c1113;
+    -fx-background-color: #0e0e11;
     -fx-background-radius: 6;
-    -fx-border-color: rgba(210, 235, 230, 0.09);
+    -fx-border-color: rgba(255, 255, 255, 0.07);
     -fx-border-width: 1;
     -fx-border-radius: 6;
     -fx-padding: 16;
@@ -607,22 +608,22 @@
 .mod-row,
 .account-row,
 .module-tile {
-    -fx-background-color: #101719;
+    -fx-background-color: #141418;
     -fx-background-radius: 4;
-    -fx-border-color: rgba(210, 235, 230, 0.09);
+    -fx-border-color: rgba(255, 255, 255, 0.07);
     -fx-border-width: 1;
     -fx-border-radius: 4;
     -fx-effect: null;
 }
 
 .slot-reel {
-    -fx-background-color: #151e21;
-    -fx-border-color: rgba(210, 235, 230, 0.16);
+    -fx-background-color: #1b1b20;
+    -fx-border-color: rgba(255, 255, 255, 0.13);
 }
 
 .version-chip,
 .selected-build-label {
-    -fx-border-color: rgba(210, 235, 230, 0.16);
+    -fx-border-color: rgba(255, 255, 255, 0.13);
 }
 
 .chip-value,
@@ -636,65 +637,65 @@
 .selected-build-label,
 .build-best,
 .dashboard-copy,
-.notice-text { -fx-text-fill: #f0f4f3; }
+.notice-text { -fx-text-fill: #ecedef; }
 
 .module-tile.active,
 .list-cell:filled:selected .mod-row {
-    -fx-background-color: rgba(99, 221, 182, 0.10);
-    -fx-border-color: rgba(99, 221, 182, 0.35);
+    -fx-background-color: rgba(255, 255, 255, 0.05);
+    -fx-border-color: #8b9097;
 }
 
 .module-meta,
-.slot-payout { -fx-text-fill: #a5aeac; }
-.slot-win-text { -fx-text-fill: #63ddb6; }
-.slot-loss-text { -fx-text-fill: #a5aeac; }
+.slot-payout { -fx-text-fill: #a3a6ac; }
+.slot-win-text { -fx-text-fill: #c3c7cd; }
+.slot-loss-text { -fx-text-fill: #a3a6ac; }
 
 .mod-state-on {
-    -fx-background-color: rgba(99, 221, 182, 0.10);
-    -fx-text-fill: #63ddb6;
+    -fx-background-color: rgba(255, 255, 255, 0.05);
+    -fx-text-fill: #c3c7cd;
 }
 
 .mod-state-off {
-    -fx-background-color: #151e21;
-    -fx-text-fill: #a5aeac;
+    -fx-background-color: #1b1b20;
+    -fx-text-fill: #a3a6ac;
 }
 
 .mod-required {
-    -fx-background-color: #151e21;
-    -fx-text-fill: #c7cecc;
+    -fx-background-color: #1b1b20;
+    -fx-text-fill: #ecedef;
 }
 
 .button,
 .secondary,
 .state-toggle,
 .folder-tab {
-    -fx-background-color: #101719;
+    -fx-background-color: #141418;
     -fx-background-radius: 4;
-    -fx-border-color: rgba(210, 235, 230, 0.09);
+    -fx-border-color: rgba(255, 255, 255, 0.07);
     -fx-border-width: 1;
     -fx-border-radius: 4;
-    -fx-text-fill: #c7cecc;
+    -fx-text-fill: #ecedef;
     -fx-effect: null;
 }
 
 .primary {
-    -fx-background-color: #63ddb6;
+    -fx-background-color: linear-gradient(to bottom, #e7e9ec 0%, #c3c7cd 45%, #9ea3aa 55%, #c9cdd2 100%);
     -fx-background-radius: 6;
-    -fx-border-color: transparent;
+    -fx-border-color: #f4f5f7 #9ea3aa #6e737a #9ea3aa;
     -fx-border-radius: 6;
-    -fx-text-fill: #062219;
+    -fx-text-fill: #0b0b0d;
     -fx-font-weight: 600;
     -fx-effect: null;
 }
 
 .primary:hover {
-    -fx-background-color: #79e7c5;
-    -fx-border-color: transparent;
-    -fx-text-fill: #062219;
+    -fx-background-color: linear-gradient(to bottom, #eef0f2 0%, #cdd1d6 45%, #a9aeb4 55%, #d2d5d9 100%);
+    -fx-border-color: #f4f5f7 #9ea3aa #6e737a #9ea3aa;
+    -fx-text-fill: #0b0b0d;
 }
 
 .primary:pressed {
-    -fx-background-color: #57cfa9;
+    -fx-background-color: linear-gradient(to bottom, #d4d7db 0%, #b3b8be 45%, #92979e 55%, #bbc0c5 100%);
     -fx-effect: null;
 }
 
@@ -702,16 +703,16 @@
 .secondary:hover,
 .state-toggle:hover,
 .folder-tab:hover {
-    -fx-background-color: #192427;
-    -fx-border-color: rgba(210, 235, 230, 0.16);
-    -fx-text-fill: #f0f4f3;
+    -fx-background-color: #1b1b20;
+    -fx-border-color: rgba(255, 255, 255, 0.13);
+    -fx-text-fill: #ecedef;
 }
 
 .button:pressed,
 .secondary:pressed,
 .state-toggle:pressed,
 .folder-tab:pressed {
-    -fx-background-color: #151e21;
+    -fx-background-color: #1b1b20;
     -fx-effect: null;
 }
 
@@ -720,7 +721,7 @@
 .secondary:focused,
 .state-toggle:focused,
 .folder-tab:focused {
-    -fx-border-color: #63ddb6;
+    -fx-border-color: #c3c7cd;
     -fx-effect: null;
 }
 
@@ -728,38 +729,38 @@
 .text-field,
 .text-area,
 .list-view {
-    -fx-background-color: #101719;
+    -fx-background-color: #141418;
     -fx-background-radius: 4;
-    -fx-border-color: rgba(210, 235, 230, 0.09);
+    -fx-border-color: rgba(255, 255, 255, 0.07);
     -fx-border-radius: 4;
     -fx-effect: null;
-    -fx-text-fill: #f0f4f3;
+    -fx-text-fill: #ecedef;
 }
 
 .combo-box:focused,
 .text-field:focused,
 .text-area:focused,
 .list-view:focused {
-    -fx-border-color: #63ddb6;
+    -fx-border-color: #c3c7cd;
 }
 
 .combo-box .list-cell,
 .combo-box-popup .list-view .list-cell,
 .text-area .content {
-    -fx-background-color: #101719;
-    -fx-text-fill: #f0f4f3;
+    -fx-background-color: #141418;
+    -fx-text-fill: #ecedef;
 }
 
 .combo-box-popup .list-view .list-cell:hover {
-    -fx-background-color: #192427;
+    -fx-background-color: #1b1b20;
 }
 
 .folder-tab.selected,
 .state-toggle:selected,
 .state-toggle.selected {
-    -fx-background-color: rgba(99, 221, 182, 0.10);
-    -fx-border-color: rgba(99, 221, 182, 0.35);
-    -fx-text-fill: #f0f4f3;
+    -fx-background-color: rgba(255, 255, 255, 0.05);
+    -fx-border-color: #8b9097;
+    -fx-text-fill: #ecedef;
     -fx-effect: null;
 }
 
@@ -767,23 +768,28 @@
 .log-scroll,
 .log-scroll:focused,
 .log-scroll > .viewport,
-.log-lines { -fx-background-color: #080c0d; -fx-background: #080c0d; }
-.log-line { -fx-text-fill: #a5aeac; }
-.log-line.warning { -fx-text-fill: #d6ac55; }
-.log-line.error { -fx-text-fill: #dc6868; }
+.log-lines { -fx-background-color: #08080a; -fx-background: #08080a; }
+.log-line { -fx-text-fill: #a3a6ac; }
+.log-line.warning { -fx-text-fill: #c9a45c; }
+.log-line.error { -fx-text-fill: #d86a6a; }
 
-.scroll-bar .thumb { -fx-background-color: #243033; }
-.scroll-bar .thumb:hover { -fx-background-color: #2f3d40; }
+.disclaimer-copy,
+.module-description { -fx-text-fill: #a3a6ac; }
+.build-no-access { -fx-text-fill: #6c6f76; }
+
+.scroll-bar .track { -fx-background-color: #0e0e11; }
+.scroll-bar .thumb { -fx-background-color: #26262c; }
+.scroll-bar .thumb:hover { -fx-background-color: #33333a; }
 
 .progress-bar .track {
-    -fx-background-color: #263033;
+    -fx-background-color: #232328;
     -fx-background-radius: 2;
     -fx-border-color: transparent;
     -fx-effect: null;
 }
 
 .progress-bar .bar {
-    -fx-background-color: #63ddb6;
+    -fx-background-color: #c3c7cd;
     -fx-background-radius: 2;
     -fx-background-insets: 0;
 }

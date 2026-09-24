@@ -120,23 +120,24 @@ import java.util.zip.ZipOutputStream;
 import javax.net.ssl.SSLException;
 
 public class Main {
-    // Gamble design system v1: graphite surfaces, 1px borders, one scarce mint accent.
-    private static final Color BACKGROUND = new Color(8, 12, 13);      // bg-0 #080C0D
-    private static final Color SURFACE = new Color(12, 17, 19);        // bg-1 #0C1113
-    private static final Color SURFACE_2 = new Color(21, 30, 33);      // bg-3 #151E21
-    private static final Color FIELD = new Color(16, 23, 25);          // bg-2 #101719
-    private static final Color LINE = new Color(210, 235, 230, 23);    // border rgba(210,235,230,.09)
-    private static final Color TEXT = new Color(240, 244, 243);        // #F0F4F3
-    private static final Color MUTED = new Color(165, 174, 172);       // #A5AEAC
-    private static final Color ACCENT = new Color(99, 221, 182);       // #63DDB6
-    private static final Color ACCENT_DARK = new Color(57, 127, 107);  // #397F6B
-    private static final Color GOOD = new Color(99, 221, 182);
-    private static final Color GOLD = new Color(214, 172, 85);         // warning #D6AC55
-    private static final Color BLUE = new Color(57, 127, 107);
-    private static final Color BABY_BLUE = new Color(99, 221, 182);
-    private static final Color HOVER = new Color(25, 36, 39);          // #192427
-    private static final Color BORDER = new Color(210, 235, 230, 23);
-    private static final Color BORDER_HOVER = new Color(210, 235, 230, 41);
+    // Gamble design system v2: matte black surfaces, 1px borders, brushed silver for key controls.
+    private static final Color BACKGROUND = new Color(8, 8, 10);       // black-0 #08080A
+    private static final Color SURFACE = new Color(14, 14, 17);        // black-1 #0E0E11
+    private static final Color SURFACE_2 = new Color(27, 27, 32);      // black-3 #1B1B20
+    private static final Color FIELD = new Color(20, 20, 24);          // black-2 #141418
+    private static final Color LINE = new Color(255, 255, 255, 18);    // line rgba(255,255,255,.07)
+    private static final Color TEXT = new Color(236, 237, 239);        // text-1 #ECEDEF
+    private static final Color MUTED = new Color(163, 166, 172);       // text-2 #A3A6AC
+    private static final Color ACCENT = new Color(195, 199, 205);      // silver #C3C7CD
+    private static final Color ACCENT_DARK = new Color(139, 144, 151); // silver-lo #8B9097
+    private static final Color ON_SILVER = new Color(11, 11, 13);      // on-silver #0B0B0D
+    private static final Color GOOD = new Color(195, 199, 205);
+    private static final Color GOLD = new Color(201, 164, 92);         // warning #C9A45C
+    private static final Color BLUE = new Color(139, 144, 151);
+    private static final Color BABY_BLUE = new Color(195, 199, 205);
+    private static final Color HOVER = new Color(27, 27, 32);          // black-3 #1B1B20
+    private static final Color BORDER = new Color(255, 255, 255, 18);
+    private static final Color BORDER_HOVER = new Color(255, 255, 255, 33); // line-strong rgba(255,255,255,.13)
     private static final String UI_FONT = firstInstalledFont(Font.SANS_SERIF, "Inter", "Inter Variable", "Segoe UI");
     private static final String MONO_FONT = firstInstalledFont(Font.MONOSPACED, "JetBrains Mono", "Cascadia Mono", "Consolas");
     private static String firstInstalledFont(String fallback, String... families) {
@@ -496,7 +497,7 @@ public class Main {
         log.setEditable(false);
         log.setPreferredSize(new Dimension(720, 150));
         log.setFont(new Font(MONO_FONT, Font.PLAIN, 12));
-        log.setForeground(new Color(199, 206, 204));
+        log.setForeground(new Color(236, 237, 239));
         log.setBackground(FIELD);
         log.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
         JScrollPane scrollPane = new JScrollPane(log);
@@ -583,7 +584,7 @@ public class Main {
         JPanel labels = transparentPanel(new BorderLayout(0, 5));
         adTitle.setForeground(TEXT);
         adTitle.setFont(new Font(UI_FONT, Font.BOLD, 15));
-        adStatus.setForeground(new Color(199, 206, 204));
+        adStatus.setForeground(new Color(236, 237, 239));
         adStatus.setFont(new Font(UI_FONT, Font.PLAIN, 12));
         adMeta.setForeground(MUTED);
         adMeta.setFont(new Font(UI_FONT, Font.PLAIN, 11));
@@ -2052,7 +2053,7 @@ public class Main {
         scrollBar.setUI(new BasicScrollBarUI() {
             @Override
             protected void configureScrollBarColors() {
-                thumbColor = new Color(36, 48, 51);
+                thumbColor = new Color(38, 38, 44);
                 trackColor = FIELD;
             }
 
@@ -2093,7 +2094,7 @@ public class Main {
     }
 
     private JButton primaryButton(JButton button) {
-        styleButton(button, ACCENT, BACKGROUND);
+        styleButton(button, ACCENT, ON_SILVER);
         button.setPreferredSize(new Dimension(142, 40));
         return button;
     }
@@ -2105,7 +2106,7 @@ public class Main {
     }
 
     private JButton ghostButton(JButton button, boolean accent) {
-        styleButton(button, new Color(255, 255, 255, 0), accent ? ACCENT : new Color(199, 206, 204));
+        styleButton(button, new Color(255, 255, 255, 0), accent ? ACCENT : new Color(236, 237, 239));
         button.putClientProperty("ghost", Boolean.TRUE);
         button.setPreferredSize(new Dimension(84, 32));
         return button;
@@ -2280,7 +2281,7 @@ public class Main {
             Graphics2D g = (Graphics2D) graphics.create();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             Color border = selected ? ACCENT : BORDER_HOVER;
-            Color fill = selected ? new Color(99, 221, 182, enabled ? 230 : 120) : FIELD;
+            Color fill = selected ? new Color(195, 199, 205, enabled ? 230 : 120) : FIELD;
 
             g.setColor(fill);
             g.fillRoundRect(x, y, SIZE - 1, SIZE - 1, 4, 4);
@@ -2340,7 +2341,7 @@ public class Main {
                     g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                     g.setColor(getModel().isPressed() ? new Color(255, 255, 255, 26) : new Color(255, 255, 255, 12));
                     g.fillRoundRect(2, 5, getWidth() - 7, getHeight() - 10, 6, 6);
-                    g.setColor(isEnabled() ? MUTED : new Color(104, 114, 112));
+                    g.setColor(isEnabled() ? MUTED : new Color(108, 111, 118));
                     int cx = getWidth() / 2;
                     int cy = getHeight() / 2 + 1;
                     g.drawLine(cx - 4, cy - 2, cx, cy + 2);
@@ -2388,7 +2389,7 @@ public class Main {
             } else {
                 g.setColor(fill);
                 g.fillRoundRect(0, 0, component.getWidth() - 1, component.getHeight() - 1, 6, 6);
-                g.setColor(button.isEnabled() ? (model.isRollover() ? BORDER_HOVER : BORDER) : new Color(210, 235, 230, 12));
+                g.setColor(button.isEnabled() ? (model.isRollover() ? BORDER_HOVER : BORDER) : new Color(255, 255, 255, 12));
                 g.drawRoundRect(0, 0, component.getWidth() - 1, component.getHeight() - 1, 6, 6);
             }
             g.dispose();
@@ -6500,9 +6501,9 @@ public class Main {
         if (style == null) {
             style = log.addStyle(severity, null);
             StyleConstants.setForeground(style, switch (severity) {
-                case "error" -> new Color(220, 104, 104);
-                case "warning" -> new Color(214, 172, 85);
-                default -> new Color(199, 206, 204);
+                case "error" -> new Color(216, 106, 106);
+                case "warning" -> new Color(201, 164, 92);
+                default -> new Color(236, 237, 239);
             });
             StyleConstants.setBold(style, "error".equals(severity));
         }

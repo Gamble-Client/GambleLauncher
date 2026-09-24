@@ -1,7 +1,8 @@
 /*
- * Gamble launcher — design system v1 (graphite surfaces, 1px borders,
- * one scarce mint accent). Fonts are bundled with the app; nothing is
- * fetched from a network font service. System fonts remain the fallback.
+ * Gamble launcher — design system v2 (matte black surfaces, 1px borders,
+ * brushed silver reserved for Play, the wordmark, selection, progress and
+ * focus). Fonts are bundled with the app; nothing is fetched from a network
+ * font service. System fonts remain the fallback.
  */
 
 @font-face {
@@ -45,28 +46,32 @@
 }
 
 :root {
-  --bg-0: #080c0d;
-  --bg-1: #0c1113;
-  --bg-2: #101719;
-  --bg-3: #151e21;
-  --bg-hover: #192427;
-  --border: rgba(210, 235, 230, 0.09);
-  --border-hover: rgba(210, 235, 230, 0.16);
-  --border-strong: rgba(210, 235, 230, 0.22);
-  --text: #f0f4f3;
-  --text-2: #a5aeac;
-  --text-3: #c7cecc;
-  --muted: #687270;
-  --accent: #63ddb6;
-  --accent-hover: #79e7c5;
-  --accent-muted: #397f6b;
-  --accent-surface: rgba(99, 221, 182, 0.10);
-  --accent-ink: #062219;
-  --track: #263033;
-  --warning: #d6ac55;
-  --warning-surface: rgba(214, 172, 85, 0.10);
-  --danger: #dc6868;
-  --danger-surface: rgba(220, 104, 104, 0.10);
+  --bg-0: #08080a;
+  --bg-1: #0e0e11;
+  --bg-2: #141418;
+  --bg-3: #1b1b20;
+  --bg-hover: #1b1b20;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-hover: rgba(255, 255, 255, 0.13);
+  --border-strong: rgba(255, 255, 255, 0.13);
+  --text: #ecedef;
+  --text-2: #a3a6ac;
+  --text-3: #ecedef;
+  --muted: #6c6f76;
+  --silver: #c3c7cd;
+  --silver-hi: #e7e9ec;
+  --silver-lo: #8b9097;
+  --on-silver: #0b0b0d;
+  --wash: rgba(255, 255, 255, 0.05);
+  --metal: linear-gradient(180deg, #e7e9ec 0%, #c3c7cd 45%, #9ea3aa 55%, #c9cdd2 100%);
+  --metal-hover: linear-gradient(180deg, #eef0f2 0%, #cdd1d6 45%, #a9aeb4 55%, #d2d5d9 100%);
+  --metal-active: linear-gradient(180deg, #d4d7db 0%, #b3b8be 45%, #92979e 55%, #bbc0c5 100%);
+  --brushed: repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.025) 0 1px, transparent 1px 2px, rgba(255, 255, 255, 0.03) 2px 3px);
+  --track: #232328;
+  --warning: #c9a45c;
+  --warning-surface: rgba(201, 164, 92, 0.10);
+  --danger: #d86a6a;
+  --danger-surface: rgba(216, 106, 106, 0.10);
   --radius-s: 4px;
   --radius: 6px;
   --ease: cubic-bezier(0.2, 0, 0, 1);
@@ -133,12 +138,12 @@ input:disabled {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--silver);
   outline-offset: 2px;
 }
 
 ::selection {
-  background: rgba(99, 221, 182, 0.28);
+  background: rgba(195, 199, 205, 0.28);
   color: var(--text);
 }
 
@@ -156,7 +161,7 @@ pre {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #243033 transparent;
+  scrollbar-color: #26262c transparent;
 }
 
 ::-webkit-scrollbar {
@@ -167,12 +172,12 @@ pre {
 ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 6px;
-  background: #243033;
+  background: #26262c;
   background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: #2f3d40;
+  background-color: #33333a;
 }
 
 ::-webkit-scrollbar-track {
@@ -213,8 +218,8 @@ pre {
   color: var(--text);
 }
 
-/* Secondary emphasis stays graphite: mint is reserved for Launch, selection,
-   progress and focus. */
+/* Secondary emphasis stays matte black: brushed silver is reserved for
+   Launch, the wordmark, selection, progress and focus. */
 .primary-small,
 .profile-add-button {
   border-color: var(--border-strong);
@@ -225,7 +230,7 @@ pre {
 
 .primary-small:hover:not(:disabled),
 .profile-add-button:hover:not(:disabled) {
-  border-color: rgba(210, 235, 230, 0.3);
+  border-color: rgba(255, 255, 255, 0.2);
   background: var(--bg-hover);
 }
 
@@ -236,7 +241,7 @@ pre {
 
 .ghost.danger:hover:not(:disabled),
 .profile-delete-action:hover:not(:disabled) {
-  border-color: rgba(220, 104, 104, 0.35);
+  border-color: rgba(216, 106, 106, 0.35);
   background: var(--danger-surface);
   color: #ec8a8a;
 }
@@ -266,7 +271,7 @@ pre {
 
 .inline-link:hover:not(:disabled) {
   color: var(--text);
-  text-decoration-color: var(--accent);
+  text-decoration-color: var(--silver);
 }
 
 input,
@@ -307,13 +312,13 @@ select:hover:not(:disabled) {
 
 input:focus,
 select:focus {
-  border-color: var(--accent);
+  border-color: var(--silver-lo);
   outline: none;
 }
 
 input:focus-visible,
 select:focus-visible {
-  outline: 1px solid var(--accent);
+  outline: 1px solid var(--silver);
   outline-offset: 0;
 }
 
@@ -494,11 +499,24 @@ label > span {
 }
 
 .wordmark {
-  color: var(--text);
+  justify-self: start;
+  color: var(--silver);
   font-size: 15px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.16em;
   line-height: 1.2;
+}
+
+/* Metal text: vertical silver gradient clipped to the letters. Solid silver
+   remains the fallback where background-clip text is unavailable. */
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .wordmark {
+    background: linear-gradient(180deg, #f4f5f7 0%, #e7e9ec 38%, #aeb3b9 58%, #c9cdd2 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
 }
 
 .brand-meta {
@@ -560,7 +578,7 @@ label > span {
 }
 
 .nav-item.active {
-  background: var(--accent-surface);
+  background: var(--wash);
   color: var(--text);
 }
 
@@ -572,11 +590,11 @@ label > span {
   left: -1px;
   width: 2px;
   border-radius: 1px;
-  background: var(--accent);
+  background: var(--silver);
 }
 
 .nav-item.active .nav-icon {
-  color: var(--accent);
+  color: var(--text);
   opacity: 1;
 }
 
@@ -820,7 +838,7 @@ label > span {
 
 .status-tag.ok::before,
 .status-tag.live::before {
-  background: var(--accent);
+  background: var(--silver);
 }
 
 .status-tag.live {
@@ -828,7 +846,7 @@ label > span {
 }
 
 .status-tag.warn {
-  border-color: rgba(214, 172, 85, 0.3);
+  border-color: rgba(201, 164, 92, 0.3);
   color: var(--warning);
 }
 
@@ -927,22 +945,25 @@ label > span {
   width: 100%;
   min-height: 46px;
   padding: 0 18px;
-  border: 1px solid transparent;
+  border: 1px solid #9ea3aa;
+  border-top-color: #f4f5f7;
+  border-bottom-color: #6e737a;
   border-radius: var(--radius);
-  background: var(--accent);
-  color: var(--accent-ink);
+  /* Brushed metal: fine horizontal grain over the silver gradient. */
+  background: var(--brushed), var(--metal);
+  color: var(--on-silver);
   font-size: 15px;
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: 0.01em;
-  transition: background-color var(--fast) var(--ease), border-color var(--fast) var(--ease), color var(--fast) var(--ease);
+  transition: border-color var(--fast) var(--ease), color var(--fast) var(--ease), opacity var(--fast) var(--ease);
 }
 
 .launch-button:hover:not(:disabled) {
-  background: var(--accent-hover);
+  background: var(--brushed), var(--metal-hover);
 }
 
 .launch-button:active:not(:disabled) {
-  background: #57cfa9;
+  background: var(--brushed), var(--metal-active);
 }
 
 .launch-button:disabled {
@@ -953,7 +974,7 @@ label > span {
 }
 
 .launch-button.is-stop {
-  border-color: rgba(220, 104, 104, 0.4);
+  border-color: rgba(216, 106, 106, 0.4);
   background: var(--bg-2);
   color: #ec8a8a;
 }
@@ -977,7 +998,7 @@ label > span {
 
 .launch-warning {
   padding: 8px 10px;
-  border: 1px solid rgba(214, 172, 85, 0.25);
+  border: 1px solid rgba(201, 164, 92, 0.25);
   border-radius: var(--radius-s);
   background: var(--warning-surface);
   color: var(--text-3);
@@ -1172,8 +1193,8 @@ label > span {
 }
 
 .account-card.active {
-  box-shadow: inset 2px 0 0 var(--accent);
-  background: rgba(99, 221, 182, 0.05);
+  box-shadow: inset 2px 0 0 var(--silver);
+  background: var(--wash);
 }
 
 .account-card .avatar {
@@ -1405,8 +1426,8 @@ label > span {
 
 .profile-type-choice.active,
 .profile-build-choice.active {
-  background: var(--accent-surface);
-  box-shadow: inset 0 0 0 1px rgba(99, 221, 182, 0.35);
+  background: var(--wash);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
   color: var(--text);
 }
 
@@ -1491,7 +1512,7 @@ label > span {
 }
 
 .profile-switch.active {
-  background: var(--accent-surface);
+  background: var(--wash);
 }
 
 .profile-switch.active::before {
@@ -1502,7 +1523,7 @@ label > span {
   left: -1px;
   width: 2px;
   border-radius: 1px;
-  background: var(--accent);
+  background: var(--silver);
 }
 
 .profile-switch.active strong {
@@ -1824,8 +1845,8 @@ label > span {
 }
 
 .file-tabs button.active {
-  border-color: rgba(99, 221, 182, 0.35);
-  background: var(--accent-surface);
+  border-color: var(--border-strong);
+  background: var(--wash);
   color: var(--text);
 }
 
@@ -1998,21 +2019,21 @@ label > span {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: #8b9593;
+  background: var(--silver-lo);
   transition: transform var(--fast) var(--ease), background-color var(--fast) var(--ease);
 }
 
 .checkbox-setting input[type="checkbox"]:checked {
-  background: var(--accent-muted);
+  background: var(--silver);
 }
 
 .checkbox-setting input[type="checkbox"]:checked::before {
-  background: var(--text);
+  background: var(--on-silver);
   transform: translateX(14px);
 }
 
 .checkbox-setting input[type="checkbox"]:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--silver);
   outline-offset: 2px;
 }
 
@@ -2091,7 +2112,7 @@ label > span {
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
   background: var(--bg-2);
-  box-shadow: inset 2px 0 0 var(--accent-muted);
+  box-shadow: inset 2px 0 0 var(--silver-lo);
   font-size: 12px;
 }
 
@@ -2163,7 +2184,7 @@ label > span {
   justify-content: space-between;
   gap: 16px;
   padding: 16px;
-  border: 1px solid rgba(99, 221, 182, 0.28);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--bg-2);
 }
@@ -2217,7 +2238,7 @@ label > span {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgba(4, 7, 8, 0.72);
+  background: rgba(4, 4, 5, 0.72);
 }
 
 .update-modal {
@@ -2272,7 +2293,7 @@ label > span {
   position: absolute;
   inset: 0;
   border: 2px solid var(--track);
-  border-top-color: var(--accent);
+  border-top-color: var(--silver);
   border-radius: 50%;
   animation: launch-orbit 0.9s linear infinite;
 }
@@ -2296,7 +2317,7 @@ label > span {
   display: block;
   height: 100%;
   border-radius: 2px;
-  background: var(--accent);
+  background: var(--silver);
   transition: width 140ms var(--ease);
 }
 
