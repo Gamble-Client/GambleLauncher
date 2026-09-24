@@ -1,13 +1,16 @@
 # Gamble Client Launcher — current handoff
 
-Updated 2026-09-21 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
+Updated 2026-09-23 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
 
-## Pending owner/dev multi-session feature — 2026-09-21
+## Unreleased on branch — multi-session + Ad Tier reliability (2026-09-23)
 
-- Implemented same-window Launch another for explicit server ownerAccess/devAccess flags only, refreshed before secondary allocation and again before spawn. Ordinary account UI/launch behavior, loader enrollment, one-use tickets and device-slot policy remain unchanged; this is not a new global backend concurrency lease.
-- Rust/web and Java/Swing/JavaFX track children independently, show Stop all sessions when needed and preserve Stop intent if the last game exits during the click. Secondary launches get clean, exclusively allocated profiles; no saves/mods/config/credentials copied, and profiles retained after exit. Logs/diagnostics are per child. No loader/payload change or version bump.
-- Local verification: Node69, Java48, Rust65 passed/one existing live-network ignored, frontend build; real two-Java-child lifecycle tests on native/Java paths; owner/dev UI at820/1120/1440, four non-owner negatives and existing six-account smoke passed. Swing/FX role/control/Stop-intent/account-switch probes passed650/740/960. Screenshots /tmp/launcher-multisession and /tmp/gamble-java-multi-ui-16749483660307768016 inspected. No authenticated double-Minecraft or Windows packaged validation claimed. Not published; do not overwrite0.1.139.
-- Details and reproducible checks: docs/multiple-launch-sessions.md. Client task assisted only Java launcher sources/tests/ProGuard; this remains launcher ownership.
+Committed locally, not pushed, not published, no version bump; do not overwrite 0.1.139.
+
+- **Owner/dev Launch another** (Codex implementation, finished and committed): with Minecraft running, accounts with explicit server `ownerAccess: true`/`devAccess: true` booleans get Launch another. Rust/web and Java/Swing/JavaFX re-fetch `/api/launcher/account` before allocating and again before spawning. Each extra game runs in a clean, exclusively allocated `profiles/<kind>-session-<random>` (nothing copied, retained after exit) with its own process tracking, log and exit diagnostics; Play becomes Stop all sessions and a stopOnly intent survives the last child exiting mid-click. Loader enrollment, one-use tickets and device slots unchanged. Finishing fixes: exit GPU-fault classification reads only the bounded 24000-char tail of that child's log (was the whole file); Java per-session logs harden ACLs once on creation instead of per output line. Details: docs/multiple-launch-sessions.md.
+- **POST retry safety**: `send_first_party_request` (Rust) and Java `apiRequest`/loader download resend POSTs only after connect-phase failures (DNS, refused/failed connect, connect timeout, TLS handshake). Read timeouts/broken streams after sending stop with "the request may already have been received". GET/HEAD keep 2 attempts × 3 origins. Java connects before writing, tags connect failures, and disables `sun.net.http.retryPost`.
+- **Lapsed paid access**: web and Java policies treat `accessExpiresAt` (epoch seconds; null/0 = none) in the past as Ad Tier, mirroring server `accessGrantActive()`. Role booleans and banned/revoked unchanged. Server `launcherUserPayload` does not currently include `accessExpiresAt`; until the Site adds it this client-side rule is inert.
+- **Press Play again**: failures after the managed loader's one-use enrollment was issued, and early (<2 min) Gamble-profile exits, tell the user to press Play again (web popup, Java dialog/log).
+- Local checks: Node 72, Java 52, Rust 70 passed/1 existing live-network ignored, frontend build, `git diff --check`; multisession browser regression passed at 820/1120/1440. Not verified: Windows/packaged builds, authenticated two-Minecraft play, real backend timeouts.
 
 ## Client-only publication — 2026-09-21
 
