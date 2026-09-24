@@ -382,7 +382,7 @@ test("graphics safety settings stay scoped to Minecraft and retain GPU crash evi
     assert.match(rust, /WEBKIT_DISABLE_DMABUF_RENDERER/);
     assert.match(rust, /command\.env_remove\(key\)/);
     assert.match(rust, /fn record_session_exit\(/);
-    assert.match(rust, /fs::read_to_string\(&session\.log_file\)/);
+    assert.match(rust, /let tail = tail_of_log\(&session\.log_file\);/);
     assert.match(rust, /gpu_fault/);
     assert.match(rust, /GAMBLE_GRAPHICS_MODE/);
     assert.doesNotMatch(rust, /command\.env\("AMD_FORCE_SHADER_USE_ACO"/);

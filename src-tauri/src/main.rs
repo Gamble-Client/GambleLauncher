@@ -2289,7 +2289,11 @@ fn game_graphics_environment_report(graphics_mode: &str, gpu_selector: &str) -> 
 }
 
 fn tail_of_launch_log() -> String {
-    let contents = fs::read_to_string(latest_launch_log_file()).unwrap_or_default();
+    tail_of_log(&latest_launch_log_file())
+}
+
+fn tail_of_log(path: &Path) -> String {
+    let contents = fs::read_to_string(path).unwrap_or_default();
     let mut tail = contents
         .chars()
         .rev()
@@ -2358,7 +2362,9 @@ fn isolated_session_profile(profile: &str, nonce: &str) -> String {
 }
 
 fn record_session_exit(status: &ExitStatus, session: &MinecraftSession) {
-    let tail = fs::read_to_string(&session.log_file).unwrap_or_default();
+    // Only this child's recent output: siblings have separate logs, and an old
+    // fault early in a long session must not relabel a later ordinary exit.
+    let tail = tail_of_log(&session.log_file);
     let gpu_fault = launch_log_has_gpu_fault(&tail);
     #[cfg(unix)]
     let signal = status.signal();
@@ -6579,6 +6585,19 @@ mod tests {
             assert!(!isolated.contains('/'));
             assert_ne!(isolated, super::isolated_session_profile(profile, "fixture-456"));
         }
+    }
+    #[test]
+    fn session_exit_inspects_only_the_bounded_tail_of_its_own_log() {
+        let root = env::temp_dir().join(format!("gamble-session-tail-test-{}", random_base64_url(18)));
+        fs::create_dir_all(&root).unwrap();
+        let log = root.join("launcher-session.log");
+        fs::write(&log, format!("amdgpu: GPU reset begin!\n{}\nhealthy tail\n", "x".repeat(30_000))).unwrap();
+        let tail = super::tail_of_log(&log);
+        assert!(tail.ends_with("healthy tail\n"));
+        assert!(tail.chars().count() <= 24_000);
+        assert!(!super::launch_log_has_gpu_fault(&tail));
+        assert_eq!(super::tail_of_log(&root.join("missing.log")), "<launch log is empty>");
+        let _ = fs::remove_dir_all(&root);
     }
     #[test]
     fn two_real_java_sessions_reap_independently_and_keep_the_survivor() {

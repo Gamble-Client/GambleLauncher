@@ -6454,8 +6454,11 @@ public class Main {
         try {
             File parent = file.getParentFile();
             if (parent != null && !parent.exists()) parent.mkdirs();
+            boolean created = !file.exists();
             Files.writeString(file.toPath(), line + System.lineSeparator(), StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
-            hardenPrivateFile(file);
+            // Per-session logs receive every game output line; re-applying private
+            // ACLs on each append is costly on Windows. Harden once on creation.
+            if (created) hardenPrivateFile(file);
         } catch (IOException e) {
             System.err.println("Launcher log write failed: " + e.getMessage());
         }
