@@ -7,7 +7,7 @@
 .sidebar {
     -fx-padding: 20;
     -fx-spacing: 10;
-    -fx-background-color: linear-gradient(from 0% 0% to 100% 100%, #14120d, #090b0c 42%, #080a0b);
+    -fx-background-color: #08080a;
     -fx-border-color: rgba(255, 176, 0, 0.28);
     -fx-border-width: 0 1 0 0;
 }
@@ -82,7 +82,7 @@
 .card,
 .log-card,
 .modal {
-    -fx-background-color: linear-gradient(to bottom right, rgba(22, 24, 25, 0.98), rgba(10, 12, 13, 0.98));
+    -fx-background-color: #0e0e11;
     -fx-background-radius: 2;
     -fx-border-color: rgba(255, 255, 255, 0.12);
     -fx-border-radius: 2;
@@ -90,7 +90,7 @@
 }
 
 .chip {
-    -fx-background-color: linear-gradient(to bottom right, rgba(38, 33, 45, 0.88), rgba(22, 21, 29, 0.92));
+    -fx-background-color: #141418;
     -fx-background-radius: 8;
     -fx-border-color: rgba(255, 255, 255, 0.08);
     -fx-border-radius: 8;
@@ -99,7 +99,7 @@
 
 .version-chip {
     -fx-border-color: rgba(230, 146, 35, 0.20);
-    -fx-background-color: linear-gradient(to right, rgba(230, 146, 35, 0.10), rgba(33, 29, 39, 0.88));
+    -fx-background-color: #141418;
 }
 
 .slot-card {
@@ -112,7 +112,7 @@
 
 .slot-card.slot-win {
     -fx-border-color: rgba(70, 255, 154, 0.72);
-    -fx-effect: dropshadow(gaussian, rgba(70, 255, 154, 0.24), 18, 0.25, 0, 0);
+    -fx-effect: null;
 }
 
 .slot-card.slot-loss {
@@ -120,7 +120,7 @@
 }
 
 .dashboard-card {
-    -fx-background-color: linear-gradient(to right, rgba(104, 141, 187, 0.16), rgba(230, 146, 35, 0.07));
+    -fx-background-color: #141418;
     -fx-background-radius: 8;
     -fx-border-color: rgba(104, 141, 187, 0.34);
     -fx-border-radius: 8;
@@ -145,7 +145,7 @@
 }
 
 .slot-reel {
-    -fx-background-color: linear-gradient(to bottom, rgba(0, 0, 0, 0.62), rgba(255, 255, 255, 0.1), rgba(0, 0, 0, 0.62));
+    -fx-background-color: #1b1b20;
     -fx-background-radius: 8;
     -fx-border-color: rgba(255, 190, 80, 0.36);
     -fx-border-radius: 8;
@@ -166,7 +166,7 @@
 }
 
 .selected-build-label {
-    -fx-background-color: linear-gradient(to right, rgba(230, 146, 35, 0.24), rgba(255, 190, 80, 0.12));
+    -fx-background-color: #141418;
     -fx-background-radius: 8;
     -fx-border-color: rgba(255, 190, 80, 0.36);
     -fx-border-radius: 8;
@@ -177,7 +177,7 @@
 }
 
 .build-best {
-    -fx-background-color: linear-gradient(to right, rgba(25, 135, 84, 0.38), rgba(45, 212, 191, 0.2));
+    -fx-background-color: #141418;
     -fx-text-fill: #dfffee;
     -fx-font-weight: 900;
 }
@@ -249,7 +249,7 @@
 }
 
 .secondary {
-    -fx-background-color: linear-gradient(to bottom, #171a1b, #101213);
+    -fx-background-color: #141418;
     -fx-background-radius: 2;
     -fx-border-radius: 2;
     -fx-text-fill: white;
@@ -519,7 +519,7 @@
 }
 
 .progress-bar .bar {
-    -fx-background-color: linear-gradient(to right, #e69223, #688dbb);
+    -fx-background-color: #c3c7cd;
     -fx-background-radius: 999;
 }
 
@@ -548,13 +548,13 @@
 
 .state-toggle:focused {
     -fx-border-color: rgba(104, 141, 187, 0.84);
-    -fx-effect: dropshadow(gaussian, rgba(104, 141, 187, 0.26), 8, 0.2, 0, 0);
+    -fx-effect: null;
 }
 
-/* Gamble design system v2 — matte black surfaces (#08080A/#0E0E11/#141418/#1B1B20),
-   1px rgba(255,255,255,0.07) borders, silver #C3C7CD for selection, progress and
-   focus, and the brushed-metal fill only on the primary action. No glows or
-   drop shadows. */
+/* Gamble design system v2.1 — matte black surfaces (#08080A/#0E0E11/#141418/#1B1B20),
+   1px rgba(255,255,255,0.07) borders, flat silver #C3C7CD for selection, progress,
+   focus and the single primary action. No gradients, metal, glows or drop
+   shadows. */
 .app {
     -fx-background-color: #08080a;
     -fx-font-family: "Inter", "Inter Variable", "Segoe UI", "System", sans-serif;
@@ -678,24 +678,27 @@
     -fx-effect: null;
 }
 
+/* Primary action: one flat silver fill, on-silver text, no border. */
 .primary {
-    -fx-background-color: linear-gradient(to bottom, #e7e9ec 0%, #c3c7cd 45%, #9ea3aa 55%, #c9cdd2 100%);
+    -fx-background-color: #c3c7cd;
     -fx-background-radius: 6;
-    -fx-border-color: #f4f5f7 #9ea3aa #6e737a #9ea3aa;
+    -fx-border-color: transparent;
+    -fx-border-width: 0;
     -fx-border-radius: 6;
     -fx-text-fill: #0b0b0d;
     -fx-font-weight: 600;
     -fx-effect: null;
 }
 
-.primary:hover {
-    -fx-background-color: linear-gradient(to bottom, #eef0f2 0%, #cdd1d6 45%, #a9aeb4 55%, #d2d5d9 100%);
-    -fx-border-color: #f4f5f7 #9ea3aa #6e737a #9ea3aa;
+.primary:hover,
+.primary:focused {
+    -fx-background-color: #e7e9ec;
+    -fx-border-color: transparent;
     -fx-text-fill: #0b0b0d;
 }
 
 .primary:pressed {
-    -fx-background-color: linear-gradient(to bottom, #d4d7db 0%, #b3b8be 45%, #92979e 55%, #bbc0c5 100%);
+    -fx-background-color: #c3c7cd;
     -fx-effect: null;
 }
 

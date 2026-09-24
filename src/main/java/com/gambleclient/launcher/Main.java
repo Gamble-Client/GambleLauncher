@@ -120,7 +120,7 @@ import java.util.zip.ZipOutputStream;
 import javax.net.ssl.SSLException;
 
 public class Main {
-    // Gamble design system v2: matte black surfaces, 1px borders, brushed silver for key controls.
+    // Gamble design system v2.1: matte black surfaces, 1px borders, flat solid silver for key controls (no gradients).
     private static final Color BACKGROUND = new Color(8, 8, 10);       // black-0 #08080A
     private static final Color SURFACE = new Color(14, 14, 17);        // black-1 #0E0E11
     private static final Color SURFACE_2 = new Color(27, 27, 32);      // black-3 #1B1B20
@@ -425,7 +425,7 @@ public class Main {
     }
 
     private JPanel createHeroPanel() {
-        JPanel hero = new GradientPanel();
+        JPanel hero = new HeroPanel();
         hero.setLayout(new BorderLayout());
         hero.setPreferredSize(new Dimension(300, 620));
         hero.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
@@ -2461,8 +2461,8 @@ public class Main {
         }
     }
 
-    private static final class GradientPanel extends JPanel {
-        GradientPanel() {
+    private static final class HeroPanel extends JPanel {
+        HeroPanel() {
             setOpaque(false);
         }
 
@@ -2470,7 +2470,7 @@ public class Main {
         protected void paintComponent(Graphics graphics) {
             Graphics2D g = (Graphics2D) graphics.create();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            // Flat graphite panel; no gradient or glow (design system v1).
+            // Flat matte panel with a 1px line; no gradient or glow (design system v2.1).
             g.setColor(SURFACE);
             g.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 6, 6);
             g.setColor(BORDER);

@@ -1,8 +1,8 @@
 /*
- * Gamble launcher — design system v2 (matte black surfaces, 1px borders,
- * brushed silver reserved for Play, the wordmark, selection, progress and
- * focus). Fonts are bundled with the app; nothing is fetched from a network
- * font service. System fonts remain the fallback.
+ * Gamble launcher — design system v2.1 (matte black surfaces, 1px borders,
+ * flat solid silver for Play, selection, progress and focus; no gradients,
+ * metal or glows). Fonts are bundled with the app; nothing is fetched from a
+ * network font service. System fonts remain the fallback.
  */
 
 @font-face {
@@ -63,10 +63,6 @@
   --silver-lo: #8b9097;
   --on-silver: #0b0b0d;
   --wash: rgba(255, 255, 255, 0.05);
-  --metal: linear-gradient(180deg, #e7e9ec 0%, #c3c7cd 45%, #9ea3aa 55%, #c9cdd2 100%);
-  --metal-hover: linear-gradient(180deg, #eef0f2 0%, #cdd1d6 45%, #a9aeb4 55%, #d2d5d9 100%);
-  --metal-active: linear-gradient(180deg, #d4d7db 0%, #b3b8be 45%, #92979e 55%, #bbc0c5 100%);
-  --brushed: repeating-linear-gradient(180deg, rgba(0, 0, 0, 0.025) 0 1px, transparent 1px 2px, rgba(255, 255, 255, 0.03) 2px 3px);
   --track: #232328;
   --warning: #c9a45c;
   --warning-surface: rgba(201, 164, 92, 0.10);
@@ -218,20 +214,20 @@ pre {
   color: var(--text);
 }
 
-/* Secondary emphasis stays matte black: brushed silver is reserved for
-   Launch, the wordmark, selection, progress and focus. */
+/* Secondary buttons stay matte black (black-2 fill, 1px line border); flat
+   silver is reserved for Launch, selection, progress and focus. */
 .primary-small,
 .profile-add-button {
-  border-color: var(--border-strong);
-  background: var(--bg-3);
+  border-color: var(--border);
+  background: var(--bg-2);
   color: var(--text);
   font-weight: 600;
 }
 
 .primary-small:hover:not(:disabled),
 .profile-add-button:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: var(--bg-hover);
+  border-color: var(--border-hover);
+  background: var(--bg-3);
 }
 
 .ghost.danger,
@@ -290,9 +286,10 @@ select {
 select {
   padding-right: 30px;
   appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, var(--text-2) 50%), linear-gradient(135deg, var(--text-2) 50%, transparent 50%);
-  background-position: calc(100% - 15px) 50%, calc(100% - 11px) 50%;
-  background-size: 4px 4px, 4px 4px;
+  /* Flat chevron glyph (text-2), no gradient tricks. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a3a6ac' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: calc(100% - 10px) 50%;
+  background-size: 10px 6px;
   background-repeat: no-repeat;
 }
 
@@ -498,25 +495,15 @@ label > span {
   padding: 4px 10px 18px;
 }
 
+/* Wordmark: flat text-1, uppercase tracking. Never a gradient. */
 .wordmark {
   justify-self: start;
-  color: var(--silver);
+  color: var(--text);
   font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.16em;
   line-height: 1.2;
-}
-
-/* Metal text: vertical silver gradient clipped to the letters. Solid silver
-   remains the fallback where background-clip text is unavailable. */
-@supports ((-webkit-background-clip: text) or (background-clip: text)) {
-  .wordmark {
-    background: linear-gradient(180deg, #f4f5f7 0%, #e7e9ec 38%, #aeb3b9 58%, #c9cdd2 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-  }
+  text-transform: uppercase;
 }
 
 .brand-meta {
@@ -941,40 +928,34 @@ label > span {
   min-width: 0;
 }
 
+/* Primary action: one flat silver fill, dark text, no border, hover silver-hi. */
 .launch-button {
   width: 100%;
   min-height: 46px;
   padding: 0 18px;
-  border: 1px solid #9ea3aa;
-  border-top-color: #f4f5f7;
-  border-bottom-color: #6e737a;
+  border: 0;
   border-radius: var(--radius);
-  /* Brushed metal: fine horizontal grain over the silver gradient. */
-  background: var(--brushed), var(--metal);
+  background: var(--silver);
   color: var(--on-silver);
   font-size: 15px;
   font-weight: 600;
   letter-spacing: 0.01em;
-  transition: border-color var(--fast) var(--ease), color var(--fast) var(--ease), opacity var(--fast) var(--ease);
+  transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease), opacity var(--fast) var(--ease);
 }
 
 .launch-button:hover:not(:disabled) {
-  background: var(--brushed), var(--metal-hover);
-}
-
-.launch-button:active:not(:disabled) {
-  background: var(--brushed), var(--metal-active);
+  background: var(--silver-hi);
 }
 
 .launch-button:disabled {
-  border-color: var(--border);
+  border: 1px solid var(--border);
   background: var(--bg-3);
   color: var(--text-2);
   opacity: 1;
 }
 
 .launch-button.is-stop {
-  border-color: rgba(216, 106, 106, 0.4);
+  border: 1px solid rgba(216, 106, 106, 0.4);
   background: var(--bg-2);
   color: #ec8a8a;
 }
