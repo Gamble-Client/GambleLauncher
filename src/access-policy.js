@@ -4,6 +4,19 @@ export function accessDenied(account) {
   return ["banned", "revoked"].includes(normalize(account?.accessStatus));
 }
 
+// Mirrors the server's accessGrantActive(): accessExpiresAt is seconds since
+// epoch; null/0/non-finite means no expiry. Lapsed paid time is Ad Tier there,
+// so status/plan labels must not keep selecting a paid build here.
+export function accessLapsed(account, nowSeconds = Math.floor(Date.now() / 1000)) {
+  const expiresAt = Number(account?.accessExpiresAt ?? account?.access_expires_at ?? 0);
+  return Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt < nowSeconds;
+}
+
+const lapsedPaid = (account) => accessLapsed(account) && !accessDenied(account);
+const accessStatus = (account) => lapsedPaid(account) ? "ad_tier" : normalize(account?.accessStatus);
+const selectedPlan = (account) => lapsedPaid(account) ? "ad_tier" : normalize(account?.selectedPlan);
+const labels = (account) => [accessStatus(account), selectedPlan(account)];
+
 // Presentation only: the native launch handler re-fetches these server-issued roles.
 export function canLaunchMultiple(account) {
   return Boolean(account) && !accessDenied(account)
@@ -12,7 +25,7 @@ export function canLaunchMultiple(account) {
 
 export function hasOwnerAccess(account) {
   return Boolean(account) && !accessDenied(account) && (
-    account.ownerAccess === true || [normalize(account.accessStatus), normalize(account.selectedPlan)].includes("owner")
+    account.ownerAccess === true || labels(account).includes("owner")
   );
 }
 
@@ -21,7 +34,7 @@ export function hasMediaAccess(account) {
     hasOwnerAccess(account)
     || account.mediaAccess === true
     || account.testerAccess === true
-    || [normalize(account.accessStatus), normalize(account.selectedPlan)].some((value) => ["media", "tester"].includes(value))
+    || labels(account).some((value) => ["media", "tester"].includes(value))
   );
 }
 
@@ -29,13 +42,13 @@ export function hasBetaAccess(account) {
   return Boolean(account) && !accessDenied(account) && (
     hasMediaAccess(account)
     || account.betaAccess === true
-    || [normalize(account.accessStatus), normalize(account.selectedPlan)].some((value) => ["beta_plus", "lifetime_beta"].includes(value))
+    || labels(account).some((value) => ["beta_plus", "lifetime_beta"].includes(value))
   );
 }
 
 export function hasOwnedAccess(account) {
   return Boolean(account) && !accessDenied(account)
-    && ["owned", "beta_plus", "media", "owner"].includes(normalize(account.accessStatus));
+    && ["owned", "beta_plus", "media", "owner"].includes(accessStatus(account));
 }
 
 export function preferredBuildForAccess(account) {
@@ -56,7 +69,7 @@ export function canUseBuildForAccess(account, buildId) {
   if (build === "release") return hasOwnedAccess(account);
   if (build === "ad_tier") {
     const adTier = account.adTierAccess === true
-      || [normalize(account.accessStatus), normalize(account.selectedPlan)].some((value) => ["ad_tier", "undecided"].includes(value));
+      || labels(account).some((value) => ["ad_tier", "undecided"].includes(value));
     return !hasOwnedAccess(account) && Boolean(String(account.email || "").trim()) && adTier;
   }
   return false;

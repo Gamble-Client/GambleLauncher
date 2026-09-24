@@ -5143,7 +5143,8 @@ public class Main {
             jsonBoolean(user.get("testerAccess")),
             jsonBoolean(user.get("betaAccess")),
             Boolean.TRUE.equals(user.get("devAccess")),
-            jsonBoolean(user.get("adTierAccess"))
+            jsonBoolean(user.get("adTierAccess")),
+            jsonLong(user.get("accessExpiresAt"))
         );
     }
 
@@ -5261,7 +5262,8 @@ public class Main {
             user.testerAccess,
             user.betaAccess,
             user.devAccess,
-            user.adTierAccess
+            user.adTierAccess,
+            user.accessExpiresAt
         );
     }
 
@@ -7095,8 +7097,9 @@ public class Main {
         final boolean betaAccess;
         final boolean devAccess;
         final boolean adTierAccess;
+        final long accessExpiresAt;
 
-        LauncherUser(String email, String displayName, String discordUsername, String selectedPlan, String accessStatus, boolean ownerAccess, boolean mediaAccess, boolean testerAccess, boolean betaAccess, boolean devAccess, boolean adTierAccess) {
+        LauncherUser(String email, String displayName, String discordUsername, String selectedPlan, String accessStatus, boolean ownerAccess, boolean mediaAccess, boolean testerAccess, boolean betaAccess, boolean devAccess, boolean adTierAccess, long accessExpiresAt) {
             this.email = email;
             this.displayName = displayName;
             this.discordUsername = discordUsername;
@@ -7108,6 +7111,7 @@ public class Main {
             this.betaAccess = betaAccess;
             this.devAccess = devAccess;
             this.adTierAccess = adTierAccess;
+            this.accessExpiresAt = accessExpiresAt;
         }
     }
 

@@ -15,13 +15,31 @@ final class LauncherAccessPolicy {
         boolean testerAccess,
         boolean betaAccess,
         boolean devAccess,
-        boolean adTierAccess
+        boolean adTierAccess,
+        long accessExpiresAt
     ) {
         Account {
             email = normalize(email);
             selectedPlan = normalize(selectedPlan);
             accessStatus = normalize(accessStatus);
+            // Mirrors the server's accessGrantActive(): lapsed paid time is Ad Tier,
+            // so paid status/plan labels must not keep selecting a paid build.
+            if (!isBlocked(accessStatus) && accessLapsed(accessExpiresAt, System.currentTimeMillis() / 1000L)) {
+                accessStatus = "ad_tier";
+                selectedPlan = "ad_tier";
+            }
         }
+
+        Account(String email, String selectedPlan, String accessStatus, boolean ownerAccess, boolean mediaAccess,
+                boolean testerAccess, boolean betaAccess, boolean devAccess, boolean adTierAccess) {
+            this(email, selectedPlan, accessStatus, ownerAccess, mediaAccess, testerAccess, betaAccess, devAccess,
+                adTierAccess, 0L);
+        }
+    }
+
+    /** accessExpiresAt is seconds since epoch; zero or negative means no expiry. */
+    static boolean accessLapsed(long accessExpiresAt, long nowSeconds) {
+        return accessExpiresAt > 0 && accessExpiresAt < nowSeconds;
     }
 
     static String preferredBuild(Account account) {

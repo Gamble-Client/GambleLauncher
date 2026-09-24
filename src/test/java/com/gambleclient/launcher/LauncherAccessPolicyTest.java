@@ -62,6 +62,32 @@ final class LauncherAccessPolicyTest {
             .collect(Collectors.toSet()));
     }
 
+    @Test
+    void lapsedPaidAccessFallsBackToAdTierLikeTheServer() {
+        long now = System.currentTimeMillis() / 1000L;
+        for (long expiry : new long[]{0L, -1L, now + 3600L}) {
+            var paid = new LauncherAccessPolicy.Account("rental@example.test", "weekly", "owned",
+                false, false, false, false, false, false, expiry);
+            assertEquals("release", LauncherAccessPolicy.preferredBuild(paid), Long.toString(expiry));
+            assertEquals(false, LauncherAccessPolicy.canUseBuild(paid, "ad_tier"));
+        }
+        var lapsed = new LauncherAccessPolicy.Account("rental@example.test", "weekly", "owned",
+            false, false, false, false, false, false, now - 60L);
+        assertEquals(true, LauncherAccessPolicy.accessLapsed(now - 60L, now));
+        assertEquals(false, LauncherAccessPolicy.hasOwnedAccess(lapsed));
+        assertEquals("ad_tier", LauncherAccessPolicy.preferredBuild(lapsed));
+        assertEquals("ad_tier", LauncherAccessPolicy.refreshedBuild(lapsed, "release"));
+        var lapsedBeta = new LauncherAccessPolicy.Account("beta@example.test", "beta_plus", "beta_plus",
+            false, false, false, false, false, false, now - 60L);
+        assertEquals("ad_tier", LauncherAccessPolicy.preferredBuild(lapsedBeta));
+        var banned = new LauncherAccessPolicy.Account("banned@example.test", "weekly", "banned",
+            false, false, false, false, false, true, now - 60L);
+        assertEquals("", LauncherAccessPolicy.refreshedBuild(banned, "ad_tier"));
+        var noEmail = new LauncherAccessPolicy.Account("", "weekly", "owned",
+            false, false, false, false, false, false, now - 60L);
+        assertEquals(false, LauncherAccessPolicy.canUseBuild(noEmail, "ad_tier"));
+    }
+
     private static LauncherAccessPolicy.Account account(
         String email,
         String plan,

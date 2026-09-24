@@ -118,5 +118,7 @@
     *** mediaAccess;
     *** testerAccess;
     *** betaAccess;
+    *** adTierAccess;
+    *** accessExpiresAt;
     *** email;
 }

@@ -2356,7 +2356,8 @@ public class FxMain extends Application {
             objectFieldBoolean(user, "testerAccess"),
             objectFieldBoolean(user, "betaAccess"),
             objectFieldBoolean(user, "devAccess"),
-            objectFieldBoolean(user, "adTierAccess")
+            objectFieldBoolean(user, "adTierAccess"),
+            objectFieldLong(user, "accessExpiresAt")
         );
     }
 
