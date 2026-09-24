@@ -334,6 +334,15 @@ public class Main {
     private boolean explicitBuildSelection;
     private boolean applyingAutomaticBuildSelection;
 
+    static {
+        // HttpURLConnection otherwise silently resends a non-streamed POST when a
+        // reused connection breaks before the response. The server may already
+        // have processed it (one-use enrollment, per-account launch rate limit).
+        if (System.getProperty("sun.net.http.retryPost") == null) {
+            System.setProperty("sun.net.http.retryPost", "false");
+        }
+    }
+
     public Main() {
         JavaLaunchArguments.cleanupOrphans(getLauncherDataFolder().toPath());
     }
@@ -5006,7 +5015,7 @@ public class Main {
             try {
                 return apiRequestOnce(method, urls.get(index), path, body, bearerToken, acceptedStatuses);
             } catch (IOException error) {
-                if (!isRetryableTransport(error)) throw error;
+                if (!isRetryableTransport(method, error)) throw notResentIfMaybeDelivered(error);
                 lastTransportError = error;
                 if (index + 1 < urls.size()) {
                     log("Backend gateway unavailable; trying the next trusted gateway.");
@@ -5030,12 +5039,15 @@ public class Main {
             if (bearerToken != null && !bearerToken.trim().isEmpty()) {
                 connection.setRequestProperty("Authorization", "Bearer " + bearerToken.trim());
             }
-
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
             if (!body.isEmpty()) {
-                byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
                 connection.setDoOutput(true);
                 connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
                 connection.setRequestProperty("Content-Length", String.valueOf(bytes.length));
+            }
+            connectBeforeSending(connection);
+
+            if (!body.isEmpty()) {
                 try (java.io.OutputStream out = connection.getOutputStream()) {
                     out.write(bytes);
                 }
@@ -5099,6 +5111,44 @@ public class Main {
             if (!urls.contains(candidate)) urls.add(candidate);
         }
         return List.copyOf(urls);
+    }
+
+    /**
+     * GET/HEAD may be resent after any connection-class failure. Other methods are
+     * resent only when the failure happened while connecting (DNS, refused or
+     * timed-out connect, TLS handshake), before any request bytes were written:
+     * a read timeout or broken stream afterwards may mean the server already
+     * processed the POST, so a resend could be charged or consumed twice.
+     */
+    static boolean isRetryableTransport(String method, Throwable failure) {
+        if (!isRetryableTransport(failure)) return false;
+        String normalized = method == null ? "" : method.trim().toUpperCase(Locale.ROOT);
+        if ("GET".equals(normalized) || "HEAD".equals(normalized)) return true;
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            if (current instanceof RequestNotSentException) return true;
+        }
+        return false;
+    }
+
+    static IOException notResentIfMaybeDelivered(IOException error) {
+        if (error instanceof HttpStatusException || !isRetryableTransport(error)) return error;
+        return new IOException("The Gamble Client service did not answer in time. The request may already have been received, "
+            + "so the launcher did not send it again. Wait a moment, then try again.", error);
+    }
+
+    /** Opens the connection (including the TLS handshake) before any request bytes are written. */
+    static void connectBeforeSending(HttpURLConnection connection) throws IOException {
+        try {
+            connection.connect();
+        } catch (IOException error) {
+            throw new RequestNotSentException(error);
+        }
+    }
+
+    static final class RequestNotSentException extends IOException {
+        RequestNotSentException(IOException cause) {
+            super(cause.getMessage(), cause);
+        }
     }
 
     static boolean isRetryableTransport(Throwable failure) {
@@ -5486,7 +5536,7 @@ public class Main {
                 downloadPersonalizedLoaderOnce(mods, loader, temporary, endpoints.get(index));
                 return;
             } catch (IOException error) {
-                if (!isRetryableTransport(error)) throw error;
+                if (!isRetryableTransport("POST", error)) throw notResentIfMaybeDelivered(error);
                 lastTransportError = error;
                 Files.deleteIfExists(temporary.toPath());
                 if (index + 1 < endpoints.size()) {
@@ -5517,6 +5567,7 @@ public class Main {
                 + standaloneLoaderPlatform() + "\",\"launcherManaged\":true}")
                 .getBytes(StandardCharsets.UTF_8);
             connection.setFixedLengthStreamingMode(request.length);
+            connectBeforeSending(connection);
             try (OutputStream output = connection.getOutputStream()) {
                 output.write(request);
             }

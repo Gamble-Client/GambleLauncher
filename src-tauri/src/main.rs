@@ -5863,16 +5863,46 @@ where
 {
     let urls = first_party_request_urls(raw_url)?;
     let client = http_client()?;
+    send_with_failover(&client, &urls, build_request, HTTP_RETRY_DELAY_MILLIS)
+}
+
+/// Sends to each trusted origin in turn. GET/HEAD may be resent after any
+/// transport error. Other methods (POST) are resent only when the error proves
+/// the request never left this machine (DNS, refused/failed connect, TLS
+/// handshake): a timeout or broken connection after sending may mean the
+/// server already processed it, and a resend would be charged again against
+/// per-account launch rate limits or double-consume one-use state.
+fn send_with_failover<F>(
+    client: &reqwest::blocking::Client,
+    urls: &[reqwest::Url],
+    build_request: F,
+    retry_delay_millis: u64,
+) -> Result<reqwest::blocking::Response, String>
+where
+    F: Fn(&reqwest::blocking::Client, reqwest::Url) -> reqwest::blocking::RequestBuilder,
+{
     let mut last_kind = "network request failed";
 
     for (origin_index, url) in urls.iter().enumerate() {
         for attempt in 0..HTTP_API_ATTEMPTS {
-            match build_request(&client, url.clone()).send() {
+            let request = build_request(client, url.clone())
+                .build()
+                .map_err(|_| "Backend request could not be created.".to_string())?;
+            let idempotent = matches!(
+                *request.method(),
+                reqwest::Method::GET | reqwest::Method::HEAD
+            );
+            match client.execute(request) {
                 Ok(response) => return Ok(response),
                 Err(error) => {
                     last_kind = network_error_kind(&error);
+                    if !may_resend_request(idempotent, error.is_connect()) {
+                        return Err(format!(
+                            "The Gamble Client backend did not answer in time. The request may already have been received, so the launcher did not send it again. Wait a moment, then try again. ({last_kind})"
+                        ));
+                    }
                     if attempt + 1 < HTTP_API_ATTEMPTS {
-                        let delay = HTTP_RETRY_DELAY_MILLIS.saturating_mul((attempt + 1) as u64);
+                        let delay = retry_delay_millis.saturating_mul((attempt + 1) as u64);
                         std::thread::sleep(Duration::from_millis(delay));
                     }
                 }
@@ -5880,13 +5910,19 @@ where
         }
 
         if origin_index + 1 < urls.len() {
-            std::thread::sleep(Duration::from_millis(HTTP_RETRY_DELAY_MILLIS));
+            std::thread::sleep(Duration::from_millis(retry_delay_millis));
         }
     }
 
     Err(format!(
         "Could not reach the Gamble Client backend. Check your internet connection, VPN/firewall, and system clock, then try again. ({last_kind})"
     ))
+}
+
+fn may_resend_request(idempotent: bool, failed_before_sending: bool) -> bool {
+    // reqwest reports DNS, refused/failed connections, connect timeouts and TLS
+    // handshake failures as connect errors, all before any request bytes.
+    idempotent || failed_before_sending
 }
 
 fn first_party_request_urls(raw_url: &str) -> Result<Vec<reqwest::Url>, String> {
@@ -6586,6 +6622,81 @@ mod tests {
             assert_ne!(isolated, super::isolated_session_profile(profile, "fixture-456"));
         }
     }
+    fn fixture_http_server(respond: bool) -> (reqwest::Url, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = reqwest::Url::parse(&format!("http://{}/api/standalone/loader", listener.local_addr().unwrap())).unwrap();
+        let received = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = received.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                std::thread::spawn(move || {
+                    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(200)));
+                    let mut buffer = [0u8; 4096];
+                    let _ = stream.read(&mut buffer);
+                    if respond {
+                        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    } else {
+                        // Receives the request, then never answers (server-side processing timeout).
+                        std::thread::sleep(std::time::Duration::from_secs(3));
+                    }
+                });
+            }
+        });
+        (url, received)
+    }
+
+    fn fixture_client() -> reqwest::blocking::Client {
+        reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_millis(400))
+            .connect_timeout(std::time::Duration::from_millis(400))
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn post_is_not_resent_after_it_may_have_reached_the_server() {
+        let (url, received) = fixture_http_server(false);
+        let client = fixture_client();
+        let error = super::send_with_failover(&client, &[url.clone(), url], |client, target| {
+            client.post(target).json(&serde_json::json!({"launcherManaged": true}))
+        }, 1).unwrap_err();
+        assert!(error.contains("did not send it again"), "{error}");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(received.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn get_is_still_retried_across_attempts_and_origins() {
+        let (url, received) = fixture_http_server(false);
+        let client = fixture_client();
+        let error = super::send_with_failover(&client, &[url.clone(), url], |client, target| client.get(target), 1)
+            .unwrap_err();
+        assert!(error.starts_with("Could not reach the Gamble Client backend."), "{error}");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(received.load(std::sync::atomic::Ordering::SeqCst), 2 * super::HTTP_API_ATTEMPTS);
+    }
+
+    #[test]
+    fn post_fails_over_when_the_connection_was_refused_before_sending() {
+        let closed = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            reqwest::Url::parse(&format!("http://{}/api/standalone/loader", listener.local_addr().unwrap())).unwrap()
+        };
+        let (live, received) = fixture_http_server(true);
+        let client = fixture_client();
+        let response = super::send_with_failover(&client, &[closed, live], |client, target| {
+            client.post(target).json(&serde_json::json!({}))
+        }, 1).unwrap();
+        assert!(response.status().is_success());
+        assert_eq!(received.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(super::may_resend_request(true, false));
+        assert!(super::may_resend_request(false, true));
+        assert!(!super::may_resend_request(false, false));
+    }
+
     #[test]
     fn session_exit_inspects_only_the_bounded_tail_of_its_own_log() {
         let root = env::temp_dir().join(format!("gamble-session-tail-test-{}", random_base64_url(18)));
