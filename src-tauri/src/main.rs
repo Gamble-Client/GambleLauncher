@@ -6672,9 +6672,13 @@ mod tests {
     }
 
     fn fixture_client() -> reqwest::blocking::Client {
+        // The connect timeout must expire before the total request timeout, as in
+        // production (15 s vs 300 s). Windows retries a refused loopback connect
+        // for about two seconds, so equal values let the total timeout win and
+        // misreport a never-sent POST as possibly received.
         reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_millis(400))
-            .connect_timeout(std::time::Duration::from_millis(400))
+            .timeout(std::time::Duration::from_millis(1000))
+            .connect_timeout(std::time::Duration::from_millis(250))
             .build()
             .unwrap()
     }
