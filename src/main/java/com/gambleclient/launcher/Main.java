@@ -49,7 +49,6 @@ import java.awt.Color;
 import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.Font;
-import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GridBagConstraints;
@@ -121,20 +120,38 @@ import java.util.zip.ZipOutputStream;
 import javax.net.ssl.SSLException;
 
 public class Main {
-    private static final Color BACKGROUND = new Color(18, 16, 22);
-    private static final Color SURFACE = new Color(25, 22, 31);
-    private static final Color SURFACE_2 = new Color(33, 29, 39);
-    private static final Color FIELD = new Color(16, 17, 24);
-    private static final Color LINE = new Color(62, 54, 70);
-    private static final Color TEXT = new Color(255, 255, 255);
-    private static final Color MUTED = new Color(150, 150, 150);
-    private static final Color ACCENT = new Color(230, 146, 35);
-    private static final Color ACCENT_DARK = new Color(155, 120, 95);
-    private static final Color GOOD = new Color(45, 225, 45);
-    private static final Color GOLD = new Color(255, 190, 80);
-    private static final Color BLUE = new Color(104, 141, 187);
-    private static final Color BABY_BLUE = new Color(45, 125, 245);
-    private static final Color HOVER = new Color(38, 32, 42);
+    // Gamble design system v1: graphite surfaces, 1px borders, one scarce mint accent.
+    private static final Color BACKGROUND = new Color(8, 12, 13);      // bg-0 #080C0D
+    private static final Color SURFACE = new Color(12, 17, 19);        // bg-1 #0C1113
+    private static final Color SURFACE_2 = new Color(21, 30, 33);      // bg-3 #151E21
+    private static final Color FIELD = new Color(16, 23, 25);          // bg-2 #101719
+    private static final Color LINE = new Color(210, 235, 230, 23);    // border rgba(210,235,230,.09)
+    private static final Color TEXT = new Color(240, 244, 243);        // #F0F4F3
+    private static final Color MUTED = new Color(165, 174, 172);       // #A5AEAC
+    private static final Color ACCENT = new Color(99, 221, 182);       // #63DDB6
+    private static final Color ACCENT_DARK = new Color(57, 127, 107);  // #397F6B
+    private static final Color GOOD = new Color(99, 221, 182);
+    private static final Color GOLD = new Color(214, 172, 85);         // warning #D6AC55
+    private static final Color BLUE = new Color(57, 127, 107);
+    private static final Color BABY_BLUE = new Color(99, 221, 182);
+    private static final Color HOVER = new Color(25, 36, 39);          // #192427
+    private static final Color BORDER = new Color(210, 235, 230, 23);
+    private static final Color BORDER_HOVER = new Color(210, 235, 230, 41);
+    private static final String UI_FONT = firstInstalledFont(Font.SANS_SERIF, "Inter", "Inter Variable", "Segoe UI");
+    private static final String MONO_FONT = firstInstalledFont(Font.MONOSPACED, "JetBrains Mono", "Cascadia Mono", "Consolas");
+    private static String firstInstalledFont(String fallback, String... families) {
+        try {
+            java.util.Set<String> installed = new java.util.HashSet<>(java.util.Arrays.asList(
+                java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames()));
+            for (String family : families) {
+                if (installed.contains(family)) return family;
+            }
+        } catch (RuntimeException | Error ignored) {
+            // Headless or font-less hosts keep the logical system font.
+        }
+        return fallback;
+    }
+
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
     private static final String LAUNCHER_VERSION = "0.1.141";
@@ -280,7 +297,7 @@ public class Main {
     private final JLabel adStatus = new JLabel("Open the Dashboard to check access.");
     private final JLabel adMeta = new JLabel("Paid accounts skip sponsor verification.");
     private final JButton adButton = new JButton("Check");
-    private final JPanel signInPromptPanel = new RoundedPanel(new BorderLayout(14, 0), new Color(26, 25, 34, 235), new Color(255, 255, 255, 18), 8);
+    private final JPanel signInPromptPanel = new RoundedPanel(new BorderLayout(14, 0), SURFACE, BORDER, 6);
     private final JLabel signInPromptTitle = new JLabel("Sign in to continue");
     private final JLabel signInPromptText = new JLabel("Open the Gamble Client sign-in page, then return here to launch.");
     private final JButton promptSignInButton = new JButton("Sign In");
@@ -413,7 +430,7 @@ public class Main {
         hero.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
 
         JPanel copy = transparentPanel(new BorderLayout(0, 18));
-        heroTitle.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 30));
+        heroTitle.setFont(new Font(UI_FONT, Font.BOLD, 30));
         heroTitle.setForeground(TEXT);
         JLabel subtitle = htmlLabel("Fast managed launches<br>with a clean game folder.", 14, MUTED);
         copy.add(heroTitle, BorderLayout.NORTH);
@@ -478,8 +495,8 @@ public class Main {
 
         log.setEditable(false);
         log.setPreferredSize(new Dimension(720, 150));
-        log.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-        log.setForeground(new Color(214, 219, 229));
+        log.setFont(new Font(MONO_FONT, Font.PLAIN, 12));
+        log.setForeground(new Color(199, 206, 204));
         log.setBackground(FIELD);
         log.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
         JScrollPane scrollPane = new JScrollPane(log);
@@ -513,9 +530,9 @@ public class Main {
 
         JPanel copy = transparentPanel(new BorderLayout(0, 4));
         signInPromptTitle.setForeground(TEXT);
-        signInPromptTitle.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 15));
+        signInPromptTitle.setFont(new Font(UI_FONT, Font.BOLD, 15));
         signInPromptText.setForeground(MUTED);
-        signInPromptText.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+        signInPromptText.setFont(new Font(UI_FONT, Font.PLAIN, 12));
         copy.add(signInPromptTitle, BorderLayout.NORTH);
         copy.add(signInPromptText, BorderLayout.SOUTH);
 
@@ -536,9 +553,9 @@ public class Main {
 
         JPanel labels = transparentPanel(new BorderLayout(0, 2));
         accountName.setForeground(TEXT);
-        accountName.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 14));
+        accountName.setFont(new Font(UI_FONT, Font.BOLD, 14));
         accountStatus.setForeground(MUTED);
-        accountStatus.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+        accountStatus.setFont(new Font(UI_FONT, Font.PLAIN, 11));
         labels.add(accountName, BorderLayout.NORTH);
         labels.add(accountStatus, BorderLayout.SOUTH);
 
@@ -556,7 +573,7 @@ public class Main {
     }
 
     private JPanel createDashboardAccessPanel() {
-        JPanel panel = new RoundedPanel(new BorderLayout(0, 10), new Color(26, 25, 34, 235), new Color(255, 255, 255, 18), 8);
+        JPanel panel = new RoundedPanel(new BorderLayout(0, 10), SURFACE, BORDER, 6);
         panel.setPreferredSize(new Dimension(252, 132));
         panel.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createEmptyBorder(),
@@ -565,11 +582,11 @@ public class Main {
 
         JPanel labels = transparentPanel(new BorderLayout(0, 5));
         adTitle.setForeground(TEXT);
-        adTitle.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 15));
-        adStatus.setForeground(new Color(218, 223, 232));
-        adStatus.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+        adTitle.setFont(new Font(UI_FONT, Font.BOLD, 15));
+        adStatus.setForeground(new Color(199, 206, 204));
+        adStatus.setFont(new Font(UI_FONT, Font.PLAIN, 12));
         adMeta.setForeground(MUTED);
-        adMeta.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+        adMeta.setFont(new Font(UI_FONT, Font.PLAIN, 11));
         labels.add(adTitle, BorderLayout.NORTH);
         labels.add(adStatus, BorderLayout.CENTER);
         labels.add(adMeta, BorderLayout.SOUTH);
@@ -662,7 +679,7 @@ public class Main {
         JPanel status = transparentPanel(new BorderLayout());
 
         updateStatus.setForeground(MUTED);
-        updateStatus.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+        updateStatus.setFont(new Font(UI_FONT, Font.PLAIN, 12));
         status.add(updateStatus, BorderLayout.CENTER);
 
         right.add(secondaryButton(installButton));
@@ -740,9 +757,9 @@ public class Main {
 
         JPanel labels = transparentPanel(new BorderLayout(0, 4));
         microsoftName.setForeground(TEXT);
-        microsoftName.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 14));
+        microsoftName.setFont(new Font(UI_FONT, Font.BOLD, 14));
         microsoftStatus.setForeground(MUTED);
-        microsoftStatus.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 12));
+        microsoftStatus.setFont(new Font(UI_FONT, Font.PLAIN, 12));
         labels.add(microsoftName, BorderLayout.NORTH);
         labels.add(microsoftStatus, BorderLayout.SOUTH);
 
@@ -823,8 +840,8 @@ public class Main {
         runtimeInfo.setEditable(false);
         runtimeInfo.setLineWrap(true);
         runtimeInfo.setWrapStyleWord(true);
-        runtimeInfo.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-        runtimeInfo.setForeground(new Color(210, 195, 180));
+        runtimeInfo.setFont(new Font(MONO_FONT, Font.PLAIN, 12));
+        runtimeInfo.setForeground(MUTED);
         runtimeInfo.setBackground(FIELD);
         runtimeInfo.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
         updateRuntimeInfo();
@@ -1047,7 +1064,7 @@ public class Main {
         list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         list.setBackground(FIELD);
         list.setForeground(TEXT);
-        list.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+        list.setFont(new Font(UI_FONT, Font.BOLD, 13));
         list.setFixedCellHeight(32);
         JScrollPane scroll = new JScrollPane(list);
         styleScrollPane(scroll);
@@ -1134,7 +1151,7 @@ public class Main {
         list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         list.setBackground(FIELD);
         list.setForeground(TEXT);
-        list.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+        list.setFont(new Font(UI_FONT, Font.BOLD, 13));
         list.setFixedCellHeight(32);
         JScrollPane scroll = new JScrollPane(list);
         styleScrollPane(scroll);
@@ -1981,7 +1998,7 @@ public class Main {
     private void styleInput(java.awt.Component component) {
         component.setBackground(FIELD);
         component.setForeground(TEXT);
-        component.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 13));
+        component.setFont(new Font(UI_FONT, Font.PLAIN, 13));
         if (component instanceof JComboBox) {
             styleComboBox((JComboBox<?>) component);
             return;
@@ -1997,7 +2014,7 @@ public class Main {
     private void styleCheckBox(JCheckBox checkBox) {
         checkBox.setOpaque(false);
         checkBox.setForeground(TEXT);
-        checkBox.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+        checkBox.setFont(new Font(UI_FONT, Font.BOLD, 13));
         checkBox.setFocusPainted(false);
         checkBox.setBorder(BorderFactory.createEmptyBorder(4, 0, 4, 0));
         checkBox.setIconTextGap(10);
@@ -2014,7 +2031,7 @@ public class Main {
         combo.setBackground(FIELD);
         combo.setForeground(TEXT);
         combo.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(new Color(255, 255, 255, 20)),
+            BorderFactory.createLineBorder(BORDER),
             BorderFactory.createEmptyBorder(0, 2, 0, 0)
         ));
         combo.setUI(new StyledComboBoxUi());
@@ -2035,7 +2052,7 @@ public class Main {
         scrollBar.setUI(new BasicScrollBarUI() {
             @Override
             protected void configureScrollBarColors() {
-                thumbColor = new Color(83, 96, 120);
+                thumbColor = new Color(36, 48, 51);
                 trackColor = FIELD;
             }
 
@@ -2088,7 +2105,7 @@ public class Main {
     }
 
     private JButton ghostButton(JButton button, boolean accent) {
-        styleButton(button, new Color(255, 255, 255, 0), accent ? ACCENT : new Color(214, 219, 229));
+        styleButton(button, new Color(255, 255, 255, 0), accent ? ACCENT : new Color(199, 206, 204));
         button.putClientProperty("ghost", Boolean.TRUE);
         button.setPreferredSize(new Dimension(84, 32));
         return button;
@@ -2113,13 +2130,13 @@ public class Main {
         button.setBackground(background);
         button.setForeground(foreground);
         button.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
-        button.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+        button.setFont(new Font(UI_FONT, Font.BOLD, 13));
         button.setRolloverEnabled(true);
         button.setUI(new RoundedButtonUi());
     }
 
     private JPanel card(java.awt.LayoutManager layout) {
-        JPanel panel = new RoundedPanel(layout, SURFACE, new Color(255, 255, 255, 16), 8);
+        JPanel panel = new RoundedPanel(layout, SURFACE, BORDER, 6);
         panel.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createEmptyBorder(),
             BorderFactory.createEmptyBorder(16, 16, 16, 16)
@@ -2142,7 +2159,7 @@ public class Main {
     private JLabel label(String text, int size, int style, Color color) {
         JLabel label = new JLabel(text);
         label.setForeground(color);
-        label.setFont(new Font(Font.SANS_SERIF, style, size));
+        label.setFont(new Font(UI_FONT, style, size));
         return label;
     }
 
@@ -2167,7 +2184,7 @@ public class Main {
     }
 
     private JPanel statChip(String name, String value) {
-        JPanel panel = new RoundedPanel(new BorderLayout(0, 3), new Color(33, 29, 39, 205), new Color(255, 255, 255, 14), 8);
+        JPanel panel = new RoundedPanel(new BorderLayout(0, 3), FIELD, BORDER, 6);
         panel.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createEmptyBorder(),
             BorderFactory.createEmptyBorder(10, 12, 10, 12)
@@ -2178,15 +2195,15 @@ public class Main {
     }
 
     private JPanel versionChip(String name, JLabel installed, JLabel released) {
-        JPanel panel = new RoundedPanel(new BorderLayout(0, 5), new Color(33, 29, 39, 205), new Color(255, 255, 255, 14), 8);
+        JPanel panel = new RoundedPanel(new BorderLayout(0, 5), FIELD, BORDER, 6);
         panel.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createEmptyBorder(),
             BorderFactory.createEmptyBorder(10, 12, 10, 12)
         ));
         installed.setForeground(TEXT);
-        installed.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+        installed.setFont(new Font(UI_FONT, Font.BOLD, 12));
         released.setForeground(MUTED);
-        released.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+        released.setFont(new Font(UI_FONT, Font.PLAIN, 11));
 
         JPanel rows = transparentPanel(new BorderLayout(0, 2));
         rows.add(installed, BorderLayout.NORTH);
@@ -2226,12 +2243,12 @@ public class Main {
         BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = image.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g.setPaint(new GradientPaint(0, 0, ACCENT, size, size, BLUE));
+        g.setColor(SURFACE_2);
         g.fillRoundRect(0, 0, size, size, Math.max(8, size / 5), Math.max(8, size / 5));
-        g.setColor(new Color(255, 255, 255, 58));
+        g.setColor(BORDER_HOVER);
         g.drawRoundRect(1, 1, size - 3, size - 3, Math.max(8, size / 5), Math.max(8, size / 5));
-        g.setColor(BACKGROUND);
-        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, Math.max(13, size / 3)));
+        g.setColor(TEXT);
+        g.setFont(new Font(UI_FONT, Font.BOLD, Math.max(13, size / 3)));
         String text = "GC";
         java.awt.FontMetrics metrics = g.getFontMetrics();
         int x = (size - metrics.stringWidth(text)) / 2;
@@ -2262,13 +2279,13 @@ public class Main {
 
             Graphics2D g = (Graphics2D) graphics.create();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            Color border = selected ? ACCENT : new Color(255, 255, 255, 40);
-            Color fill = selected ? new Color(230, 146, 35, enabled ? 230 : 120) : FIELD;
+            Color border = selected ? ACCENT : BORDER_HOVER;
+            Color fill = selected ? new Color(99, 221, 182, enabled ? 230 : 120) : FIELD;
 
             g.setColor(fill);
-            g.fillRoundRect(x, y, SIZE - 1, SIZE - 1, 6, 6);
+            g.fillRoundRect(x, y, SIZE - 1, SIZE - 1, 4, 4);
             g.setColor(enabled ? border : new Color(border.getRed(), border.getGreen(), border.getBlue(), 80));
-            g.drawRoundRect(x, y, SIZE - 1, SIZE - 1, 6, 6);
+            g.drawRoundRect(x, y, SIZE - 1, SIZE - 1, 4, 4);
 
             if (selected) {
                 g.setColor(BACKGROUND);
@@ -2292,10 +2309,10 @@ public class Main {
                 tooltip = profile.description;
             }
 
-            label.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+            label.setFont(new Font(UI_FONT, Font.BOLD, 13));
             label.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
             if (isSelected) {
-                label.setBackground(new Color(48, 39, 48));
+                label.setBackground(HOVER);
                 label.setForeground(TEXT);
             } else {
                 label.setBackground(index == -1 ? FIELD : SURFACE);
@@ -2304,7 +2321,7 @@ public class Main {
             if (list != null) {
                 list.setBackground(SURFACE);
                 list.setForeground(TEXT);
-                list.setSelectionBackground(new Color(48, 39, 48));
+                list.setSelectionBackground(HOVER);
                 list.setSelectionForeground(TEXT);
                 list.setToolTipText(tooltip);
             }
@@ -2323,7 +2340,7 @@ public class Main {
                     g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                     g.setColor(getModel().isPressed() ? new Color(255, 255, 255, 26) : new Color(255, 255, 255, 12));
                     g.fillRoundRect(2, 5, getWidth() - 7, getHeight() - 10, 6, 6);
-                    g.setColor(isEnabled() ? ACCENT : MUTED);
+                    g.setColor(isEnabled() ? MUTED : new Color(104, 114, 112));
                     int cx = getWidth() / 2;
                     int cy = getHeight() / 2 + 1;
                     g.drawLine(cx - 4, cy - 2, cx, cy + 2);
@@ -2344,7 +2361,7 @@ public class Main {
             Graphics2D g = (Graphics2D) graphics.create();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             boolean enabled = comboBox == null || comboBox.isEnabled();
-            g.setColor(enabled ? FIELD : new Color(24, 22, 28));
+            g.setColor(enabled ? FIELD : SURFACE);
             g.fillRoundRect(bounds.x, bounds.y, bounds.width, bounds.height, 6, 6);
             g.dispose();
         }
@@ -2371,7 +2388,7 @@ public class Main {
             } else {
                 g.setColor(fill);
                 g.fillRoundRect(0, 0, component.getWidth() - 1, component.getHeight() - 1, 6, 6);
-                g.setColor(new Color(255, 255, 255, button.isEnabled() ? 28 : 14));
+                g.setColor(button.isEnabled() ? (model.isRollover() ? BORDER_HOVER : BORDER) : new Color(210, 235, 230, 12));
                 g.drawRoundRect(0, 0, component.getWidth() - 1, component.getHeight() - 1, 6, 6);
             }
             g.dispose();
@@ -2396,20 +2413,18 @@ public class Main {
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             int width = progressBar.getWidth();
             int height = progressBar.getHeight();
-            int arc = 8;
+            int arc = 4;
             int inset = 2;
             Insets barInsets = progressBar.getInsets();
             int amount = Math.max(0, Math.min(width - inset * 2, getAmountFull(barInsets, width - inset * 2, height - inset * 2)));
 
             g.setColor(FIELD);
             g.fillRoundRect(0, 0, width - 1, height - 1, arc, arc);
-            g.setColor(new Color(255, 255, 255, 22));
+            g.setColor(BORDER);
             g.drawRoundRect(0, 0, width - 1, height - 1, arc, arc);
             if (amount > 0) {
                 g.setColor(ACCENT);
                 g.fillRoundRect(inset, inset, amount, height - inset * 2, arc, arc);
-                g.setColor(new Color(255, 213, 114, 62));
-                g.drawLine(inset + 3, inset + 2, Math.max(inset + 3, inset + amount - 4), inset + 2);
             }
             g.dispose();
 
@@ -2454,12 +2469,11 @@ public class Main {
         protected void paintComponent(Graphics graphics) {
             Graphics2D g = (Graphics2D) graphics.create();
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g.setPaint(new GradientPaint(0, 0, new Color(28, 25, 34), getWidth(), getHeight(), BACKGROUND));
-            g.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 8, 8);
-            g.setColor(ACCENT);
-            g.fillRoundRect(0, 0, 5, getHeight() - 1, 8, 8);
-            g.setColor(new Color(104, 141, 187, 34));
-            g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 8, 8);
+            // Flat graphite panel; no gradient or glow (design system v1).
+            g.setColor(SURFACE);
+            g.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 6, 6);
+            g.setColor(BORDER);
+            g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 6, 6);
             g.dispose();
         }
     }
@@ -3068,7 +3082,7 @@ public class Main {
         JMenuItem item = new JMenuItem(text);
         item.setBackground(SURFACE);
         item.setForeground(TEXT);
-        item.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+        item.setFont(new Font(UI_FONT, Font.BOLD, 13));
         item.setOpaque(true);
         item.setBorder(BorderFactory.createEmptyBorder(10, 14, 10, 14));
         return item;
@@ -3245,7 +3259,7 @@ public class Main {
             adMeta.setText(accountStatusText(launcherUser));
             adButton.setText("Ads Off");
             adButton.setEnabled(false);
-            adButton.setBackground(new Color(22, 71, 52));
+            adButton.setBackground(SURFACE_2);
             adButton.setForeground(TEXT);
             return;
         }
@@ -6486,9 +6500,9 @@ public class Main {
         if (style == null) {
             style = log.addStyle(severity, null);
             StyleConstants.setForeground(style, switch (severity) {
-                case "error" -> new Color(255, 81, 72);
-                case "warning" -> new Color(255, 159, 28);
-                default -> new Color(214, 219, 229);
+                case "error" -> new Color(220, 104, 104);
+                case "warning" -> new Color(214, 172, 85);
+                default -> new Color(199, 206, 204);
             });
             StyleConstants.setBold(style, "error".equals(severity));
         }
