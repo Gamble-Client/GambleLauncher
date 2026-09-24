@@ -104,6 +104,7 @@ const state = {
   minecraftSessionCount: 0,
   minecraftPid: null,
   minecraftExit: null,
+  minecraftStartedClient: false,
   popup: null,
   launchProgress: null,
   spotify: null,
@@ -1698,7 +1699,16 @@ async function setupLaunchProgressListener() {
   }
 }
 
+const FRESH_PLAY_MARKER = "Press Play again: this attempt already used its one-use launch authorization";
+const FRESH_PLAY_ADVICE = "Press Play again. This attempt already used its one-use launch authorization, so retrying it cannot work; the next Play requests a fresh one.";
+
 function knownLaunchMessage(error) {
+  // Checked on the raw native error: publicMessage() may truncate the appended hint.
+  const raw = String(error?.message || error || "");
+  if (raw.includes(FRESH_PLAY_MARKER)) {
+    const cause = publicMessage(raw.slice(0, raw.indexOf(FRESH_PLAY_MARKER)), "Minecraft could not launch.");
+    return `${FRESH_PLAY_ADVICE}\n\nWhat failed: ${cause}`;
+  }
   const text = publicMessage(error, "Minecraft could not launch.");
   const lower = text.toLowerCase();
   if (lower.includes("amdgpu") || lower.includes("gpuvm") || lower.includes("gpu reset") || lower.includes("context is lost")) {
@@ -1915,8 +1925,11 @@ async function refreshMinecraftStatus(options = {}) {
         : state.minecraftExit.crashed
           ? `${knownLaunchMessage(state.minecraftExit.message)} Open Settings → Diagnostics for the latest launch log.`
           : "Minecraft closed shortly after launch. Open Settings → Diagnostics for the latest launch log.";
+      // The standalone loader consumed this start's one-use launch ticket.
+      const freshPlay = state.minecraftStartedClient && !state.minecraftExit.gpuFault
+        ? " Press Play again to start with a fresh launch authorization." : "";
       showPopup(shortlyAfterLaunch || options.showExitPopup
-        ? "Minecraft stopped shortly after launch" : "Minecraft stopped unexpectedly", exitMessage, "launch");
+        ? "Minecraft stopped shortly after launch" : "Minecraft stopped unexpectedly", `${exitMessage}${freshPlay}`, "launch");
     }
     const changed = wasRunning !== state.minecraftRunning
       || oldSessionCount !== state.minecraftSessionCount
@@ -2650,6 +2663,7 @@ app.addEventListener("click", async (event) => {
       } else if (String(message).toLowerCase().includes("process started")) {
         state.minecraftRunning = true;
         state.minecraftStartedAt = Date.now();
+        state.minecraftStartedClient = Boolean(selectedProfile.client);
         state.minecraftPid = state.minecraftPid || null;
         state.minecraftExit = null;
       }

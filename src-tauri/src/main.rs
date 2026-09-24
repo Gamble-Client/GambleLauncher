@@ -1911,7 +1911,29 @@ async fn launch_game(app: AppHandle, input: LaunchRequest) -> Result<String, Str
     result
 }
 
+const FRESH_LAUNCH_AUTHORIZATION_HINT: &str = "Press Play again: this attempt already used its one-use launch authorization, and the next Play requests a fresh one.";
+
+/// After the managed loader's one-use enrollment was issued, a later failure
+/// cannot be fixed by retrying the same attempt: the user must press Play so
+/// a fresh enrollment/launch ticket is requested.
+fn with_fresh_launch_hint(error: String, authorization_issued: bool) -> String {
+    if !authorization_issued || error.contains(FRESH_LAUNCH_AUTHORIZATION_HINT) {
+        return error;
+    }
+    format!("{error}\n\n{FRESH_LAUNCH_AUTHORIZATION_HINT}")
+}
+
 fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, String> {
+    let authorization_issued = std::cell::Cell::new(false);
+    launch_game_attempt(app, input, &authorization_issued)
+        .map_err(|error| with_fresh_launch_hint(error, authorization_issued.get()))
+}
+
+fn launch_game_attempt(
+    app: AppHandle,
+    input: LaunchRequest,
+    authorization_issued: &std::cell::Cell<bool>,
+) -> Result<String, String> {
     let _launch_guard = LAUNCH_LOCK
         .try_lock()
         .map_err(|_| "A launch operation is already in progress.".to_string())?;
@@ -1987,6 +2009,7 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
             build.to_string(),
             token.to_string(),
         )?;
+        authorization_issued.set(true);
     }
 
     write_launcher_preferences(&profile, input.anti_screenshare)?;
@@ -6695,6 +6718,16 @@ mod tests {
         assert!(super::may_resend_request(true, false));
         assert!(super::may_resend_request(false, true));
         assert!(!super::may_resend_request(false, false));
+    }
+
+    #[test]
+    fn failures_after_the_one_use_enrollment_ask_for_a_fresh_play() {
+        let error = "Could not download Minecraft assets.".to_string();
+        assert_eq!(super::with_fresh_launch_hint(error.clone(), false), error);
+        let hinted = super::with_fresh_launch_hint(error.clone(), true);
+        assert!(hinted.starts_with(&error));
+        assert!(hinted.ends_with(super::FRESH_LAUNCH_AUTHORIZATION_HINT));
+        assert_eq!(super::with_fresh_launch_hint(hinted.clone(), true), hinted);
     }
 
     #[test]

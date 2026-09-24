@@ -3564,6 +3564,7 @@ public class Main {
 
         new SwingWorker<Process, Void>() {
             private LaunchProfile resolvedProfile = launchProfile;
+            private volatile boolean authorizationIssued;
 
             @Override
             protected Process doInBackground() throws Exception {
@@ -3596,6 +3597,7 @@ public class Main {
                     File mods = new File(getMinecraftFolder(resolvedProfile), "mods");
                     removeManagedClientArtifactsForMemory(mods);
                     ensureLoaderJar(mods);
+                    authorizationIssued = true;
                     if (another) ensureProfileFolders(resolvedProfile);
                     log("Gamble Client will be authorized and loaded from memory by the standalone loader.");
                 } else {
@@ -3616,6 +3618,7 @@ public class Main {
                     Process process = get();
                     MinecraftChildren.Child child = minecraftChildren.add(process, getMinecraftFolder(resolvedProfile),
                         new File(getLauncherDataFolder(), "launch-logs/session-" + process.pid() + "-" + System.currentTimeMillis() + ".log"));
+                    child.gambleClient = launchProfile.includesGambleClient;
                     appendLine(child.logFile, "Profile: " + resolvedProfile.id + " | Graphics: " + selectedGraphicsMode + " | GPU: " + selectedGpuSelector);
                     Main.this.setProgress(100, "Running");
                     log("Minecraft process started.");
@@ -3645,7 +3648,9 @@ public class Main {
                         setBusy(false);
                         startMicrosoftSignIn(true);
                     } else {
-                        JOptionPane.showMessageDialog(frame, message, "Launch failed", JOptionPane.ERROR_MESSAGE);
+                        String shown = freshLaunchMessage(message, authorizationIssued);
+                        if (authorizationIssued) log(FRESH_LAUNCH_ADVICE);
+                        JOptionPane.showMessageDialog(frame, shown, "Launch failed", JOptionPane.ERROR_MESSAGE);
                     }
                 } finally {
                     launchPreparing = false;
@@ -3653,6 +3658,15 @@ public class Main {
                 }
             }
         }.execute();
+    }
+
+    static final String FRESH_LAUNCH_ADVICE = "Press Play again. This attempt already used its one-use launch authorization, "
+        + "so retrying it cannot work; the next Play requests a fresh one.";
+
+    /** A failure after the loader's one-use enrollment was issued needs a fresh Play, not a generic error. */
+    static String freshLaunchMessage(String failure, boolean authorizationIssued) {
+        if (!authorizationIssued) return failure;
+        return FRESH_LAUNCH_ADVICE + "\n\nWhat failed: " + (failure == null || failure.isBlank() ? "Minecraft could not launch." : failure);
     }
 
     private LauncherAccount refreshLauncherAccountBlocking() throws IOException {
@@ -6211,6 +6225,8 @@ public class Main {
             if (!diagnosis.detected.isEmpty()) log("Detected: " + diagnosis.detected);
             if (!diagnosis.probableCause.isEmpty()) log("Probable cause: " + diagnosis.probableCause);
             if (!diagnosis.recommendedFix.isEmpty()) log("Recommended fix: " + diagnosis.recommendedFix);
+            // The standalone loader consumed this start's one-use launch ticket.
+            if (child.gambleClient && elapsedMs < 120_000L) log("Press Play again to start with a fresh launch authorization.");
             diagnosticLog("Failed process log: " + child.logFile.getAbsolutePath());
             for (String line : child.lastLines(100)) diagnosticLog("  " + line);
             try {

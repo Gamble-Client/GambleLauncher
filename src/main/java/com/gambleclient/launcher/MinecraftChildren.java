@@ -21,6 +21,7 @@ final class MinecraftChildren {
         volatile boolean startupComplete;
         volatile boolean fatalDetected;
         volatile boolean stopRequested;
+        volatile boolean gambleClient;
         volatile String detectedFailure = "";
 
         Child(Process process, File gameDir, File logFile) {

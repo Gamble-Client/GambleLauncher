@@ -193,6 +193,35 @@ test("first-run Play reaches native automatic installation without an update det
   assert.equal(ui.state.busy, false);
 });
 
+const FRESH_PLAY_HINT = "Press Play again: this attempt already used its one-use launch authorization, and the next Play requests a fresh one.";
+
+test("a launch failing after the one-use authorization was issued asks for a fresh Play", async () => {
+  const ui = harness(async (command) => {
+    if (command === "launcher_api") return { user: ui.state.account, ads: { required: false } };
+    if (command === "launch_game") {
+      // Long enough that publicMessage() truncation would drop an appended hint.
+      throw `Managed Java runtime could not start: ${"java detail ".repeat(40)}\n\n${FRESH_PLAY_HINT}`;
+    }
+    if (command === "minecraft_status") return { running: false };
+    throw new Error(`Unexpected native call: ${command}`);
+  });
+  await ui.click();
+  assert.equal(ui.state.popup.title, "Launch failed");
+  assert.match(ui.state.popup.message, /^Press Play again\./);
+  assert.match(ui.state.popup.message, /What failed: Managed Java runtime could not start/);
+  assert.doesNotMatch(ui.knownLaunchMessage("Could not download Minecraft assets."), /Press Play again/);
+});
+
+test("a Gamble profile that exits shortly after start tells the user to press Play again", async () => {
+  for (const client of [true, false]) {
+    const ui = harness(async () => ({ running: false, exitCode: 1, crashed: true,
+      message: "Minecraft exited with code 1.", logPath: "/fixture/launch.log" }));
+    Object.assign(ui.state, { minecraftRunning: true, minecraftStartedAt: Date.now() - 5000, minecraftStartedClient: client });
+    await ui.refreshMinecraftStatus();
+    assert.equal(/Press Play again/.test(ui.state.popup.message), client, String(client));
+  }
+});
+
 test("rate-limit recovery preserves the source and retry interval", () => {
   const ui = harness(() => {});
   const message = ui.knownLaunchMessage("HTTP 429: Gamble launcher limit. Retry after 600 seconds.");
