@@ -5,7 +5,6 @@ import { open as tauriOpenDialog } from "@tauri-apps/plugin-dialog";
 import { canUseBuildForAccess, preferredBuildForAccess, canLaunchMultiple } from "./access-policy.js";
 import { launchState } from "./launch-state.js";
 import "./styles.css";
-import logoUrl from "./assets/cg-mod-icon.png";
 
 const SITE = "https://gambleclient.org";
 const DASH = "https://dash.gambleclient.org";
@@ -535,24 +534,25 @@ function render() {
       <section class="shell ${state.animationsEnabled ? "" : "animations-off"}">
       <aside class="rail">
         <div class="brand">
-          <div class="brand-mark"><img src="${escapeAttr(logoUrl)}" alt=""></div>
-          <div>
-            <strong>${escapeHtml(state.clientDisplayName)}</strong>
-            <span>${escapeHtml(state.launcherDisplayName)}</span>
-          </div>
+          <strong class="wordmark">GAMBLE</strong>
+          <span class="brand-meta">Launcher <span class="mono">${escapeHtml(state.info?.version || LAUNCHER_VERSION)}</span></span>
         </div>
-        <nav>
-          ${navButton("play", "Play", "01")}
-          ${navButton("accounts", "Accounts", "02")}
-          ${navButton("social", "Social", "03")}
-          ${navButton("updates", "Updates", "04")}
-          ${navButton("profiles", "Profiles", "05")}
-          <button class="nav-item nav-action" type="button" data-open="${DASH}/dashboard.html">Dashboard</button>
-          <button class="nav-item nav-action" type="button" data-open="https://discord.gg/gambleclient">Discord</button>
+        <nav class="nav-primary" aria-label="Launcher sections">
+          ${navButton("play", "Home")}
+          ${navButton("profiles", "Client")}
+          ${navButton("mods", "Mods")}
+          ${navButton("accounts", "Accounts")}
+          ${navButton("updates", "Downloads")}
+          ${navButton("settings", "Settings")}
+        </nav>
+        <nav class="nav-secondary" aria-label="More">
+          ${navButton("social", "Friends")}
+          <button class="nav-item nav-action" type="button" data-open="${DASH}/dashboard.html">${navIcon("external")}<strong>Dashboard</strong></button>
+          <button class="nav-item nav-action" type="button" data-open="https://discord.gg/gambleclient">${navIcon("external")}<strong>Discord</strong></button>
         </nav>
         <div class="rail-status">
           <div class="rail-card">
-            <span>Access</span>
+            <span>Gamble account</span>
             <strong>${escapeHtml(accountTitle())}</strong>
             <small>${escapeHtml(accountMeta())}</small>
           </div>
@@ -584,8 +584,7 @@ function render() {
   if (!openingMotionPlayed) {
     openingMotionPlayed = true;
     if (state.animationsEnabled && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      app.animate([{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'translateY(0)' }],
-        { duration: 420, easing: 'cubic-bezier(.16,1,.3,1)' });
+      app.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 140, easing: 'cubic-bezier(.2,0,0,1)' });
     }
   }
   if (preserveScroll) restoreScrollState(scrollState);
@@ -647,9 +646,24 @@ app.addEventListener("keydown", (event) => {
   }
 });
 
-function navButton(id, label, index) {
-  const active = state.view === id || (id === "profiles" && ["mods", "packs"].includes(state.view));
-  return `<button class="nav-item ${active ? "active" : ""}" type="button" data-view="${id}"><span>${escapeHtml(index)}</span><strong>${escapeHtml(label)}</strong></button>`;
+const NAV_ICONS = {
+  play: '<path d="M3 7.5 8 3l5 4.5V13H9.5v-3h-3v3H3z"/>',
+  profiles: '<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M5.5 6h5M5.5 8.5h5M5.5 11h3"/>',
+  mods: '<path d="M8 2.5 13.5 5.5v5L8 13.5 2.5 10.5v-5z"/><path d="M2.5 5.5 8 8.5l5.5-3M8 8.5v5"/>',
+  accounts: '<circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.6-2.6 2.6-4 5-4s4.4 1.4 5 4"/>',
+  updates: '<path d="M8 2.5v7.5M4.5 6.5 8 10l3.5-3.5M3 13.5h10"/>',
+  settings: '<circle cx="8" cy="8" r="2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/>',
+  social: '<circle cx="6" cy="6" r="2.2"/><circle cx="11.2" cy="6.8" r="1.7"/><path d="M2 13c.4-2.2 1.9-3.4 4-3.4s3.6 1.2 4 3.4M10.4 9.8c1.7 0 3 .9 3.4 3"/>',
+  external: '<path d="M9.5 2.5h4v4M13.5 2.5 7.5 8.5M11.5 9.5v4h-9v-9h4"/>'
+};
+
+function navIcon(id) {
+  return `<svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">${NAV_ICONS[id] || ""}</svg>`;
+}
+
+function navButton(id, label) {
+  const active = state.view === id || (id === "mods" && ["mods", "packs"].includes(state.view));
+  return `<button class="nav-item ${active ? "active" : ""}" type="button" data-view="${id}" ${active ? 'aria-current="page"' : ""}>${navIcon(id)}<strong>${escapeHtml(label)}</strong></button>`;
 }
 
 function allProfiles() {
@@ -701,14 +715,28 @@ function topbar(signedIn) {
     <header class="topbar">
       <div>
         <h1>${viewTitle()}</h1>
+        <p class="topbar-sub">${escapeHtml(viewSubtitle())}</p>
       </div>
       <div class="top-actions">
         <button class="ghost" type="button" data-action="refresh" ${state.busy ? "disabled" : ""}>Refresh</button>
-        <button class="ghost settings-button ${state.view === "settings" ? "active" : ""}" type="button" data-view="settings" aria-label="Open settings">Settings</button>
         <button class="${signedIn ? "ghost" : "primary-small"}" type="button" data-action="${signedIn ? "signout" : "signin"}" ${state.busy ? "disabled" : ""}>${signedIn ? "Sign out" : "Sign in"}</button>
       </div>
     </header>
   `;
+}
+
+const GRAPHICS_LABELS = { automatic: "Automatic", safe: "Safe graphics", software: "Software fallback" };
+
+function clientUpdateState(profile, signedIn) {
+  if (state.minecraftRunning) {
+    const count = state.minecraftSessionCount || 1;
+    return { tone: "live", label: count > 1 ? `${count} sessions running` : "Running" };
+  }
+  if (!profile.client) return { tone: "neutral", label: "No client payload" };
+  if (!signedIn) return { tone: "neutral", label: "Sign in to check" };
+  if (clientNeedsUpdate()) return { tone: "warn", label: "Update on launch" };
+  if (!state.clientStatus) return { tone: "neutral", label: "Not checked" };
+  return { tone: "ok", label: "Up to date" };
 }
 
 function playView(profile, selectedBuild, canInstall, signedIn) {
@@ -717,62 +745,97 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
   const enabledMods = state.mods.filter((item) => item.enabled).length;
   const enabledPacks = state.packs.filter((item) => item.enabled).length;
   const activeMicrosoft = profileAccount(profile);
+  const update = clientUpdateState(profile, signedIn);
+  const loaderVersion = state.profileLoaderStatus?.version || "";
+  const loader = profile.loader === "fabric" ? `Fabric${loaderVersion ? ` ${loaderVersion}` : ""}` : "Vanilla";
+  const clientBuild = profile.client ? (state.clientStatus?.buildVersion || "—") : "—";
+  const stopping = ready.action === "stop" || state.minecraftSessionCount > 1;
+  const launcherUpdate = launcherNeedsUpdate();
   return `
     <section class="play-stage play-overview">
-      <section class="launch-panel">
-        <div class="launch-copy">
-          <span class="eyebrow">Minecraft 1.21.11</span>
-          <h2>${escapeHtml(profile.custom || !profile.client ? profile.label : state.clientDisplayName)}</h2>
-          <p class="launch-description">${escapeHtml(ready.detail)}</p>
-          <div class="launch-facts">
-            <div>
-              <span>Profile</span>
-              <strong>${escapeHtml(profile.label)}</strong>
-              <button class="inline-link" type="button" data-view="profiles">Change profile</button>
-            </div>
-            <div>
-              <span>Memory</span>
-              <strong>${escapeHtml(state.memory)} GB</strong>
+      <section class="launch-panel" aria-labelledby="current-client-title">
+        <header class="client-head">
+          <div class="client-mark" aria-hidden="true">${profile.client ? "G" : profile.loader === "fabric" ? "F" : "V"}</div>
+          <div class="client-title">
+            <span class="eyebrow">Current client</span>
+            <h2 id="current-client-title">${escapeHtml(profile.custom || !profile.client ? profile.label : state.clientDisplayName)}</h2>
+          </div>
+          <span class="status-tag ${update.tone}">${escapeHtml(update.label)}</span>
+        </header>
+        <dl class="client-facts">
+          <div><dt>Minecraft</dt><dd class="mono">1.21.11</dd></div>
+          <div><dt>Loader</dt><dd class="mono">${escapeHtml(loader)}</dd></div>
+          <div><dt>Channel</dt><dd>${escapeHtml(profile.client ? selectedBuild.label : "—")}</dd></div>
+          <div><dt>Client build</dt><dd class="mono">${escapeHtml(clientBuild)}</dd></div>
+        </dl>
+        <div class="launch-row">
+          <div class="launch-copy">
+            <p class="launch-description">${escapeHtml(ready.detail)}</p>
+            <div class="launch-facts">
+              <div>
+                <span>Profile</span>
+                <strong>${escapeHtml(profile.label)}</strong>
+                <button class="inline-link" type="button" data-view="profiles">Change profile</button>
+              </div>
+              <div>
+                <span>Memory</span>
+                <strong class="mono">${escapeHtml(state.memory)} GB</strong>
+              </div>
+              <div>
+                <span>Graphics</span>
+                <strong>${escapeHtml(GRAPHICS_LABELS[state.graphicsMode] || "Automatic")}</strong>
+              </div>
             </div>
           </div>
-        </div>
-        <div class="launch-stack">
-          <button class="launch-button" type="button" data-action="launch" ${ready.disabled ? "disabled" : ""}>${escapeHtml(state.minecraftSessionCount > 1 ? "Stop all sessions" : ready.label)}</button>
-          ${state.minecraftRunning && canLaunchMultiple(state.account) ? `<button class="ghost" type="button" data-action="launch-another" ${ready.disabled ? "disabled" : ""}>Launch another</button><p class="launch-version">${state.minecraftSessionCount || 1} running · Extra sessions start in a clean, separate profile.</p>` : ""}
-          <p class="launch-version">Minecraft 1.21.11${profile.loader === "fabric" ? " · Fabric" : ""}</p>
-          ${activeMicrosoft ? "" : `<p class="launch-warning">An offline Minecraft session is selected. <button class="inline-link" type="button" data-view="accounts">Connect Microsoft</button> for online servers.</p>`}
+          <div class="launch-stack">
+            <button class="launch-button ${stopping ? "is-stop" : ""}" type="button" data-action="launch" ${ready.disabled ? "disabled" : ""}>${escapeHtml(state.minecraftSessionCount > 1 ? "Stop all sessions" : ready.label)}</button>
+            ${state.minecraftRunning && canLaunchMultiple(state.account) ? `<button class="ghost launch-another" type="button" data-action="launch-another" ${ready.disabled ? "disabled" : ""}>Launch another</button><p class="launch-version">${state.minecraftSessionCount || 1} running · Extra sessions start in a clean, separate profile.</p>` : ""}
+            ${activeMicrosoft ? "" : `<p class="launch-warning">An offline Minecraft session is selected. <button class="inline-link" type="button" data-view="accounts">Connect Microsoft</button> for online servers.</p>`}
+          </div>
         </div>
       </section>
 
-      <aside class="account-panel">
-        <div class="identity-card">
-          <div class="avatar" style="${escapeAttr(avatarStyle(activeMicrosoft))}">${avatarText(avatarStyle(activeMicrosoft), activeMicrosoft?.name)}</div>
-          <div>
-            <span class="eyebrow">Minecraft account</span>
-            <strong>${escapeHtml(activeMicrosoft?.name || accountTitle())}</strong>
-            <small>${escapeHtml(activeMicrosoft ? `Launching with ${profileAccountLabel(profile)}` : "Offline session · online servers require Microsoft")}</small>
+      <div class="home-grid">
+        <aside class="account-panel home-card">
+          <div class="identity-card">
+            <div class="avatar" style="${escapeAttr(avatarStyle(activeMicrosoft))}">${avatarText(avatarStyle(activeMicrosoft), activeMicrosoft?.name)}</div>
+            <div>
+              <span class="eyebrow">Minecraft account</span>
+              <strong>${escapeHtml(activeMicrosoft?.name || accountTitle())}</strong>
+              <small>${escapeHtml(activeMicrosoft ? `Launching with ${profileAccountLabel(profile)}` : "Offline session · online servers require Microsoft")}</small>
+            </div>
           </div>
-        </div>
-        <button class="ghost identity-manage" type="button" data-view="accounts">Manage accounts</button>
-      </aside>
-    </section>
+          <button class="ghost identity-manage" type="button" data-view="accounts">Manage accounts</button>
+        </aside>
 
-    <section class="quick-grid main-quick-grid play-shortcuts">
-      <article class="action-tile">
-        <span>Mods</span>
-        <strong>${profileHasMods(profile) ? `${enabledMods} enabled` : "Vanilla"}</strong>
-        <button type="button" data-view="mods" ${profileHasMods(profile) ? "" : "disabled"}>Manage mods</button>
-      </article>
-      <article class="action-tile">
-        <span>Resource packs</span>
-        <strong>${enabledPacks} enabled</strong>
-        <button type="button" data-view="packs">Manage packs</button>
-      </article>
-      <article class="action-tile">
-        <span>Need a hand?</span>
-        <strong>Startup help</strong>
-        <button type="button" data-action="show-diagnostics">Open diagnostics</button>
-      </article>
+        <section class="home-card download-card" aria-labelledby="home-downloads-title">
+          <span class="eyebrow" id="home-downloads-title">Downloads</span>
+          <dl class="status-list">
+            <div><dt>Launcher</dt><dd><span class="mono">${escapeHtml(state.info?.version || LAUNCHER_VERSION)}</span><span class="status-dot ${launcherUpdate ? "warn" : "ok"}">${launcherUpdate ? `Update ${escapeHtml(latestLauncherVersion())}` : "Current"}</span></dd></div>
+            <div><dt>Client</dt><dd>${escapeHtml(profile.client ? clientStatusLabel() : "Not used")}</dd></div>
+          </dl>
+          ${profile.client && state.clientStatus?.message ? `<p class="card-note">${escapeHtml(state.clientStatus.message)}</p>` : ""}
+          <button class="inline-link" type="button" data-view="updates">Open downloads</button>
+        </section>
+
+        <section class="home-card play-shortcuts" aria-label="Profile content">
+          <div class="shortcut-row">
+            <span>Mods</span>
+            <strong>${profileHasMods(profile) ? `${enabledMods} enabled` : "Vanilla"}</strong>
+            <button class="inline-link" type="button" data-view="mods" ${profileHasMods(profile) ? "" : "disabled"}>Manage mods</button>
+          </div>
+          <div class="shortcut-row">
+            <span>Resource packs</span>
+            <strong>${enabledPacks} enabled</strong>
+            <button class="inline-link" type="button" data-view="packs">Manage packs</button>
+          </div>
+          <div class="shortcut-row">
+            <span>Startup help</span>
+            <strong>Diagnostics</strong>
+            <button class="inline-link" type="button" data-action="show-diagnostics">Open diagnostics</button>
+          </div>
+        </section>
+      </div>
     </section>
   `;
 }
@@ -829,8 +892,7 @@ function friendsPanel() {
     <section class="friends-panel">
       <div class="section-head">
         <div>
-          <span class="eyebrow">Social</span>
-          <h3>Friends</h3>
+          <h3>Add a friend</h3>
         </div>
         <div class="top-actions">
           <input class="inline-input" data-field="friendUsername" value="${escapeAttr(state.friendUsername)}" placeholder="Username">
@@ -909,26 +971,39 @@ function friendRequestRow(request) {
 }
 
 function updatesView(profile, selectedBuild, canInstall, signedIn) {
+  const launcherUpdate = launcherNeedsUpdate();
   return `
     <section class="screen-band">
       <div>
-        <p>Your launcher and client, up to date.</p>
+        <p>Launcher and managed client builds for this computer.</p>
       </div>
       <div class="top-actions">
         <button class="ghost" type="button" data-action="check-updates" ${state.busy ? "disabled" : ""}>Check</button>
       </div>
     </section>
     <section class="updates-simple">
-      <article class="update-card ${launcherNeedsUpdate() ? "warn" : ""}">
-        <span>Launcher</span>
-        <strong>${escapeHtml(launcherNeedsUpdate() ? "Update required" : "Current")}</strong>
+      <article class="update-card ${launcherUpdate ? "warn" : ""}">
+        <div class="update-card-head">
+          <span>Launcher</span>
+          <strong>${escapeHtml(launcherUpdate ? "Update required" : "Current")}</strong>
+        </div>
+        <dl class="status-list">
+          <div><dt>Installed</dt><dd class="mono">${escapeHtml(state.info?.version || LAUNCHER_VERSION)}</dd></div>
+          <div><dt>Latest</dt><dd class="mono">${escapeHtml(latestLauncherVersion() || "Not checked")}</dd></div>
+        </dl>
         <p>Keep the launcher current to unlock launching and sign-in.</p>
-        <button class="primary-small" type="button" data-action="download-launcher" ${state.busy || !latestLauncherVersion() || !launcherNeedsUpdate() ? "disabled" : ""}>Update Launcher</button>
+        <button class="primary-small" type="button" data-action="download-launcher" ${state.busy || !latestLauncherVersion() || !launcherUpdate ? "disabled" : ""}>Update Launcher</button>
       </article>
       <article class="update-card ${clientNeedsUpdate() ? "warn" : ""}">
-        <span>Managed client</span>
-        <strong>${escapeHtml(clientStatusLabel())}</strong>
-        <p>${escapeHtml(profile.client ? `${selectedBuild.label} profile` : "Select a Gamble Client profile to update the managed jar.")}</p>
+        <div class="update-card-head">
+          <span>Managed client</span>
+          <strong>${escapeHtml(clientStatusLabel())}</strong>
+        </div>
+        <dl class="status-list">
+          <div><dt>Channel</dt><dd>${escapeHtml(profile.client ? selectedBuild.label : "—")}</dd></div>
+          <div><dt>File</dt><dd class="mono">${escapeHtml(profile.client ? (state.clientStatus?.fileName || "Not checked") : "—")}</dd></div>
+        </dl>
+        <p>${escapeHtml(profile.client ? (state.clientStatus?.message || `${selectedBuild.label} profile`) : "Select a Gamble Client profile to update the managed jar.")}</p>
         <button class="primary-small" type="button" data-action="install" ${!canInstall || state.busy ? "disabled" : ""}>Update Client</button>
       </article>
     </section>
@@ -1047,7 +1122,7 @@ function profilesView(profile, selectedBuild) {
         ${profile.loader === "fabric" ? `
           <footer class="profile-loader-strip"><div><span class="profile-folder-mark">F</span><div><strong>${escapeHtml(state.profileLoaderStatus?.version ? `Fabric Loader ${state.profileLoaderStatus.version}` : "Fabric Loader")}</strong><small>${escapeHtml(state.profileLoaderStatus?.updateAvailable ? `Update ${state.profileLoaderStatus.latestVersion} available` : "Used only by this profile")}</small></div></div><button class="ghost" type="button" data-action="update-loader" ${state.busy ? "disabled" : ""}>${state.profileLoaderStatus?.updateAvailable ? "Update" : "Check"}</button></footer>
         ` : ""}
-      <footer class="profile-play-footer"><span>Changes save automatically</span><button class="primary-small" type="button" data-view="play">Back to Play</button></footer>
+      <footer class="profile-play-footer"><span>Changes save automatically</span><button class="primary-small" type="button" data-view="play">Back to Home</button></footer>
     </section>
     </div>
   `;
@@ -1070,7 +1145,7 @@ function settingsView(profile, selectedBuild) {
   return `
     <section class="screen-band">
       <div>
-        <p>Make yourself at home. Changes save automatically.</p>
+        <p>Changes save automatically.</p>
       </div>
       <div class="top-actions">
         <button class="ghost" type="button" data-action="toggle-advanced">${state.showAdvancedSettings ? "Hide Advanced" : "Show Advanced"}</button>
@@ -1078,25 +1153,40 @@ function settingsView(profile, selectedBuild) {
       </div>
     </section>
     <section class="settings-grid">
-      <section class="identity-settings wide-field" aria-labelledby="identity-settings-title">
-        <div>
-          <span class="eyebrow">Appearance</span>
-          <strong id="identity-settings-title">Launcher and client names</strong>
-          ${contextHelp("branding", "About display names", "Changes visible branding only. Install folders, update IDs, and security checks keep their canonical Gamble Client names.")}
+      <section class="identity-settings settings-group" aria-labelledby="game-settings-title">
+        <div class="settings-group-head">
+          <span class="eyebrow">Game</span>
+          <strong id="game-settings-title">Minecraft session</strong>
         </div>
         <div class="identity-fields">
+          ${state.microsoft ? `
+            <div class="setting-note">
+              <span>Minecraft account</span>
+              <strong>${escapeHtml(state.microsoft.name)}</strong>
+              <button class="inline-link" type="button" data-view="accounts">Manage accounts</button>
+            </div>
+          ` : `
+            <label>
+              <span>Offline username</span>
+              <input data-field="username" value="${escapeAttr(state.username)}" placeholder="Offline name">
+            </label>
+          `}
           <label>
-            <span>Launcher name</span>
-            <input data-field="launcherDisplayName" maxlength="40" value="${escapeAttr(state.launcherDisplayName)}" placeholder="Gamble Client Launcher">
+            <span>Memory</span>
+            <select data-field="memory">
+              ${["2", "3", "4", "5", "6", "7", "8", "10", "12", "16"].map((item) => `<option value="${item}" ${item === state.memory ? "selected" : ""}>${item} GB</option>`).join("")}
+            </select>
           </label>
-          <label>
-            <span>Client name</span>
-            <input data-field="clientDisplayName" maxlength="40" value="${escapeAttr(state.clientDisplayName)}" placeholder="Gamble Client">
-          </label>
+          ${state.showAdvancedSettings ? `
+            <label class="wide-field">
+              <span>Java Args</span>
+              <input class="mono" data-field="javaArgs" value="${escapeAttr(state.javaArgs)}" placeholder="-XX:+UseZGC">
+            </label>
+          ` : ""}
         </div>
       </section>
-      <section class="identity-settings wide-field" aria-labelledby="graphics-settings-title">
-        <div>
+      <section class="identity-settings settings-group" aria-labelledby="graphics-settings-title">
+        <div class="settings-group-head">
           <span class="eyebrow">Graphics safety</span>
           <strong id="graphics-settings-title">Game rendering path</strong>
           ${contextHelp("graphics", "Choosing a graphics mode", "Automatic keeps the launcher UI hardware-accelerated and applies the client’s AMD compatibility guard before Minecraft starts. Safe disables risky threaded/ACO paths without forcing software rendering. Software is an emergency fallback and may be slow.")}
@@ -1112,43 +1202,46 @@ function settingsView(profile, selectedBuild) {
           </label>
           <div>
             <label><span>GPU selector (DRI_PRIME)</span>
-            <input data-field="gpuSelector" maxlength="128" value="${escapeAttr(state.gpuSelector)}" placeholder="Blank = default GPU" autocomplete="off" spellcheck="false"></label>
+            <input class="mono" data-field="gpuSelector" maxlength="128" value="${escapeAttr(state.gpuSelector)}" placeholder="Blank = default GPU" autocomplete="off" spellcheck="false"></label>
             ${contextHelp("gpu", "GPU selector help", "Linux / Mesa only. Examples: 1, 1!, or a Mesa PCI selector. Leave blank unless this computer has more than one GPU.")}
           </div>
-          <div>
+          <div class="wide-field">
             ${privacyToggle("disableClientShaders", "Disable client shaders", state.disableClientShaders, "setting")}
             ${contextHelp("client-shaders", "Client shaders help", "Applies on the next Minecraft start. Disables optional Gamble shader effects, not Iris or Minecraft’s required renderer.")}
           </div>
         </div>
       </section>
-      ${state.microsoft ? `
-        <div class="setting-note">
-          <span>Minecraft account</span>
-          <strong>${escapeHtml(state.microsoft.name)}</strong>
-          <button class="inline-link" type="button" data-view="accounts">Manage accounts</button>
+      <section class="identity-settings settings-group" aria-labelledby="identity-settings-title">
+        <div class="settings-group-head">
+          <span class="eyebrow">Appearance</span>
+          <strong id="identity-settings-title">Launcher and client names</strong>
+          ${contextHelp("branding", "About display names", "Changes visible branding only. Install folders, update IDs, and security checks keep their canonical Gamble Client names.")}
         </div>
-      ` : `
-        <label>
-          <span>Offline username</span>
-          <input data-field="username" value="${escapeAttr(state.username)}" placeholder="Offline name">
-        </label>
-      `}
-      ${privacyToggle("animationsEnabled", "Launcher animations", state.animationsEnabled, "setting")}
-      ${privacyToggle("allowFriendRequests", "Friend requests", state.social?.settings?.allowFriendRequests !== false)}
-      ${privacyToggle("showServerToFriends", "Show server to friends", Boolean(state.social?.settings?.showServerToFriends))}
-      ${privacyToggle("shareSpotifyToFriends", "Share Spotify with friends", Boolean(state.social?.settings?.shareSpotifyToFriends))}
-        <label>
-          <span>Memory</span>
-          <select data-field="memory">
-            ${["2", "3", "4", "5", "6", "7", "8", "10", "12", "16"].map((item) => `<option value="${item}" ${item === state.memory ? "selected" : ""}>${item} GB</option>`).join("")}
-          </select>
-        </label>
-      ${state.showAdvancedSettings ? `
-        <label class="wide-field">
-          <span>Java Args</span>
-          <input data-field="javaArgs" value="${escapeAttr(state.javaArgs)}" placeholder="-XX:+UseZGC">
-        </label>
-      ` : ""}
+        <div class="identity-fields">
+          <label>
+            <span>Launcher name</span>
+            <input data-field="launcherDisplayName" maxlength="40" value="${escapeAttr(state.launcherDisplayName)}" placeholder="Gamble Client Launcher">
+          </label>
+          <label>
+            <span>Client name</span>
+            <input data-field="clientDisplayName" maxlength="40" value="${escapeAttr(state.clientDisplayName)}" placeholder="Gamble Client">
+          </label>
+          <div class="wide-field">
+            ${privacyToggle("animationsEnabled", "Launcher animations", state.animationsEnabled, "setting")}
+          </div>
+        </div>
+      </section>
+      <section class="identity-settings settings-group" aria-labelledby="privacy-settings-title">
+        <div class="settings-group-head">
+          <span class="eyebrow">Friends</span>
+          <strong id="privacy-settings-title">Privacy</strong>
+        </div>
+        <div class="identity-fields toggle-list">
+          ${privacyToggle("allowFriendRequests", "Friend requests", state.social?.settings?.allowFriendRequests !== false)}
+          ${privacyToggle("showServerToFriends", "Show server to friends", Boolean(state.social?.settings?.showServerToFriends))}
+          ${privacyToggle("shareSpotifyToFriends", "Share Spotify with friends", Boolean(state.social?.settings?.shareSpotifyToFriends))}
+        </div>
+      </section>
     </section>
     <details class="settings-diagnostics" ${state.diagnostics.length ? "open" : ""}>
       <summary>Diagnostics &amp; launcher log</summary>
@@ -1249,7 +1342,7 @@ function launchProgressModal() {
   return `
     <section class="modal-scrim">
       <article class="update-modal launch-progress-modal" role="dialog" aria-modal="true" aria-label="Launch progress" tabindex="-1">
-        <div class="launch-emblem" aria-hidden="true"><img src="${escapeAttr(logoUrl)}" alt=""></div>
+        <div class="launch-emblem" aria-hidden="true"></div>
         <span class="eyebrow">Launch progress</span>
         <h2>Preparing Minecraft</h2>
         <p role="status">${escapeHtml(progress.message)}</p>
@@ -1327,7 +1420,7 @@ function friendAvatarStyle(friend = {}) {
 function remoteAvatarStyle(url, sizing = "cover") {
   const clean = String(url || "").trim();
   if (!/^https?:\/\//i.test(clean)) return "";
-  return `background-image:linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(90, 170, 255, 0.08)), url("${cssUrl(clean)}");background-size:${sizing};background-position:center;background-repeat:no-repeat;`;
+  return `background-image:linear-gradient(rgba(21, 30, 33, 0.35), rgba(21, 30, 33, 0.35)), url("${cssUrl(clean)}");background-size:${sizing};background-position:center;background-repeat:no-repeat;`;
 }
 
 function cssUrl(value) {
@@ -1392,9 +1485,10 @@ function fileView(kind, profile, files) {
   const disabled = kind === "mods" && !profileHasMods(profile);
   return `
     <section class="screen-band">
-      <div>
-        <span class="eyebrow">${escapeHtml(profile.label)}</span>
-        <h2>${isPacks ? "Resource Packs" : "Mods"}</h2>
+      <div class="file-tabs" role="tablist" aria-label="Profile content">
+        <button type="button" role="tab" data-view="mods" aria-selected="${!isPacks}" class="${isPacks ? "" : "active"}">Mods</button>
+        <button type="button" role="tab" data-view="packs" aria-selected="${isPacks}" class="${isPacks ? "active" : ""}">Resource packs</button>
+        <span class="file-tabs-profile">${escapeHtml(profile.label)}</span>
       </div>
       <div class="top-actions">
         <button class="ghost" type="button" data-action="${isPacks ? "add-packs" : "add-mods"}" ${disabled ? "disabled" : ""}>Add</button>
@@ -1495,13 +1589,23 @@ function logSeverity(line) {
 
 function viewTitle() {
   if (state.view === "accounts") return "Accounts";
-  if (state.view === "social") return "Social";
-  if (state.view === "updates") return "Update Center";
-  if (state.view === "profiles") return "Profiles";
+  if (state.view === "social") return "Friends";
+  if (state.view === "updates") return "Downloads";
+  if (state.view === "profiles") return "Client";
   if (state.view === "mods") return "Mods";
-  if (state.view === "packs") return "Resource Packs";
-  if (state.view === "settings") return "Launcher Settings";
-  return "Play";
+  if (state.view === "packs") return "Resource packs";
+  if (state.view === "settings") return "Settings";
+  return "Home";
+}
+
+function viewSubtitle() {
+  if (state.view === "accounts") return "Minecraft accounts saved on this device";
+  if (state.view === "social") return "Friends and requests";
+  if (state.view === "updates") return "Launcher and client builds";
+  if (state.view === "profiles") return "Profiles, build channel and folders";
+  if (state.view === "mods" || state.view === "packs") return `Files for ${currentProfile().label}`;
+  if (state.view === "settings") return "Launcher, graphics and game options";
+  return `${currentProfile().label} · Minecraft 1.21.11`;
 }
 
 function profileLabel() {

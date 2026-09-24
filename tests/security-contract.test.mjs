@@ -322,13 +322,15 @@ test("profiles use a compact switcher with clear account, build, and folder cont
     assert.match(frontend, /data-action="select-profile-build"/);
     assert.match(frontend, /data-view="mods"/);
     assert.match(frontend, /data-view="packs"/);
-    assert.match(frontend, /id === "profiles" && \["mods", "packs"\]\.includes\(state\.view\)/);
+    // Mods and resource packs now have their own "Mods" navigation entry.
+    assert.match(frontend, /id === "mods" && \["mods", "packs"\]\.includes\(state\.view\)/);
     assert.match(frontend, /state\.profileCreateOpen = false/);
     assert.match(css, /\.profile-add-button/);
     assert.match(css, /\.profile-switcher/);
     assert.match(css, /\.profile-workspace-grid/);
     assert.match(css, /\.profile-folder-row/);
-    assert.match(css, /\.settings-button \{[\s\S]*font-weight: inherit;/);
+    // Settings moved from a topbar button into the left navigation.
+    assert.match(frontend, /navButton\("settings", "Settings"\)/);
 });
 
 test("profile launches use their account without rewriting the launcher default", async () => {
