@@ -43,7 +43,9 @@ try {
       return el && getComputedStyle(el, '::before').animationName === expected;
     }, reducedMotion === 'reduce' ? 'none' : 'launch-orbit');
     if (mode === 'disabled') {
-      assert.equal(await emblem.evaluate(el => getComputedStyle(el, '::before').animationIterationCount), '1');
+      // Read in one page task: progress renders replace the emblem node, so a
+      // resolved locator handle can be detached before a second round trip.
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.launch-emblem'), '::before').animationIterationCount), '1');
     }
     await page.screenshot({ path: `${output}/launch-${mode}.png` });
     await page.getByRole('button', { name: 'Stop Minecraft', exact: true }).waitFor();
