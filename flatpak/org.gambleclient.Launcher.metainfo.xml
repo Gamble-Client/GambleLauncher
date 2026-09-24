@@ -23,6 +23,11 @@
   <url type="bugtracker">https://github.com/Gamble-Client/GambleLauncher/issues</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.1.142" date="2026-09-24">
+      <description>
+        <p>Redesigns the launcher with a graphite and mint layout, left navigation and a clearer current-client overview.</p>
+      </description>
+    </release>
     <release version="0.1.141" date="2026-09-24">
       <description>
         <p>Adds Launch another for owner and developer accounts, safer request retries, and clearer Play-again guidance after one-use authorization.</p>
