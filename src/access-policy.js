@@ -4,6 +4,12 @@ export function accessDenied(account) {
   return ["banned", "revoked"].includes(normalize(account?.accessStatus));
 }
 
+// Presentation only: the native launch handler re-fetches these server-issued roles.
+export function canLaunchMultiple(account) {
+  return Boolean(account) && !accessDenied(account)
+    && (account.ownerAccess === true || account.devAccess === true);
+}
+
 export function hasOwnerAccess(account) {
   return Boolean(account) && !accessDenied(account) && (
     account.ownerAccess === true || [normalize(account.accessStatus), normalize(account.selectedPlan)].includes("owner")

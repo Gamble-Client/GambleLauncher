@@ -33,6 +33,11 @@ final class LauncherAccessPolicy {
         return canUseBuild(account, "ad_tier") ? "ad_tier" : "release";
     }
 
+    static boolean canLaunchAnother(Account account) {
+        return account != null && !isBlocked(account.accessStatus())
+            && (account.ownerAccess() || account.devAccess());
+    }
+
     static boolean canUseBuild(Account account, String buildId) {
         if (account == null || isBlocked(account.accessStatus())) return false;
         return switch (normalize(buildId)) {

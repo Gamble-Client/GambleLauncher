@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import test from "node:test";
-import { canUseBuildForAccess, preferredBuildForAccess } from "../src/access-policy.js";
+import { canUseBuildForAccess, preferredBuildForAccess, canLaunchMultiple } from "../src/access-policy.js";
 import { launchState } from "../src/launch-state.js";
 
 // Execute the actual event handler with a fake native boundary. Browser layout
@@ -20,7 +20,7 @@ function harness(native) {
   const context = vm.createContext({
     document: { querySelector: () => app }, window: {}, location: { search: "" },
     setTimeout, clearTimeout, requestAnimationFrame: (fn) => fn(), URLSearchParams,
-    canUseBuildForAccess, preferredBuildForAccess, launchState, tauriInvoke: native,
+    canUseBuildForAccess, preferredBuildForAccess, canLaunchMultiple, launchState, tauriInvoke: native,
     logoUrl: "", navigator: {}, console
   });
   vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn, refreshMinecraftStatus, refreshSocial, refreshSpotifyStatus, refreshAccount, pollSignIn };`, context);
@@ -30,9 +30,61 @@ function harness(native) {
   }, clientStatus: { updateAvailable: true } });
   return {
     ...context.apiForTest,
-    click: () => handlers.get("click")({ target: { closest: (selector) => selector === "[data-action]" ? { dataset: { action: "launch" } } : null } })
+    click: (action = "launch") => handlers.get("click")({ target: { closest: (selector) => selector === "[data-action]" ? { dataset: { action } } : null } })
   };
 }
+
+test("Launch another forwards a separate action and keeps Stop explicit", async () => {
+  let input;
+  const ui = harness(async (command, args) => {
+    if (command === "minecraft_status") return { running: true, sessionCount: input ? 2 : 1 };
+    if (command === "launch_game") { input = args.input; return "Minecraft process started."; }
+    throw new Error(command);
+  });
+  Object.assign(ui.state, { selectedProfile: "fabric", minecraftRunning: true,
+    account: { ownerAccess: true } });
+  await ui.click("launch-another");
+  assert.equal(input.launchAnother, true);
+  assert.equal(ui.state.minecraftSessionCount, 2);
+  await ui.click();
+  assert.equal(input.launchAnother, false);
+});
+
+test("ordinary accounts cannot invoke Launch another from the UI", async () => {
+  const ui = harness(async () => { throw new Error("native must not be called"); });
+  Object.assign(ui.state, { minecraftRunning: true });
+  await ui.click("launch-another");
+  assert.equal(ui.state.minecraftRunning, true);
+});
+
+test("Stop retains stop-only intent when the last child exits during status refresh", async () => {
+  let input;
+  const ui = harness(async (command, args) => {
+    if (command === "minecraft_status") return { running: false, sessionCount: 0 };
+    if (command === "launch_game") { input = args.input; return "Minecraft stop signal sent."; }
+    throw new Error("Stop must not refresh access or start preparation: " + command);
+  });
+  ui.state.minecraftRunning = true;
+  await ui.click();
+  assert.equal(input.stopOnly, true);
+  assert.equal(input.launchAnother, false);
+  assert.equal(ui.state.minecraftRunning, false);
+});
+
+test("a secondary crash reports its own log without marking the surviving game closed", async () => {
+  const ui = harness(async () => ({ running: true, pid: 101, sessionCount: 1,
+    crashed: true, exitCode: 73, message: "Minecraft exited with code 73.",
+    logPath: "/fixture/secondary/launcher-session.log" }));
+  Object.assign(ui.state, { minecraftRunning: true, minecraftSessionCount: 2 });
+  await ui.refreshMinecraftStatus({ render: false });
+  assert.equal(ui.state.minecraftRunning, true);
+  assert.equal(ui.state.minecraftSessionCount, 1);
+  assert.equal(ui.state.minecraftExit.logPath, "/fixture/secondary/launcher-session.log");
+  assert.match(ui.state.popup.message, /Other sessions are still running/);
+  ui.state.popup = null;
+  await ui.refreshMinecraftStatus({ render: false });
+  assert.equal(ui.state.popup, null);
+});
 
 for (const disabled of [false, true]) test(`launch forwards client shaders preference ${disabled}`, async () => {
   let input;

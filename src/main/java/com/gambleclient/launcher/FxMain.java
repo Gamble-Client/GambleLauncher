@@ -99,6 +99,7 @@ public class FxMain extends Application {
     private TextField javaArgs;
     private TextField gpuSelector;
     private Button launchButton;
+    private Button launchAnotherButton;
     private Button updateButton;
     private Button signInButton;
     private Button antiScreenshareButton;
@@ -246,10 +247,19 @@ public class FxMain extends Application {
         accounts.setOnAction(e -> openAccountManager());
         launchButton = primary("Play");
         launchButton.setOnAction(e -> {
+            boolean stopOnly = launchButton.getText().startsWith("Stop");
             syncToBackend();
-            runBackend("launch");
+            runBackend(stopOnly ? "stopMinecraftProcesses" : "launch");
         });
-        actions.getChildren().addAll(updateButton, accounts, launchButton);
+        launchAnotherButton = secondary("Launch another");
+        launchAnotherButton.setVisible(false);
+        launchAnotherButton.setManaged(false);
+        launchAnotherButton.setTooltip(new Tooltip("Owner/dev only. Starts a clean profile without copying saves, settings or credentials. Stop stops all games."));
+        launchAnotherButton.setOnAction(e -> {
+            syncToBackend();
+            runBackend("launchAnother");
+        });
+        actions.getChildren().addAll(updateButton, accounts, launchAnotherButton, launchButton);
 
         top.getChildren().addAll(header, form, progressBox, actions);
         pane.setTop(top);
@@ -791,9 +801,7 @@ public class FxMain extends Application {
             renderLogText(text);
         }
 
-        JButton button = (JButton) field("launchButton");
-        launchButton.setText(button.getText());
-        launchButton.setDisable(!button.isEnabled());
+        syncLaunchButtons();
         accountNameLabel.setText(labelText("accountName"));
         accountStatusLabel.setText(accountStatusWithMicrosoft());
         Object launcherUser = field("launcherUser");
@@ -1924,6 +1932,16 @@ public class FxMain extends Application {
         Region region = new Region();
         VBox.setVgrow(region, Priority.ALWAYS);
         return region;
+    }
+
+    private void syncLaunchButtons() {
+        JButton button = (JButton) field("launchButton");
+        launchButton.setText(button.getText());
+        launchButton.setDisable(!button.isEnabled());
+        JButton another = (JButton) field("launchAnotherButton");
+        launchAnotherButton.setVisible(another.isVisible());
+        launchAnotherButton.setManaged(another.isVisible());
+        launchAnotherButton.setDisable(!another.isEnabled());
     }
 
     private void runBackend(String method, Object... args) {

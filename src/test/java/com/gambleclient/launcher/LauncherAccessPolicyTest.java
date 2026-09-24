@@ -11,6 +11,23 @@ final class LauncherAccessPolicyTest {
     private static final Set<String> BUILDS = Set.of("ad_tier", "release", "beta_plus", "media", "dev");
 
     @Test
+    void extraLaunchRequiresAnActualRoleNotAnAccountLabelOrBuild() {
+        for (String label : Set.of("owner", "dev", "media", "beta_plus", "weekly", "ad_tier")) {
+            assertEquals(false, LauncherAccessPolicy.canLaunchAnother(account("user@example.test", label, label,
+                false, true, true, true, false, true)), label);
+        }
+        assertEquals(true, LauncherAccessPolicy.canLaunchAnother(account("owner@example.test", "lifetime", "owned",
+            true, false, false, false, false, false)));
+        assertEquals(true, LauncherAccessPolicy.canLaunchAnother(account("dev@example.test", "lifetime", "owned",
+            false, false, false, false, true, false)));
+        for (String blocked : Set.of("banned", "revoked")) {
+            assertEquals(false, LauncherAccessPolicy.canLaunchAnother(account("user@example.test", "owner", blocked,
+                true, true, true, true, true, true)));
+        }
+        assertEquals(false, LauncherAccessPolicy.canLaunchAnother(null));
+    }
+
+    @Test
     void refreshedSelectionDowngradesAndRejectsBlockedAccounts() {
         var free = account("free@example.test", "ad_tier", "ad_tier", false, false, false, false, false, true);
         assertEquals("ad_tier", LauncherAccessPolicy.refreshedBuild(free, "media"));

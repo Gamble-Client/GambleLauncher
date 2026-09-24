@@ -2,6 +2,13 @@
 
 Updated 2026-09-21 UTC. This chat owns the launcher **and standalone loader**. The client chat owns payload features. Do not route launcher/loader fixes to client or include unrelated payload changes in a launcher release.
 
+## Pending owner/dev multi-session feature — 2026-09-21
+
+- Implemented same-window Launch another for explicit server ownerAccess/devAccess flags only, refreshed before secondary allocation and again before spawn. Ordinary account UI/launch behavior, loader enrollment, one-use tickets and device-slot policy remain unchanged; this is not a new global backend concurrency lease.
+- Rust/web and Java/Swing/JavaFX track children independently, show Stop all sessions when needed and preserve Stop intent if the last game exits during the click. Secondary launches get clean, exclusively allocated profiles; no saves/mods/config/credentials copied, and profiles retained after exit. Logs/diagnostics are per child. No loader/payload change or version bump.
+- Local verification: Node69, Java48, Rust65 passed/one existing live-network ignored, frontend build; real two-Java-child lifecycle tests on native/Java paths; owner/dev UI at820/1120/1440, four non-owner negatives and existing six-account smoke passed. Swing/FX role/control/Stop-intent/account-switch probes passed650/740/960. Screenshots /tmp/launcher-multisession and /tmp/gamble-java-multi-ui-16749483660307768016 inspected. No authenticated double-Minecraft or Windows packaged validation claimed. Not published; do not overwrite0.1.139.
+- Details and reproducible checks: docs/multiple-launch-sessions.md. Client task assisted only Java launcher sources/tests/ProGuard; this remains launcher ownership.
+
 ## Client-only publication — 2026-09-21
 
 - Client source `f1e2ec00cf63523d743aaca70ed832cba2ccc58d` is now published at build `20260921223858` / public version `1.264`.

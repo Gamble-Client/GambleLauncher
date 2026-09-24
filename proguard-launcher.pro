@@ -34,6 +34,7 @@
     *** javaArgs;
     *** log;
     *** launchButton;
+    *** launchAnotherButton;
     *** accountName;
     *** signInButton;
     *** progress;
@@ -57,6 +58,8 @@
     private boolean readSlotWinSoundsEnabled();
     private void installSelectedBuild(boolean);
     private void launch();
+    private void launchAnother();
+    private void stopMinecraftProcesses();
     private void refreshSponsorOnReturn();
     private long adRemainingSeconds();
     private void copyLauncherLog();
@@ -111,6 +114,7 @@
     *** accessStatus;
     *** selectedPlan;
     *** ownerAccess;
+    *** devAccess;
     *** mediaAccess;
     *** testerAccess;
     *** betaAccess;

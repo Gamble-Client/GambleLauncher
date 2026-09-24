@@ -298,6 +298,7 @@ public class Main {
     private final JButton accountManagerButton = new JButton("Accounts");
     private final JButton editProfileButton = new JButton("Edit Profile");
     private final JButton launchButton = new JButton("Play");
+    private final JButton launchAnotherButton = new JButton("Launch another");
     private final JButton settingsButton = new JButton("Settings");
     private final JButton settingsBackButton = new JButton("Back");
     private final JButton settingsGameFolderButton = new JButton("Game Folder");
@@ -313,13 +314,9 @@ public class Main {
     private final JButton siteButton = new JButton("Website");
     private String launcherToken = "";
     private MicrosoftAccount microsoftAccount;
-    private volatile Process minecraftProcess;
-    private volatile long minecraftProcessStartedAt;
-    private volatile boolean minecraftStartupComplete;
-    private volatile boolean minecraftFatalDetected;
-    private volatile boolean minecraftStopRequested;
-    private volatile String minecraftDetectedFailure = "";
-    private volatile int minecraftOutputThreadsRunning;
+    private final MinecraftChildren minecraftChildren = new MinecraftChildren();
+    private boolean launchPreparing;
+    private boolean stoppingMinecraft;
     private volatile boolean captureLaunchLog;
     private final Object launchLogLock = new Object();
     private final Deque<String> recentLaunchLines = new ArrayDeque<>();
@@ -661,6 +658,10 @@ public class Main {
 
         right.add(secondaryButton(installButton));
         right.add(secondaryButton(accountManagerButton));
+        launchAnotherButton.setVisible(false);
+        launchAnotherButton.setEnabled(false);
+        launchAnotherButton.setToolTipText("Owner/dev: start another game in a clean profile. No saves, settings or credentials are copied. Stop stops all games.");
+        right.add(secondaryButton(launchAnotherButton));
         right.add(primaryButton(launchButton));
 
         buttons.add(status, BorderLayout.CENTER);
@@ -909,6 +910,7 @@ public class Main {
         editProfileButton.addActionListener(e -> editSelectedProfile());
         accountManagerButton.addActionListener(e -> showAccountManagerMenu());
         launchButton.addActionListener(e -> launch());
+        launchAnotherButton.addActionListener(e -> launchAnother());
         copyLogButton.addActionListener(e -> copyLauncherLog());
         modsButton.addActionListener(e -> showModsManager());
         resourcePacksButton.addActionListener(e -> showResourcePacksManager());
@@ -1478,8 +1480,7 @@ public class Main {
                 return "Live client bridge connected, but no modules were reported yet. Open the client once, then refresh.";
             }
 
-            Process process = minecraftProcess;
-            if (process != null && process.isAlive()) {
+            if (isGameRunning()) {
                 return "Minecraft is open, waiting for the Gamble Client bridge. Open the client once or enable AntiScreenshare, then refresh.";
             }
 
@@ -2901,8 +2902,8 @@ public class Main {
     }
 
     private void switchLauncherAccount() {
-        if (isGameRunning()) {
-            log("Switch account blocked: Minecraft is running.");
+        if (isGameRunning() || launchPreparing || stoppingMinecraft) {
+            log("Switch account blocked: Minecraft is running or a launch/stop is in progress.");
             return;
         }
         clearLauncherSession();
@@ -3005,8 +3006,7 @@ public class Main {
     }
 
     private boolean isGameRunning() {
-        Process process = minecraftProcess;
-        return process != null && process.isAlive();
+        return !minecraftChildren.live().isEmpty();
     }
 
     private void cancelMicrosoftSignIn() {
@@ -3481,15 +3481,29 @@ public class Main {
     }
 
     private void launch() {
+        // Preserve the clicked Stop intent even if the last child just exited.
+        if (launchButton.getText().startsWith("Stop")) {
+            if (!launchPreparing && !stoppingMinecraft) stopMinecraftProcesses();
+            return;
+        }
+        launch(false);
+    }
+
+    private void launchAnother() {
+        launch(true);
+    }
+
+    private void launch(boolean another) {
+        if (launchPreparing || stoppingMinecraft) return;
         final LaunchProfile launchProfile = selectedProfile();
         final Build build = (Build) buildBox.getSelectedItem();
         if (build == null) return;
 
-        Process runningProcess = minecraftProcess;
-        if (runningProcess != null && runningProcess.isAlive()) {
-            stopMinecraftProcess(runningProcess);
+        if (isGameRunning() && !another) {
+            stopMinecraftProcesses();
             return;
         }
+        if (another && !LauncherAccessPolicy.canLaunchAnother(accessPolicyAccount(launcherUser))) return;
 
         if (launcherUser == null || launcherToken == null || launcherToken.trim().isEmpty()) {
             setProgressStatus("Sign in required");
@@ -3530,42 +3544,59 @@ public class Main {
             );
         }
 
-        clearLog();
-        startLatestLaunchLog();
+        if (!isGameRunning()) {
+            clearLog();
+            startLatestLaunchLog();
+        }
+        launchPreparing = true;
         setBusy(true);
         setProgress(0, "Preparing");
         log("Preparing Minecraft " + MINECRAFT_VERSION + " with Fabric Loader " + FABRIC_LOADER_VERSION + ".");
 
         new SwingWorker<Process, Void>() {
+            private LaunchProfile resolvedProfile = launchProfile;
+
             @Override
             protected Process doInBackground() throws Exception {
                 Build launchBuild = build;
-                if (launchProfile.includesGambleClient) {
+                if (launchProfile.includesGambleClient || another) {
                     LauncherAccount account = refreshLauncherAccountBlocking();
-                    launchBuild = findBuild(LauncherAccessPolicy.refreshedBuild(accessPolicyAccount(account.user), build.id));
-                    if (launchBuild == null) {
-                        throw new IOException("This account no longer has access to " + build.label + ".");
+                    if (another && !LauncherAccessPolicy.canLaunchAnother(accessPolicyAccount(account.user))) {
+                        throw new IOException("Launch another is available only to current owner/dev accounts.");
                     }
-                    if (!launchBuild.id.equals(build.id)) selectBestBuildForUser(account.user);
-                    // Refresh first: the user may just have completed the sponsor
-                    // check in the Dashboard while this launcher was open.
-                    if (!sponsoredAccessActiveFor(launchBuild)) throw new SponsorRequiredException();
+                    if (launchProfile.includesGambleClient) {
+                        launchBuild = findBuild(LauncherAccessPolicy.refreshedBuild(accessPolicyAccount(account.user), build.id));
+                        if (launchBuild == null) {
+                            throw new IOException("This account no longer has access to " + build.label + ".");
+                        }
+                        if (!launchBuild.id.equals(build.id)) selectBestBuildForUser(account.user);
+                        // Refresh first: sponsor status may have changed in Dashboard.
+                        if (!sponsoredAccessActiveFor(launchBuild)) throw new SponsorRequiredException();
+                    }
+                }
+                if (another) {
+                    String id = MinecraftChildren.newProfile(getManagedMinecraftRoot().toPath(), launchProfile.id).getFileName().toString();
+                    resolvedProfile = new LaunchProfile(id, launchProfile.label + " (separate session)", launchProfile.description,
+                        launchProfile.fabric, launchProfile.includesGambleClient, launchProfile.requiresFabricApi);
+                    log("Launching a clean separate profile; no saves, settings or credentials copied.");
                 }
                 if (launchProfile.includesGambleClient) {
                     // The standalone loader owns authorization, update selection, and
                     // the client bootstrap. The launcher only installs that loader;
                     // it never passes a client JAR to Fabric's addMods path.
-                    removeManagedClientArtifactsForMemory();
-                    ensureLoaderJar();
+                    File mods = new File(getMinecraftFolder(resolvedProfile), "mods");
+                    removeManagedClientArtifactsForMemory(mods);
+                    ensureLoaderJar(mods);
+                    if (another) ensureProfileFolders(resolvedProfile);
                     log("Gamble Client will be authorized and loaded from memory by the standalone loader.");
                 } else {
-                    ensureProfileFolders(launchProfile);
+                    ensureProfileFolders(resolvedProfile);
                     log("Using " + launchProfile.label + " profile without the Gamble Client jar.");
                 }
                 LaunchIdentity identity = resolveLaunchIdentity(name);
-                return launchMinecraftProcess(launchProfile, identity, memory, extraJavaArgs,
+                return launchMinecraftProcess(resolvedProfile, identity, memory, extraJavaArgs,
                     launchProfile.includesGambleClient ? canonicalBuildId(launchBuild.id) : "",
-                    selectedGraphicsMode, selectedGpuSelector, selectedDisableClientShaders);
+                    selectedGraphicsMode, selectedGpuSelector, selectedDisableClientShaders, another);
             }
 
             @Override
@@ -3574,17 +3605,15 @@ public class Main {
                 boolean reconnectingMicrosoft = false;
                 try {
                     Process process = get();
-                    minecraftProcess = process;
-                    minecraftProcessStartedAt = System.currentTimeMillis();
-                    minecraftStartupComplete = false;
-                    minecraftFatalDetected = false;
-                    minecraftStopRequested = false;
-                    minecraftDetectedFailure = "";
+                    MinecraftChildren.Child child = minecraftChildren.add(process, getMinecraftFolder(resolvedProfile),
+                        new File(getLauncherDataFolder(), "launch-logs/session-" + process.pid() + "-" + System.currentTimeMillis() + ".log"));
+                    appendLine(child.logFile, "Profile: " + resolvedProfile.id + " | Graphics: " + selectedGraphicsMode + " | GPU: " + selectedGpuSelector);
                     Main.this.setProgress(100, "Running");
                     log("Minecraft process started.");
-                    pipeProcessOutput(process);
-                    monitorMinecraftProcess(process);
+                    pipeProcessOutput(child);
+                    monitorMinecraftProcess(child);
                     started = true;
+                    launchPreparing = false;
                     setBusy(false);
                 } catch (Exception e) {
                     setProgressStatus("Failed");
@@ -3603,12 +3632,14 @@ public class Main {
                             "Reconnect Microsoft",
                             JOptionPane.INFORMATION_MESSAGE
                         );
+                        launchPreparing = false;
                         setBusy(false);
                         startMicrosoftSignIn(true);
                     } else {
                         JOptionPane.showMessageDialog(frame, message, "Launch failed", JOptionPane.ERROR_MESSAGE);
                     }
                 } finally {
+                    launchPreparing = false;
                     if (!started && !reconnectingMicrosoft) setBusy(false);
                 }
             }
@@ -3630,35 +3661,27 @@ public class Main {
         }
     }
 
-    private void stopMinecraftProcess(Process process) {
+    private void stopMinecraftProcesses() {
+        if (launchPreparing || stoppingMinecraft) return;
         setProgressStatus("Stopping");
-        log("Stopping Minecraft process.");
-        minecraftStopRequested = true;
+        List<MinecraftChildren.Child> children = minecraftChildren.requestStopAll();
+        log("Stopping all " + children.size() + " Minecraft process(es).");
+        stoppingMinecraft = true;
         setBusy(true);
 
         new SwingWorker<Void, Void>() {
             @Override
             protected Void doInBackground() {
-                process.destroy();
-                try {
-                    if (!process.waitFor(2, TimeUnit.SECONDS)) {
-                        process.destroyForcibly();
-                        process.waitFor(4, TimeUnit.SECONDS);
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    process.destroyForcibly();
-                }
+                MinecraftChildren.stop(children);
                 return null;
             }
 
             @Override
             protected void done() {
-                if (minecraftProcess == process) minecraftProcess = null;
-                captureLaunchLog = false;
-                Main.this.setProgress(0, process.isAlive() ? "Kill sent" : "Killed");
-                if (process.isAlive()) log("Kill signal sent; Minecraft has not exited yet.");
-                else log("Minecraft was stopped from the launcher.");
+                stoppingMinecraft = false;
+                captureLaunchLog = isGameRunning();
+                Main.this.setProgress(0, isGameRunning() ? "Kill sent" : "Stopped");
+                log(isGameRunning() ? "Stop sent; a Minecraft process has not exited yet." : "All Minecraft processes stopped.");
                 setBusy(false);
             }
         }.execute();
@@ -3840,7 +3863,7 @@ public class Main {
 
     private Process launchMinecraftProcess(LaunchProfile launchProfile, LaunchIdentity identity, int memory,
                                           List<String> extraJavaArgs, String launchBuild,
-                                          String graphicsMode, String gpuSelector, boolean disableShaders) throws IOException {
+                                          String graphicsMode, String gpuSelector, boolean disableShaders, boolean another) throws IOException {
         File gameDir = getMinecraftFolder(launchProfile);
         File versionsDir = new File(gameDir, "versions");
         if (!versionsDir.exists() && !versionsDir.mkdirs()) {
@@ -3885,6 +3908,9 @@ public class Main {
                 builder.directory(gameDir);
                 builder.redirectErrorStream(false);
                 applyGraphicsEnvironment(builder.environment(), graphicsMode, gpuSelector);
+                if (another && !LauncherAccessPolicy.canLaunchAnother(accessPolicyAccount(refreshLauncherAccountBlocking().user))) {
+                    throw new IOException("Owner/dev access changed while preparing this launch. Please sign in again.");
+                }
                 return arguments.start(builder);
             }
         } catch (IOException e) {
@@ -5112,11 +5138,11 @@ public class Main {
             Json.string(user.get("discordUsername")),
             Json.string(user.get("selectedPlan")),
             Json.string(user.get("accessStatus")),
-            jsonBoolean(user.get("ownerAccess")),
+            Boolean.TRUE.equals(user.get("ownerAccess")),
             jsonBoolean(user.get("mediaAccess")),
             jsonBoolean(user.get("testerAccess")),
             jsonBoolean(user.get("betaAccess")),
-            jsonBoolean(user.get("devAccess")),
+            Boolean.TRUE.equals(user.get("devAccess")),
             jsonBoolean(user.get("adTierAccess"))
         );
     }
@@ -5433,7 +5459,10 @@ public class Main {
     }
 
     private void ensureLoaderJar() throws IOException {
-        File mods = getModsFolder();
+        ensureLoaderJar(getModsFolder());
+    }
+
+    private void ensureLoaderJar(File mods) throws IOException {
         if (!mods.exists() && !mods.mkdirs()) {
             throw new IOException("Failed to create mods folder: " + mods);
         }
@@ -5838,7 +5867,10 @@ public class Main {
     }
 
     private void removeManagedClientArtifactsForMemory() throws IOException {
-        File mods = getModsFolder();
+        removeManagedClientArtifactsForMemory(getModsFolder());
+    }
+
+    private void removeManagedClientArtifactsForMemory(File mods) throws IOException {
         deleteManagedClientFiles(mods);
         deleteManagedClientFiles(new File(mods, ".gamble-client-backups"));
     }
@@ -6023,26 +6055,26 @@ public class Main {
         return disabled;
     }
 
-    private void pipeProcessOutput(final Process process) {
-        minecraftOutputThreadsRunning = 2;
-        pipeProcessStream(process.getInputStream(), "[MC]", "gamble-minecraft-stdout");
-        pipeProcessStream(process.getErrorStream(), "[MC-ERR]", "gamble-minecraft-stderr");
+    private void pipeProcessOutput(final MinecraftChildren.Child child) {
+        pipeProcessStream(child, child.process.getInputStream(), "[MC " + child.process.pid() + "]", "gamble-minecraft-stdout");
+        pipeProcessStream(child, child.process.getErrorStream(), "[MC-ERR " + child.process.pid() + "]", "gamble-minecraft-stderr");
     }
 
-    private void pipeProcessStream(final InputStream stream, final String prefix, final String threadName) {
+    private void pipeProcessStream(final MinecraftChildren.Child child, final InputStream stream, final String prefix, final String threadName) {
         Thread thread = new Thread(new Runnable() {
             @Override
             public void run() {
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
                     String line;
                     while ((line = reader.readLine()) != null) {
-                        observeMinecraftLine(line);
+                        observeMinecraftLine(child, line);
+                        String safe = sanitizeVisibleMessage(prefix + " " + line);
+                        child.record(safe);
+                        appendLine(child.logFile, safe);
                         diagnosticLog(prefix + " " + line);
                     }
                 } catch (IOException e) {
                     diagnosticLog(threadName + " stopped: " + e.getMessage());
-                } finally {
-                    minecraftOutputThreadsRunning = Math.max(0, minecraftOutputThreadsRunning - 1);
                 }
             }
         }, threadName);
@@ -6050,38 +6082,38 @@ public class Main {
         thread.start();
     }
 
-    private void observeMinecraftLine(String line) {
+    private void observeMinecraftLine(MinecraftChildren.Child child, String line) {
         String lower = (line == null ? "" : line).toLowerCase(Locale.ROOT);
         if (lower.contains("[render thread/info]")
             || lower.contains("setting user:")
             || lower.contains("initializing gamble client")
             || lower.contains("created: ")
             || lower.contains("sound engine started")) {
-            minecraftStartupComplete = true;
+            child.startupComplete = true;
         }
 
         String failure = classifyFailureLine(line);
         if (!failure.isEmpty()) {
-            minecraftFatalDetected = true;
-            if (minecraftDetectedFailure.isEmpty()) minecraftDetectedFailure = failure;
+            child.fatalDetected = true;
+            if (child.detectedFailure.isEmpty()) child.detectedFailure = failure;
         }
     }
 
-    private void monitorMinecraftProcess(final Process process) {
+    private void monitorMinecraftProcess(final MinecraftChildren.Child child) {
         Thread thread = new Thread(new Runnable() {
             @Override
             public void run() {
                 final int exitCode;
                 try {
-                    exitCode = process.waitFor();
+                    exitCode = child.process.waitFor();
                     Thread.sleep(300L);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     SwingUtilities.invokeLater(new Runnable() {
                         @Override
                         public void run() {
-                            if (minecraftProcess == process) minecraftProcess = null;
-                            setProgressStatus("Closed");
+                            if (!child.process.isAlive()) minecraftChildren.remove(child);
+                            setProgressStatus(isGameRunning() ? "Running" : "Closed");
                             setBusy(false);
                             log("Minecraft process watcher stopped.");
                         }
@@ -6092,7 +6124,7 @@ public class Main {
                 SwingUtilities.invokeLater(new Runnable() {
                     @Override
                     public void run() {
-                        finishMinecraftProcess(process, exitCode);
+                        finishMinecraftProcess(child, exitCode);
                     }
                 });
             }
@@ -6101,42 +6133,41 @@ public class Main {
         thread.start();
     }
 
-    private void finishMinecraftProcess(Process process, int exitCode) {
-        if (minecraftProcess == process) minecraftProcess = null;
-        if (minecraftStopRequested) {
-            minecraftStopRequested = false;
-            captureLaunchLog = false;
-            setProgress(0, "Killed");
-            log("Minecraft stopped by launcher request.");
+    private void finishMinecraftProcess(MinecraftChildren.Child child, int exitCode) {
+        minecraftChildren.remove(child);
+        if (child.stopRequested) {
+            captureLaunchLog = isGameRunning();
+            setProgress(0, isGameRunning() ? "Running" : "Stopped");
+            log("Minecraft " + child.process.pid() + " stopped by launcher request.");
             setBusy(false);
             return;
         }
-        long elapsedMs = minecraftProcessStartedAt > 0 ? Math.max(0, System.currentTimeMillis() - minecraftProcessStartedAt) : 0;
-        boolean abnormalStartup = !minecraftStartupComplete;
-        boolean normal = exitCode == 0 && !minecraftFatalDetected && !abnormalStartup;
+        long elapsedMs = Math.max(0, System.currentTimeMillis() - child.startedAt);
+        boolean abnormalStartup = !child.startupComplete;
+        boolean normal = exitCode == 0 && !child.fatalDetected && !abnormalStartup;
 
-        log("Minecraft exit code: " + exitCode + ".");
+        log("Minecraft " + child.process.pid() + " exit code: " + exitCode + ".");
 
         if (normal) {
             setProgress(0, "Closed");
             log("Minecraft closed normally.");
         } else {
             setProgressStatus(exitCode == 0 ? "Startup aborted" : "Crashed");
-            LaunchDiagnosis diagnosis = diagnoseLaunchFailure(exitCode, elapsedMs, abnormalStartup);
+            LaunchDiagnosis diagnosis = diagnoseLaunchFailure(exitCode, elapsedMs, abnormalStartup, child.detectedFailure);
             log("Launch diagnostics: " + diagnosis.summary);
             if (!diagnosis.detected.isEmpty()) log("Detected: " + diagnosis.detected);
             if (!diagnosis.probableCause.isEmpty()) log("Probable cause: " + diagnosis.probableCause);
             if (!diagnosis.recommendedFix.isEmpty()) log("Recommended fix: " + diagnosis.recommendedFix);
-            diagnosticLog("Last " + recentLaunchLines.size() + " launch log lines:");
-            for (String line : lastLaunchLines(100)) diagnosticLog("  " + line);
+            diagnosticLog("Failed process log: " + child.logFile.getAbsolutePath());
+            for (String line : child.lastLines(100)) diagnosticLog("  " + line);
             try {
-                File crashLog = saveCrashLogSnapshot(exitCode);
+                File crashLog = saveCrashLogSnapshot(child, exitCode);
                 diagnosticLog("Saved launch failure log: " + crashLog.getAbsolutePath());
                 log("Saved launch failure details for support.");
             } catch (IOException e) {
                 log("Could not save launch failure log: " + e.getMessage());
             }
-            List<String> enabledCompat = autoEnableCompatibilityLayersForCrash();
+            List<String> enabledCompat = autoEnableCompatibilityLayersForCrash(child);
             if (!enabledCompat.isEmpty()) {
                 String joined = String.join(", ", enabledCompat);
                 log("Auto-enabled compatibility layer(s) for next launch: " + joined);
@@ -6147,25 +6178,27 @@ public class Main {
             }
         }
 
-        captureLaunchLog = false;
+        captureLaunchLog = isGameRunning();
+        if (isGameRunning()) setProgressStatus("Running (" + minecraftChildren.live().size() + ")");
         setBusy(false);
     }
 
-    private File saveCrashLogSnapshot(int exitCode) throws IOException {
+    private File saveCrashLogSnapshot(MinecraftChildren.Child child, int exitCode) throws IOException {
         File folder = new File(getLauncherDataFolder(), "crash-logs");
         if (!folder.exists() && !folder.mkdirs()) {
             throw new IOException("Failed to create crash log folder: " + folder);
         }
 
         String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new Date());
-        File file = new File(folder, "minecraft-crash-" + stamp + ".txt");
+        File file = new File(folder, "minecraft-crash-" + stamp + "-" + child.process.pid() + ".txt");
         String body = "Gamble Client Launcher crash log" + System.lineSeparator()
             + "Exit code: " + exitCode + System.lineSeparator()
             + "Time: " + new Date() + System.lineSeparator()
-            + "Game folder: " + getMinecraftFolder().getAbsolutePath() + System.lineSeparator()
+            + "Game folder: " + child.gameDir.getAbsolutePath() + System.lineSeparator()
             + System.lineSeparator()
-            + log.getText();
+            + String.join(System.lineSeparator(), child.lastLines(300));
         Files.write(file.toPath(), body.getBytes(StandardCharsets.UTF_8));
+        hardenPrivateFile(file);
         return file;
     }
 
@@ -6181,12 +6214,12 @@ public class Main {
         }
     }
 
-    private List<String> autoEnableCompatibilityLayersForCrash() {
-        List<String> lines = lastLaunchLines(200);
+    private List<String> autoEnableCompatibilityLayersForCrash(MinecraftChildren.Child child) {
+        List<String> lines = child.lastLines(200);
         if (lines.isEmpty()) return Collections.emptyList();
 
         String text = String.join("\n", lines).toLowerCase(Locale.ROOT);
-        File mods = getModsFolder();
+        File mods = new File(child.gameDir, "mods");
         if (!mods.isDirectory()) return Collections.emptyList();
 
         List<String> enabled = new ArrayList<>();
@@ -6248,8 +6281,8 @@ public class Main {
         return "";
     }
 
-    private LaunchDiagnosis diagnoseLaunchFailure(int exitCode, long elapsedMs, boolean abnormalStartup) {
-        String detected = minecraftDetectedFailure == null ? "" : minecraftDetectedFailure;
+    private LaunchDiagnosis diagnoseLaunchFailure(int exitCode, long elapsedMs, boolean abnormalStartup, String failure) {
+        String detected = failure == null ? "" : failure;
         String summary = exitCode == 0 && abnormalStartup
             ? "Minecraft exited with code 0 before client startup completed after " + String.format(Locale.ROOT, "%.1f", elapsedMs / 1000.0) + "s."
             : "Minecraft exited with code " + exitCode + " after " + String.format(Locale.ROOT, "%.1f", elapsedMs / 1000.0) + "s.";
@@ -6294,17 +6327,21 @@ public class Main {
     }
 
     private void setBusy(boolean busy) {
+        busy = busy || launchPreparing || stoppingMinecraft;
         boolean gambleProfile = selectedProfile().includesGambleClient;
         boolean signedIn = launcherUser != null && launcherToken != null && !launcherToken.trim().isEmpty();
         boolean signingIn = isLauncherSignInActive();
-        boolean running = minecraftProcess != null && minecraftProcess.isAlive();
+        int runningCount = minecraftChildren.live().size();
+        boolean running = runningCount > 0;
         Build selectedBuild = (Build) buildBox.getSelectedItem();
         boolean sponsoredAccess = !gambleProfile || sponsoredAccessActiveFor(selectedBuild);
         installButton.setEnabled(!busy && !running && gambleProfile && signedIn && sponsoredAccess);
         accountManagerButton.setEnabled(!busy && !running);
         boolean dashboardSponsorRequired = gambleProfile && selectedBuild != null && "ad_tier".equals(selectedBuild.id) && !sponsoredAccess;
-        launchButton.setText(running ? "Stop Minecraft" : sponsoredAccess ? "Play" : dashboardSponsorRequired ? "Open Dashboard" : "Play");
-        launchButton.setEnabled(running || (!busy && signedIn && (sponsoredAccess || dashboardSponsorRequired)));
+        launchButton.setText(running ? (runningCount > 1 ? "Stop all (" + runningCount + ")" : "Stop Minecraft") : sponsoredAccess ? "Play" : dashboardSponsorRequired ? "Open Dashboard" : "Play");
+        launchButton.setEnabled(!busy && (running || (signedIn && (sponsoredAccess || dashboardSponsorRequired))));
+        launchAnotherButton.setVisible(running && LauncherAccessPolicy.canLaunchAnother(accessPolicyAccount(launcherUser)));
+        launchAnotherButton.setEnabled(!busy && signedIn && running && LauncherAccessPolicy.canLaunchAnother(accessPolicyAccount(launcherUser)));
         signInButton.setText(signingIn ? "Cancel" : "Sign In");
         promptSignInButton.setText(signingIn ? "Cancel" : "Sign In");
         signInButton.setEnabled(!busy || signingIn);

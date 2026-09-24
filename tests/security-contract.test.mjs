@@ -242,7 +242,12 @@ test("browser Microsoft sign-in can be cancelled without leaving launch progress
 test("Java sponsor eligibility is checked after refreshing account access and only for Gamble profiles", async () => {
     const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
     const launch = java.slice(java.indexOf("private void launch()"), java.indexOf("private LauncherAccount refreshLauncherAccountBlocking"));
-    assert.match(launch, /if \(launchProfile\.includesGambleClient\) \{\s*LauncherAccount account = refreshLauncherAccountBlocking\(\);/);
+    assert.match(launch, /if \(launchProfile\.includesGambleClient \|\| another\) \{\s*LauncherAccount account = refreshLauncherAccountBlocking\(\);/);
+    assert.match(launch, /if \(another && !LauncherAccessPolicy\.canLaunchAnother\(accessPolicyAccount\(account\.user\)\)\)/);
+    assert.match(launch, /if \(launchProfile\.includesGambleClient\) \{\s*launchBuild = findBuild[\s\S]*!sponsoredAccessActiveFor\(launchBuild\)/);
+    const spawn = java.slice(java.indexOf("private Process launchMinecraftProcess"), java.indexOf("private LaunchValidation validateLaunchSetup"));
+    assert.match(spawn, /if \(another && !LauncherAccessPolicy\.canLaunchAnother\(accessPolicyAccount\(refreshLauncherAccountBlocking\(\)\.user\)\)\)/);
+    assert.ok(spawn.indexOf("refreshLauncherAccountBlocking()") < spawn.indexOf("return arguments.start(builder)"));
     assert.ok(launch.indexOf("refreshLauncherAccountBlocking()") < launch.indexOf("!sponsoredAccessActiveFor(launchBuild)"));
     assert.match(launch, /LauncherAccessPolicy\.refreshedBuild/);
     assert.match(launch, /SponsorRequiredException[\s\S]*openDashboardForAds\(\)/);
@@ -376,7 +381,8 @@ test("graphics safety settings stay scoped to Minecraft and retain GPU crash evi
     assert.match(rust, /AMD guard pre-JVM/);
     assert.match(rust, /WEBKIT_DISABLE_DMABUF_RENDERER/);
     assert.match(rust, /command\.env_remove\(key\)/);
-    assert.match(rust, /fn record_minecraft_exit\(/);
+    assert.match(rust, /fn record_session_exit\(/);
+    assert.match(rust, /fs::read_to_string\(&session\.log_file\)/);
     assert.match(rust, /gpu_fault/);
     assert.match(rust, /GAMBLE_GRAPHICS_MODE/);
     assert.doesNotMatch(rust, /command\.env\("AMD_FORCE_SHADER_USE_ACO"/);

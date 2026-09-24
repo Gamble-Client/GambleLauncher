@@ -159,7 +159,12 @@ const ANTISCREENSHARE_VISUAL_OFF: &[&str] = &[
     "block-debug-finder",
     "block-update-finder",
 ];
-static MINECRAFT_PROCESS: Mutex<Option<io_safety::PrivateChild>> = Mutex::new(None);
+struct MinecraftSession {
+    child: io_safety::PrivateChild,
+    log_file: PathBuf,
+    graphics_mode: String,
+}
+static MINECRAFT_PROCESSES: Mutex<Vec<MinecraftSession>> = Mutex::new(Vec::new());
 static LAST_MINECRAFT_EXIT: Mutex<Option<MinecraftExit>> = Mutex::new(None);
 static LAST_MINECRAFT_GRAPHICS_MODE: Mutex<String> = Mutex::new(String::new());
 static LAUNCH_LOCK: Mutex<()> = Mutex::new(());
@@ -241,6 +246,8 @@ struct LoaderProvenance {
 #[derive(Serialize)]
 struct MinecraftStatus {
     running: bool,
+    #[serde(rename = "sessionCount")]
+    session_count: usize,
     pid: Option<u32>,
     #[serde(rename = "exitCode")]
     exit_code: Option<i32>,
@@ -506,6 +513,10 @@ struct ManifestResponse {
 
 #[derive(Clone, Deserialize)]
 struct LaunchRequest {
+    #[serde(default, rename = "launchAnother")]
+    launch_another: bool,
+    #[serde(default, rename = "stopOnly")]
+    stop_only: bool,
     profile: String,
     build: String,
     token: String,
@@ -1890,9 +1901,12 @@ fn install_client_manifest_blocking(
 #[tauri::command]
 async fn launch_game(app: AppHandle, input: LaunchRequest) -> Result<String, String> {
     let profile = input.profile.clone();
+    let secondary = input.launch_another;
+    let stopping = input.stop_only;
     let result = run_blocking(move || launch_game_blocking(app, input)).await;
     if let Err(error) = &result {
-        let _ = write_launch_failure_log(&profile, error);
+        // Never truncate the primary session's active log on a secondary failure.
+        if !secondary && !stopping { let _ = write_launch_failure_log(&profile, error); }
     }
     result
 }
@@ -1906,30 +1920,35 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
     let (gpu_selector, gpu_recovered) =
         resolve_gpu_selector(&graphics_mode, &requested_gpu_selector);
     {
-        let mut running = MINECRAFT_PROCESS.lock().map_err(error_text)?;
-        if let Some(child) = running.as_mut() {
-            if child.try_wait().map_err(error_text)?.is_none() {
-                emit_launch_progress(&app, "Stopping", "Stopping Minecraft", 1, 1);
-                child.kill().map_err(error_text)?;
-                child.wait().map_err(error_text)?;
-                *running = None;
-                if let Ok(mut exit) = LAST_MINECRAFT_EXIT.lock() {
-                    *exit = None;
-                }
-                return Ok("Minecraft stop signal sent.".to_string());
-            }
-            *running = None;
+        let mut running = MINECRAFT_PROCESSES.lock().map_err(error_text)?;
+        reap_minecraft_sessions(&mut running)?;
+        if input.stop_only || (!running.is_empty() && !input.launch_another) {
+            emit_launch_progress(&app, "Stopping", "Stopping Minecraft sessions", 1, 1);
+            stop_minecraft_sessions(&mut running)?;
+            if let Ok(mut exit) = LAST_MINECRAFT_EXIT.lock() { *exit = None; }
+            return Ok("Minecraft stop signal sent.".to_string());
         }
         if let Ok(mut exit) = LAST_MINECRAFT_EXIT.lock() {
             *exit = None;
         }
     }
 
-    let profile = profile_id(&input.profile);
+    let mut profile = profile_id(&input.profile);
     let build = input.build.trim();
     let token = input.token.trim();
     if token.is_empty() {
         return Err("Sign in before launching Minecraft.".to_string());
+    }
+    if input.launch_another {
+        require_multiple_launch_access(token)?;
+        // A clean profile avoids shared world locks, config writes and credentials.
+        // The ordinary loader enrollment independently authorizes this session.
+        profile = isolated_session_profile(&profile, &random_base64_url(18));
+        let session_dir = minecraft_folder(&profile);
+        fs::create_dir_all(session_dir.parent().ok_or("Missing profiles directory")?).map_err(error_text)?;
+        // Exclusive allocation: never adopt a pre-existing profile or link even
+        // in the unlikely event of a random-name collision.
+        fs::create_dir(&session_dir).map_err(error_text)?;
     }
     ensure_profile_folders(&profile)?;
     apply_minecraft_option_defaults(&profile)?;
@@ -2034,7 +2053,11 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         Ok(command) => command,
         Err(error) => return Err(error),
     };
-    let log_file = latest_launch_log_file();
+    let log_file = if input.launch_another {
+        profile_data_folder(&profile).join("launcher-session.log")
+    } else { latest_launch_log_file() };
+    // Downloads can take time; revoked roles must not remain sufficient to spawn.
+    if input.launch_another { require_multiple_launch_access(token)?; }
     let launch_result = (|| {
         if let Some(parent) = log_file.parent() {
             fs::create_dir_all(parent).map_err(error_text)?;
@@ -2087,7 +2110,7 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         )
     })();
     let mut child = launch_result?;
-    let mut running = match MINECRAFT_PROCESS.lock() {
+    let mut running = match MINECRAFT_PROCESSES.lock() {
         Ok(running) => running,
         Err(error) => {
             let _ = child.kill();
@@ -2096,7 +2119,7 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         }
     };
     let pid = child.id();
-    *running = Some(child);
+    running.push(MinecraftSession { child, log_file, graphics_mode: graphics_mode.clone() });
     drop(running);
     // Cleanup cannot depend on WebView status polling remaining active.
     let monitor = std::thread::Builder::new()
@@ -2104,16 +2127,16 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
         .spawn(move || {
             loop {
                 std::thread::sleep(Duration::from_millis(250));
-                let Ok(mut running) = MINECRAFT_PROCESS.lock() else {
+                let Ok(mut running) = MINECRAFT_PROCESSES.lock() else {
                     return;
                 };
-                let Some(child) = running.as_mut().filter(|child| child.id() == pid) else {
+                let Some(index) = running.iter().position(|session| session.child.id() == pid) else {
                     return;
                 };
-                match child.try_wait() {
+                match running[index].child.try_wait() {
                     Ok(Some(status)) => {
-                        record_minecraft_exit(&status);
-                        *running = None;
+                        record_session_exit(&status, &running[index]);
+                        running.remove(index);
                         return;
                     }
                     Ok(None) => {}
@@ -2123,47 +2146,45 @@ fn launch_game_blocking(app: AppHandle, input: LaunchRequest) -> Result<String, 
             }
         });
     if let Err(error) = monitor {
-        if let Ok(mut running) = MINECRAFT_PROCESS.lock() {
-            if let Some(child) = running.as_mut().filter(|child| child.id() == pid) {
-                let _ = child.kill();
-                let _ = child.wait();
-                *running = None;
+        if let Ok(mut running) = MINECRAFT_PROCESSES.lock() {
+            if let Some(index) = running.iter().position(|session| session.child.id() == pid) {
+                if running[index].child.kill().is_ok() && running[index].child.wait().is_ok() {
+                    running.remove(index);
+                }
             }
         }
         return Err(format!("Could not monitor the Minecraft process: {error}"));
     }
-    if let Ok(mut mode) = LAST_MINECRAFT_GRAPHICS_MODE.lock() {
-        *mode = graphics_mode;
+    if !input.launch_another {
+        if let Ok(mut mode) = LAST_MINECRAFT_GRAPHICS_MODE.lock() {
+            *mode = graphics_mode;
+        }
     }
     Ok("Minecraft process started.".to_string())
 }
 
 #[tauri::command]
 fn minecraft_status() -> Result<MinecraftStatus, String> {
-    let mut running = MINECRAFT_PROCESS.lock().map_err(error_text)?;
-    if let Some(child) = running.as_mut() {
-        let exit_status = child.try_wait().map_err(error_text)?;
-        if exit_status.is_none() {
+    let mut running = MINECRAFT_PROCESSES.lock().map_err(error_text)?;
+    reap_minecraft_sessions(&mut running)?;
+    let exit = LAST_MINECRAFT_EXIT.lock().map_err(error_text)?.clone();
+    if let Some(session) = running.last() {
             return Ok(MinecraftStatus {
                 running: true,
-                pid: Some(child.id()),
-                exit_code: None,
-                crashed: false,
-                gpu_fault: false,
-                message: String::new(),
-                log_path: String::new(),
-                graphics_mode: current_graphics_mode(),
+                session_count: running.len(),
+                pid: Some(session.child.id()),
+                exit_code: exit.as_ref().and_then(|exit| exit.exit_code),
+                crashed: exit.as_ref().is_some_and(|exit| exit.crashed),
+                gpu_fault: exit.as_ref().is_some_and(|exit| exit.gpu_fault),
+                message: exit.as_ref().map(|exit| exit.message.clone()).unwrap_or_default(),
+                log_path: exit.as_ref().map(|exit| exit.log_path.clone()).unwrap_or_else(|| display_path(&session.log_file)),
+                graphics_mode: exit.as_ref().map(|exit| exit.graphics_mode.clone()).unwrap_or_else(|| session.graphics_mode.clone()),
             });
-        }
-        if let Some(status) = exit_status {
-            record_minecraft_exit(&status);
-        }
-        *running = None;
     }
-    let exit = LAST_MINECRAFT_EXIT.lock().map_err(error_text)?.clone();
     Ok(match exit {
         Some(exit) => MinecraftStatus {
             running: false,
+            session_count: 0,
             pid: None,
             exit_code: exit.exit_code,
             crashed: exit.crashed,
@@ -2174,6 +2195,7 @@ fn minecraft_status() -> Result<MinecraftStatus, String> {
         },
         None => MinecraftStatus {
             running: false,
+            session_count: 0,
             pid: None,
             exit_code: None,
             crashed: false,
@@ -2282,8 +2304,61 @@ fn tail_of_launch_log() -> String {
     tail
 }
 
-fn record_minecraft_exit(status: &ExitStatus) {
-    let tail = tail_of_launch_log();
+fn stop_minecraft_sessions(running: &mut Vec<MinecraftSession>) -> Result<(), String> {
+    // Retain ownership until confirmed dead, including failed stop requests.
+    while let Some(session) = running.last_mut() {
+        if session.child.try_wait().map_err(error_text)?.is_none() {
+            if let Err(error) = session.child.kill() {
+                // A normal exit can race the stop request, particularly on Windows.
+                if session.child.try_wait().map_err(error_text)?.is_none() {
+                    return Err(error_text(error));
+                }
+            }
+            session.child.wait().map_err(error_text)?;
+        }
+        running.pop();
+    }
+    Ok(())
+}
+
+fn reap_minecraft_sessions(running: &mut Vec<MinecraftSession>) -> Result<(), String> {
+    let mut index = 0;
+    while index < running.len() {
+        if let Some(status) = running[index].child.try_wait().map_err(error_text)? {
+            record_session_exit(&status, &running[index]);
+            running.remove(index);
+        } else { index += 1; }
+    }
+    Ok(())
+}
+
+fn require_multiple_launch_access(token: &str) -> Result<(), String> {
+    let account = launcher_api(ApiCommandBody {
+        method: "GET".to_string(), path: "/api/launcher/account".to_string(),
+        token: token.to_string(), body: json!({}),
+    })?;
+    if !allows_multiple_launches(&account) {
+        return Err("Launching another session is available only to owner or developer accounts.".to_string());
+    }
+    Ok(())
+}
+
+fn allows_multiple_launches(account: &serde_json::Value) -> bool {
+    let user = &account["user"];
+    let status = user["accessStatus"].as_str().unwrap_or("").trim().to_ascii_lowercase();
+    !matches!(status.as_str(), "banned" | "revoked")
+        && (user["ownerAccess"].as_bool() == Some(true) || user["devAccess"].as_bool() == Some(true))
+}
+
+fn isolated_session_profile(profile: &str, nonce: &str) -> String {
+    let prefix = match profile_kind(profile) {
+        ProfileKind::Vanilla => "vanilla", ProfileKind::Fabric => "fabric", ProfileKind::Client => "gamble-client",
+    };
+    format!("{prefix}-session-{}", profile_id(nonce))
+}
+
+fn record_session_exit(status: &ExitStatus, session: &MinecraftSession) {
+    let tail = fs::read_to_string(&session.log_file).unwrap_or_default();
     let gpu_fault = launch_log_has_gpu_fault(&tail);
     #[cfg(unix)]
     let signal = status.signal();
@@ -2305,8 +2380,8 @@ fn record_minecraft_exit(status: &ExitStatus) {
         crashed,
         gpu_fault,
         message,
-        log_path: display_path(&latest_launch_log_file()),
-        graphics_mode: current_graphics_mode(),
+        log_path: display_path(&session.log_file),
+        graphics_mode: session.graphics_mode.clone(),
     };
     if let Ok(mut last_exit) = LAST_MINECRAFT_EXIT.lock() {
         *last_exit = Some(exit);
@@ -6473,6 +6548,84 @@ mod tests {
     fn legacy_launch_request_defaults_client_shaders_on() {
         let request: super::LaunchRequest = serde_json::from_value(serde_json::json!({"profile":"gamble-client", "build":"beta", "token":"", "username":"fixture", "memory":4, "javaArgs":"", "antiScreenshare":false})).unwrap();
         assert!(!request.disable_client_shaders);
+        assert!(!request.launch_another);
+        assert!(!request.stop_only);
+    }
+    #[test]
+    fn multiple_launches_require_strict_fresh_server_roles() {
+        for role in ["ownerAccess", "devAccess"] {
+            let mut user = serde_json::json!({"accessStatus":"owned"});
+            user[role] = serde_json::json!(true);
+            assert!(super::allows_multiple_launches(&serde_json::json!({"user":user})));
+            for status in ["banned", "revoked", " BANNED "] {
+                user["accessStatus"] = serde_json::json!(status);
+                assert!(!super::allows_multiple_launches(&serde_json::json!({"user":user})));
+            }
+        }
+        for user in [serde_json::json!(null), serde_json::json!({}),
+            serde_json::json!({"selectedPlan":"dev","accessStatus":"owner"}),
+            serde_json::json!({"ownerAccess":"true","devAccess":1}),
+            serde_json::json!({"mediaAccess":true,"testerAccess":true,"betaAccess":true})] {
+            assert!(!super::allows_multiple_launches(&serde_json::json!({"user":user})));
+        }
+    }
+    #[test]
+    fn secondary_profiles_are_separate_and_preserve_only_profile_kind() {
+        for profile in ["gamble-client", "gamble-client-custom", "fabric-custom", "vanilla"] {
+            let isolated = super::isolated_session_profile(profile, "fixture-123");
+            assert!(super::profile_kind(profile) == super::profile_kind(&isolated));
+            assert_ne!(super::minecraft_folder(profile), super::minecraft_folder(&isolated));
+            assert_ne!(super::profile_data_folder(profile), super::profile_data_folder(&isolated));
+            assert!(!isolated.contains('/'));
+            assert_ne!(isolated, super::isolated_session_profile(profile, "fixture-456"));
+        }
+    }
+    #[test]
+    fn two_real_java_sessions_reap_independently_and_keep_the_survivor() {
+        let root = env::temp_dir().join(format!("gamble-multisession-test-{}", random_base64_url(18)));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("MultiSessionProbe.java");
+        fs::write(&source, r#"class MultiSessionProbe {
+            public static void main(String[] args) throws Exception {
+                java.nio.file.Files.writeString(java.nio.file.Path.of(args[0]), "ready");
+                Thread.sleep(30000);
+            }
+        }"#).unwrap();
+        let mut sessions = Vec::new();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            for index in 0..2 {
+                let ready = root.join(format!("ready-{index}"));
+                fs::write(root.join(format!("session-{index}.log")),
+                    if index == 0 { "amdgpu: GPU reset begin!" } else { "healthy sibling" }).unwrap();
+                let mut command = std::process::Command::new("java");
+                command.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+                let child = super::io_safety::PrivateChild::spawn(command,
+                    &[source.to_string_lossy().into_owned(), ready.to_string_lossy().into_owned()], &root).unwrap();
+                sessions.push(super::MinecraftSession { child, log_file: root.join(format!("session-{index}.log")), graphics_mode: "automatic".into() });
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+                while !ready.is_file() && std::time::Instant::now() < deadline {
+                    assert!(sessions[index].child.try_wait().unwrap().is_none(), "Java fixture exited before readiness");
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                assert!(ready.is_file(), "Java fixture did not become ready");
+            }
+            let survivor = sessions[1].child.id();
+            sessions[0].child.kill().unwrap();
+            sessions[0].child.wait().unwrap();
+            super::reap_minecraft_sessions(&mut sessions).unwrap();
+            assert_eq!(sessions.len(), 1);
+            assert_eq!(sessions[0].child.id(), survivor);
+            assert!(sessions[0].child.try_wait().unwrap().is_none());
+            let exit = super::LAST_MINECRAFT_EXIT.lock().unwrap().clone().unwrap();
+            assert_eq!(exit.log_path, super::display_path(&root.join("session-0.log")));
+            assert!(exit.gpu_fault, "must inspect the exited child's log, not its sibling's");
+            super::stop_minecraft_sessions(&mut sessions).unwrap();
+            assert!(sessions.is_empty());
+        }));
+        for session in &mut sessions { let _ = session.child.kill(); let _ = session.child.wait(); }
+        drop(sessions);
+        let _ = fs::remove_dir_all(&root);
+        if let Err(error) = result { std::panic::resume_unwind(error); }
     }
     use super::{
         asset_worker_count, download_missing_assets, ensure_download_parent,

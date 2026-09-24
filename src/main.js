@@ -2,7 +2,7 @@ import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as tauriOpenDialog } from "@tauri-apps/plugin-dialog";
-import { canUseBuildForAccess, preferredBuildForAccess } from "./access-policy.js";
+import { canUseBuildForAccess, preferredBuildForAccess, canLaunchMultiple } from "./access-policy.js";
 import { launchState } from "./launch-state.js";
 import "./styles.css";
 import logoUrl from "./assets/cg-mod-icon.png";
@@ -101,6 +101,7 @@ const state = {
   manifest: null,
   clientStatus: null,
   minecraftRunning: false,
+  minecraftSessionCount: 0,
   minecraftPid: null,
   minecraftExit: null,
   popup: null,
@@ -257,6 +258,10 @@ function previewAccount(mode) {
     },
     owner: {
       user: { email: "jordan.owner@example.test", displayName: "Jordan Vale", selectedPlan: "owner", accessStatus: "owner", ownerAccess: true, mediaAccess: true, betaAccess: true, devAccess: true },
+      ads: paidAds
+    },
+    dev: {
+      user: { email: "dev@example.test", displayName: "Developer fixture", selectedPlan: "lifetime", accessStatus: "owned", devAccess: true },
       ads: paidAds
     }
   };
@@ -420,7 +425,9 @@ async function mockInvoke(command, args = {}) {
     };
   }
   if (command === "launch_game") {
-    state.minecraftRunning = !state.minecraftRunning;
+    state.minecraftSessionCount = args?.input?.stopOnly ? 0 : args?.input?.launchAnother
+      ? state.minecraftSessionCount + 1 : state.minecraftRunning ? 0 : 1;
+    state.minecraftRunning = state.minecraftSessionCount > 0;
     state.minecraftPid = state.minecraftRunning ? 4242 : null;
     if (state.minecraftRunning) state.minecraftExit = null;
     if (!state.minecraftRunning) return "Minecraft stop signal sent.";
@@ -429,6 +436,7 @@ async function mockInvoke(command, args = {}) {
   if (command === "minecraft_status") {
     return {
       running: state.minecraftRunning,
+      sessionCount: state.minecraftSessionCount,
       pid: state.minecraftPid,
       ...(state.minecraftExit || {}),
       graphicsMode: state.graphicsMode
@@ -728,7 +736,8 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
           </div>
         </div>
         <div class="launch-stack">
-          <button class="launch-button" type="button" data-action="launch" ${ready.disabled ? "disabled" : ""}>${escapeHtml(ready.label)}</button>
+          <button class="launch-button" type="button" data-action="launch" ${ready.disabled ? "disabled" : ""}>${escapeHtml(state.minecraftSessionCount > 1 ? "Stop all sessions" : ready.label)}</button>
+          ${state.minecraftRunning && canLaunchMultiple(state.account) ? `<button class="ghost" type="button" data-action="launch-another" ${ready.disabled ? "disabled" : ""}>Launch another</button><p class="launch-version">${state.minecraftSessionCount || 1} running · Extra sessions start in a clean, separate profile.</p>` : ""}
           <p class="launch-version">Minecraft 1.21.11${profile.loader === "fabric" ? " · Fabric" : ""}</p>
           ${activeMicrosoft ? "" : `<p class="launch-warning">An offline Minecraft session is selected. <button class="inline-link" type="button" data-view="accounts">Connect Microsoft</button> for online servers.</p>`}
         </div>
@@ -1871,8 +1880,10 @@ async function refreshMinecraftStatus(options = {}) {
     if (request !== minecraftStatusRequest) return;
     const wasRunning = state.minecraftRunning;
     const oldPid = state.minecraftPid;
+    const oldSessionCount = state.minecraftSessionCount;
     const oldExitKey = JSON.stringify(state.minecraftExit || null);
     state.minecraftRunning = Boolean(status?.running);
+    state.minecraftSessionCount = Number(status?.sessionCount) || (state.minecraftRunning ? 1 : 0);
     state.minecraftPid = status?.pid || null;
     state.minecraftExit = status?.message ? {
       exitCode: status.exitCode ?? null,
@@ -1882,6 +1893,12 @@ async function refreshMinecraftStatus(options = {}) {
       logPath: String(status.logPath || ""),
       graphicsMode: String(status.graphicsMode || state.graphicsMode)
     } : null;
+    if (state.minecraftRunning && state.minecraftExit
+      && oldExitKey !== JSON.stringify(state.minecraftExit) && options.logExit !== false) {
+      log(`One session ended; ${state.minecraftSessionCount} still running. ${state.minecraftExit.message} Log: ${state.minecraftExit.logPath}`);
+      if (state.minecraftExit.crashed) showPopup("A Minecraft session stopped",
+        `${knownLaunchMessage(state.minecraftExit.message)} Other sessions are still running. Log: ${state.minecraftExit.logPath}`, "launch");
+    }
     if (wasRunning && !state.minecraftRunning && options.logExit !== false) {
       if (state.minecraftExit?.gpuFault) {
         log("Minecraft stopped after a graphics-driver reset or GPU context loss. The launcher stayed open and did not restart it; attach the launch log and GPU diagnostics to support.");
@@ -1902,6 +1919,7 @@ async function refreshMinecraftStatus(options = {}) {
         ? "Minecraft stopped shortly after launch" : "Minecraft stopped unexpectedly", exitMessage, "launch");
     }
     const changed = wasRunning !== state.minecraftRunning
+      || oldSessionCount !== state.minecraftSessionCount
       || oldPid !== state.minecraftPid
       || oldExitKey !== JSON.stringify(state.minecraftExit || null);
     if (options.render !== false && changed) render();
@@ -2547,7 +2565,11 @@ app.addEventListener("click", async (event) => {
     app.querySelector(".diagnostics-list")?.scrollIntoView({ block: "nearest" });
   } else if (action === "install") {
     await installSelected();
-  } else if (action === "launch") {
+  } else if (action === "launch" || action === "launch-another") {
+    const launchAnother = action === "launch-another";
+    // Preserve Stop intent if the last child exits during the status refresh.
+    const stopOnly = !launchAnother && state.minecraftRunning;
+    if (launchAnother && !canLaunchMultiple(state.account)) return;
     if (state.starting) return;
     if (!state.minecraftRunning && !(state.account && state.token)) {
       await startSignIn();
@@ -2574,7 +2596,7 @@ app.addEventListener("click", async (event) => {
       });
       render();
       await refreshMinecraftStatus({ render: false, logExit: false });
-      if (!state.minecraftRunning && selectedProfile.client) {
+      if (!stopOnly && (!state.minecraftRunning || launchAnother) && selectedProfile.client) {
         state.launchProgress = normalizeLaunchProgress({
           phase: "Account",
           message: "Refreshing launcher account",
@@ -2606,6 +2628,8 @@ app.addEventListener("click", async (event) => {
       const selectedBuild = buildForAccount();
       const message = await invoke("launch_game", {
         input: {
+          launchAnother,
+          stopOnly,
           profile: selectedProfile.id,
           build: selectedBuild.id,
           token: state.token,
