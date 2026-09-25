@@ -24,7 +24,7 @@
   <url type="bugtracker">https://github.com/Gamble-Client/GambleLauncher/issues</url>
   <content_rating type="oars-1.1" />
   <releases>
-    <release version="0.1.144" date="2026-09-24">
+    <release version="0.1.145" date="2026-09-24">
       <description>
         <p>Ships the real launcher interface in the Flatpak, adds motion and polish to the launcher, and makes Flatpak installs update with the Flatpak bundle.</p>
       </description>

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const source = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
+// Windows checkouts may carry CRLF endings; the contracts below match on "\n".
+const source = async (path) => (await readFile(new URL(`../${path}`, import.meta.url), "utf8")).replace(/\r\n/g, "\n");
 
 test("Ad Tier launchers send users to the Dashboard instead of embedding sponsor playback", async () => {
     const frontend = await source("src/main.js");
