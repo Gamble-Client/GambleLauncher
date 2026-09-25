@@ -35,6 +35,116 @@ const PREVIEW_MODE = PREVIEW
 
 const app = document.querySelector("#app");
 
+// Motion. render() replaces the markup on every state change, so entrances
+// are keyframe classes applied only to what is new (a view switch, a dialog
+// opening, first paint). A re-render mid-animation resumes it by passing the
+// elapsed time as a negative --motion-delay instead of replaying it. Every
+// duration here is bounded (<= 300ms) and skipped entirely for reduced motion
+// or the Launcher animations setting. Transform and opacity only.
+const MOTION_EASE = "cubic-bezier(0.2, 0, 0, 1)";
+const MOTION = { view: 200, leave: 90, dialog: 180, popover: 140, knob: 140, nav: 200, rise: 180, opening: 300, progress: 240 };
+let openingAt = NaN;
+let viewEnteredAt = NaN;
+let pendingKnob = null;
+const dialogOpenedAt = new Map();
+let toastHost = null;
+
+function motionEnabled() {
+  return state.animationsEnabled && !globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+}
+
+function motionClock() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+function resumeAnimation(element, className, startedAt, duration, offset = 0) {
+  if (!element || !motionEnabled() || !Number.isFinite(startedAt)) return;
+  const elapsed = motionClock() - startedAt;
+  if (elapsed >= offset + duration) return;
+  element.style.setProperty("--motion-delay", `${Math.round(offset - elapsed)}ms`);
+  element.classList.add(className);
+}
+
+// Outgoing view fades for 90ms before the next render swaps the markup.
+function leaveView(view) {
+  if (view === state.view || !motionEnabled()) return Promise.resolve();
+  for (const element of app.querySelectorAll(".view-frame, .topbar > div:first-child")) element.classList.add("view-leave");
+  return sleep(MOTION.leave);
+}
+
+function applyMotion({ stamp, viewChanged, previousDialogs, previousNavBar, previousProgress }) {
+  document.documentElement?.classList?.toggle("animations-off", !state.animationsEnabled);
+  if (!Number.isFinite(openingAt)) {
+    openingAt = stamp;
+    // Animate the persistent root once, not the replaced markup on every poll.
+    if (motionEnabled()) app.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: MOTION_EASE });
+  }
+  if (stamp - openingAt < MOTION.opening) {
+    // First paint: nav and home cards rise in a stagger that completes within 300ms.
+    app.querySelectorAll(".nav-primary .nav-item, .nav-secondary .nav-item")
+      .forEach((item, index) => resumeAnimation(item, "rise-in", openingAt, MOTION.rise, Math.min(index * 30, 120)));
+    app.querySelectorAll(".launch-panel, .home-card")
+      .forEach((card, index) => resumeAnimation(card, "rise-in", openingAt, MOTION.rise, Math.min(index * 40, 120)));
+  }
+  if (viewChanged) viewEnteredAt = stamp;
+  resumeAnimation(app.querySelector(".view-frame"), "view-enter", viewEnteredAt, MOTION.view);
+  resumeAnimation(app.querySelector(".topbar > div:first-child"), "fade-in", viewEnteredAt, 160);
+  const bar = app.querySelector(".nav-bar");
+  if (bar && previousNavBar && motionEnabled()) {
+    const next = bar.getBoundingClientRect();
+    const dx = previousNavBar.left - next.left;
+    const dy = previousNavBar.top - next.top;
+    if (dx || dy) bar.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: MOTION.nav, easing: MOTION_EASE });
+  }
+  const openLabels = new Set();
+  for (const dialog of app.querySelectorAll('[role="dialog"]')) {
+    const label = dialog.getAttribute("aria-label") || "";
+    openLabels.add(label);
+    if (!previousDialogs.has(label)) dialogOpenedAt.set(label, stamp);
+    const openedAt = dialogOpenedAt.get(label);
+    const popover = dialog.classList.contains("profile-create-menu");
+    resumeAnimation(dialog, "pop-in", openedAt, popover ? MOTION.popover : MOTION.dialog);
+    resumeAnimation(dialog.closest(".modal-scrim"), "fade-in", openedAt, 160);
+    // Progress re-renders replace the spinner and sweep; keep their loop phase.
+    for (const loop of dialog.querySelectorAll(".launch-emblem, .launch-progress-track.indeterminate > span")) {
+      loop.style.setProperty("--loop-offset", `-${Math.round(stamp - openedAt)}ms`);
+    }
+  }
+  for (const label of dialogOpenedAt.keys()) if (!openLabels.has(label)) dialogOpenedAt.delete(label);
+  const fill = app.querySelector(".launch-progress-track:not(.indeterminate) > span");
+  if (fill && previousProgress && previousProgress !== fill.style.width && motionEnabled()) {
+    fill.animate([{ width: previousProgress }, { width: fill.style.width }], { duration: MOTION.progress, easing: MOTION_EASE });
+  }
+  if (pendingKnob) {
+    const input = app.querySelector(`[${pendingKnob.attr}="${cssEscape(pendingKnob.name)}"]`);
+    resumeAnimation(input, pendingKnob.checked ? "knob-on" : "knob-off", pendingKnob.at, MOTION.knob);
+    if (stamp - pendingKnob.at >= MOTION.knob) pendingKnob = null;
+  }
+}
+
+// Short confirmation toasts for actions that otherwise only write to the log.
+function notify(message) {
+  const text = publicMessage(message, "");
+  const host = app.parentElement;
+  if (!text || !host || typeof document.createElement !== "function") return;
+  if (!toastHost) {
+    toastHost = document.createElement("div");
+    toastHost.className = "toast-host";
+    toastHost.setAttribute("role", "status");
+    toastHost.setAttribute("aria-live", "polite");
+    host.appendChild(toastHost);
+  }
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.textContent = text;
+  toastHost.appendChild(toast);
+  while (toastHost.children.length > 3) toastHost.firstElementChild.remove();
+  setTimeout(() => {
+    toast.classList.add("toast-leave");
+    setTimeout(() => toast.remove(), 180);
+  }, 2600);
+}
+
 const profiles = [
   { id: "gamble-client", label: "With Gamble Client", loader: "fabric", client: true },
   { id: "vanilla", label: "Vanilla", loader: "vanilla", client: false },
@@ -86,6 +196,8 @@ const state = {
   status: "Starting",
   starting: true,
   busy: false,
+  refreshing: false,
+  launchIntent: "",
   signIn: null,
   signInActive: false,
   signInGeneration: 0,
@@ -492,8 +604,6 @@ function cssEscape(value) {
   return String(value).replaceAll('"', '\\"').replaceAll("\\", "\\\\");
 }
 
-let openingMotionPlayed = false;
-
 function render() {
   const focused = document.activeElement;
   const focusField = focused?.dataset?.field;
@@ -504,10 +614,14 @@ function render() {
     .filter(name => focused?.hasAttribute?.(name))
     .map(name => `[${name}="${cssEscape(focused.getAttribute(name))}"]`).join("");
   const previousDialog = app.querySelector('[role="dialog"]')?.getAttribute("aria-label");
+  const previousDialogs = new Set(Array.from(app.querySelectorAll('[role="dialog"]'), (dialog) => dialog.getAttribute("aria-label") || ""));
+  const viewChanged = renderedView !== state.view;
+  const previousNavBar = viewChanged ? app.querySelector(".nav-bar")?.getBoundingClientRect() : null;
+  const previousProgress = app.querySelector(".launch-progress-track:not(.indeterminate) > span")?.style.width || "";
   const selection = focusField && typeof focused.selectionStart === "number"
     ? [focused.selectionStart, focused.selectionEnd] : null;
   const scrollState = captureScrollState();
-  const preserveScroll = scrollState && renderedView === state.view;
+  const preserveScroll = scrollState && !viewChanged;
   const profile = currentProfile();
   const signedIn = Boolean(state.account && state.token);
   const selectedBuild = buildForAccount();
@@ -535,7 +649,7 @@ function render() {
       <aside class="rail">
         <div class="brand">
           <strong class="wordmark">GAMBLE</strong>
-          <span class="brand-meta">Launcher <span class="mono">${escapeHtml(state.info?.version || LAUNCHER_VERSION)}</span></span>
+          <span class="brand-meta">Launcher</span>
         </div>
         <nav class="nav-primary" aria-label="Launcher sections">
           ${navButton("play", "Home")}
@@ -555,6 +669,10 @@ function render() {
             <span>Gamble account</span>
             <strong>${escapeHtml(accountTitle())}</strong>
             <small>${escapeHtml(accountMeta())}</small>
+          </div>
+          <div class="rail-foot">
+            <span class="mono">v${escapeHtml(state.info?.version || LAUNCHER_VERSION)}</span>
+            <span title="${escapeAttr(state.status)}">${escapeHtml(state.status)}</span>
           </div>
         </div>
       </aside>
@@ -580,13 +698,7 @@ function render() {
   `;
 
   renderedView = state.view;
-  // Animate the persistent root once, not the replaced markup on every poll.
-  if (!openingMotionPlayed) {
-    openingMotionPlayed = true;
-    if (state.animationsEnabled && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      app.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 140, easing: 'cubic-bezier(.2,0,0,1)' });
-    }
-  }
+  applyMotion({ stamp: motionClock(), viewChanged, previousDialogs, previousNavBar, previousProgress });
   if (preserveScroll) restoreScrollState(scrollState);
   const dialog = app.querySelector('[aria-modal="true"]');
   for (const background of app.querySelectorAll(".shell > .rail, .shell > .content")) background.inert = Boolean(dialog);
@@ -663,7 +775,7 @@ function navIcon(id) {
 
 function navButton(id, label) {
   const active = state.view === id || (id === "mods" && ["mods", "packs"].includes(state.view));
-  return `<button class="nav-item ${active ? "active" : ""}" type="button" data-view="${id}" ${active ? 'aria-current="page"' : ""}>${navIcon(id)}<strong>${escapeHtml(label)}</strong></button>`;
+  return `<button class="nav-item ${active ? "active" : ""}" type="button" data-view="${id}" ${active ? 'aria-current="page"' : ""}>${active ? '<i class="nav-bar" aria-hidden="true"></i>' : ""}${navIcon(id)}<strong>${escapeHtml(label)}</strong></button>`;
 }
 
 function allProfiles() {
@@ -751,9 +863,13 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
   const clientBuild = profile.client ? (state.clientStatus?.buildVersion || "—") : "—";
   const stopping = ready.action === "stop" || state.minecraftSessionCount > 1;
   const launcherUpdate = launcherNeedsUpdate();
+  const launching = Boolean(state.launchProgress) && ["start", "another", "stop"].includes(state.launchIntent);
+  const launchLabel = launching
+    ? (state.launchIntent === "stop" ? "Stopping…" : "Launching…")
+    : (state.minecraftSessionCount > 1 ? "Stop all sessions" : ready.label);
   return `
     <section class="play-stage play-overview">
-      <section class="launch-panel" aria-labelledby="current-client-title">
+      <section class="launch-panel ${state.refreshing ? "is-loading" : ""}" aria-labelledby="current-client-title" ${state.refreshing ? 'aria-busy="true"' : ""}>
         <header class="client-head">
           <div class="client-mark" aria-hidden="true">${profile.client ? "G" : profile.loader === "fabric" ? "F" : "V"}</div>
           <div class="client-title">
@@ -788,7 +904,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
             </div>
           </div>
           <div class="launch-stack">
-            <button class="launch-button ${stopping ? "is-stop" : ""}" type="button" data-action="launch" ${ready.disabled ? "disabled" : ""}>${escapeHtml(state.minecraftSessionCount > 1 ? "Stop all sessions" : ready.label)}</button>
+            <button class="launch-button ${stopping ? "is-stop" : ""} ${launching ? "is-launching" : ""}" type="button" data-action="launch" ${ready.disabled ? "disabled" : ""}>${escapeHtml(launchLabel)}</button>
             ${state.minecraftRunning && canLaunchMultiple(state.account) ? `<button class="ghost launch-another" type="button" data-action="launch-another" ${ready.disabled ? "disabled" : ""}>Launch another</button><p class="launch-version">${state.minecraftSessionCount || 1} running · Extra sessions start in a clean, separate profile.</p>` : ""}
             ${activeMicrosoft ? "" : `<p class="launch-warning">An offline Minecraft session is selected. <button class="inline-link" type="button" data-view="accounts">Connect Microsoft</button> for online servers.</p>`}
           </div>
@@ -2286,6 +2402,7 @@ async function updatePrivacySetting(field, value) {
     const result = await api("/api/friends/settings", { method: "POST", body: JSON.stringify(body) });
     state.social = { ...(state.social || {}), settings: result.settings || state.social.settings || {} };
     log("Privacy settings updated.");
+    notify("Privacy settings updated.");
   } catch (error) {
     state.social = { ...(state.social || {}), settings: previousSettings };
     showPopup("Privacy update failed", String(error.message || error), "friends");
@@ -2467,6 +2584,7 @@ async function addMods() {
   if (!paths.length) return;
   const copied = await invoke("add_mods", { profile: state.selectedProfile, paths });
   log(`Added ${copied} mod${copied === 1 ? "" : "s"}.`);
+  notify(`Added ${copied} mod${copied === 1 ? "" : "s"}.`);
   await refreshFiles();
   render();
 }
@@ -2535,6 +2653,7 @@ async function runDiagnostics() {
     const result = await invoke("diagnostics", { profile: state.selectedProfile });
     state.diagnostics = result?.checks || [];
     log("Diagnostics updated.");
+    notify("Diagnostics updated.");
   } catch (error) {
     log(`Diagnostics failed: ${publicMessage(error)}`);
   } finally { setBusy(false, "Ready"); }
@@ -2582,8 +2701,10 @@ app.addEventListener("click", async (event) => {
   const view = event.target.closest("[data-view]")?.dataset.view;
   if (view) {
     if (state.busy) return;
+    const left = leaveView(view);
     state.view = view;
     if (view === "social") {
+      await left;
       render();
       refreshSocialIfStale().then(render).catch((error) => log(`Social refresh failed: ${error.message || error}`));
       return;
@@ -2591,6 +2712,7 @@ app.addEventListener("click", async (event) => {
     if (["profiles", "play", "mods", "packs"].includes(view)) await refreshFiles();
     if (view === "accounts") await loadMicrosoftAccounts();
     if (view === "updates") await refreshUpdatesIfStale();
+    await left;
     render();
     return;
   }
@@ -2626,10 +2748,17 @@ app.addEventListener("click", async (event) => {
     setBusy(true, "Checking updates");
     await refreshLauncherStateForUpdate();
     setBusy(false, "Ready");
+    notify("Update check complete.");
   } else if (action === "refresh") {
+    state.refreshing = true;
     setBusy(true, "Refreshing");
-    await refreshLauncherStateForUpdate();
-    setBusy(false, "Ready");
+    try {
+      await refreshLauncherStateForUpdate();
+    } finally {
+      state.refreshing = false;
+      setBusy(false, "Ready");
+    }
+    notify("Launcher refreshed.");
   } else if (action === "signin") {
     await startSignIn();
   } else if (action === "open-signin-link") {
@@ -2638,6 +2767,7 @@ app.addEventListener("click", async (event) => {
     if (state.signIn?.loginUrl) {
       await navigator.clipboard.writeText(state.signIn.loginUrl).catch(() => {});
       log("Copied sign-in link.");
+      notify("Copied sign-in link.");
       render();
     }
   } else if (action === "cancel-signin") {
@@ -2658,6 +2788,7 @@ app.addEventListener("click", async (event) => {
     state.manifest = null;
     await invoke("delete_launcher_token").catch(() => {});
     log("Signed out.");
+    notify("Signed out.");
     render();
   } else if (action === "download-launcher") {
     await downloadLauncherUpdate();
@@ -2695,6 +2826,7 @@ app.addEventListener("click", async (event) => {
     }
     const selectedProfile = currentProfile();
     const selectedAccount = profileAccount(selectedProfile);
+    state.launchIntent = stopOnly ? "stop" : launchAnother ? "another" : "start";
     state.launchProgress = normalizeLaunchProgress({
       phase: "Starting",
       message: "Checking launcher state",
@@ -2802,6 +2934,7 @@ app.addEventListener("click", async (event) => {
       await refreshMinecraftStatus({ render: false, logExit: false });
     } finally {
       state.launchProgress = null;
+      state.launchIntent = "";
       setBusy(false);
     }
   } else if (action === "microsoft") {
@@ -2812,6 +2945,7 @@ app.addEventListener("click", async (event) => {
       state.microsoft = await invoke("select_microsoft_account", { uuid: actionEl.dataset.uuid });
       await loadMicrosoftAccounts();
       log(`Using Microsoft account: ${state.microsoft?.name || "selected"}`);
+      notify(`Using Microsoft account: ${state.microsoft?.name || "selected"}`);
     } catch (error) {
       log(`Account switch failed: ${error.message || error}`);
     } finally {
@@ -2999,18 +3133,22 @@ app.addEventListener("click", async (event) => {
   } else if (action === "open-mods") {
     await invoke("open_profile_folder", { profile: state.selectedProfile, kind: "mods" });
     log("Opened the mods folder.");
+    notify("Opened the mods folder.");
     render();
   } else if (action === "open-packs") {
     await invoke("open_profile_folder", { profile: state.selectedProfile, kind: "resourcepacks" });
     log("Opened the resource packs folder.");
+    notify("Opened the resource packs folder.");
     render();
   } else if (action === "open-data") {
     await invoke("open_profile_folder", { profile: state.selectedProfile, kind: "data" });
     log("Opened the profile data folder.");
+    notify("Opened the profile data folder.");
     render();
   } else if (action === "reload-files") {
     await refreshFiles();
     log("Files refreshed.");
+    notify("Files refreshed.");
     render();
   } else if (action === "run-diagnostics") {
     await runDiagnostics();
@@ -3023,6 +3161,16 @@ app.addEventListener("click", async (event) => {
 
 app.addEventListener("change", async (event) => {
   if (state.busy) return;
+  const box = event.target;
+  if (box?.type === "checkbox" && (box.dataset?.settingToggle || box.dataset?.privacyField)) {
+    // The re-render replaces this control; applyMotion replays the knob move on the new one.
+    pendingKnob = {
+      attr: box.dataset.settingToggle ? "data-setting-toggle" : "data-privacy-field",
+      name: box.dataset.settingToggle || box.dataset.privacyField,
+      checked: box.checked,
+      at: motionClock()
+    };
+  }
   const settingToggle = event.target.closest("[data-setting-toggle]")?.dataset.settingToggle;
   if (settingToggle === "disableClientShaders") {
     state.disableClientShaders = event.target.checked;
