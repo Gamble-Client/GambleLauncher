@@ -4,6 +4,7 @@ Name=Gamble Client Launcher
 Comment=Install, update, and launch Gamble Client for Minecraft
 Exec=gamble-client-launcher
 Icon=org.gambleclient.Launcher
+StartupWMClass=gamble-client-launcher
 Terminal=false
 Categories=Game;Utility;
 Keywords=Minecraft;Fabric;Launcher;

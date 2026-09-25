@@ -373,6 +373,8 @@ struct LauncherVersionResponse {
 struct LauncherDownloads {
     #[serde(default)]
     windows: Option<LauncherDownload>,
+    #[serde(default, rename = "linuxFlatpak")]
+    linux_flatpak: Option<LauncherDownload>,
     #[serde(default, rename = "linuxRpm")]
     linux_rpm: Option<LauncherDownload>,
     #[serde(default, rename = "linuxDeb")]
@@ -6126,6 +6128,7 @@ fn preferred_launcher_download(info: &LauncherVersionResponse) -> LauncherDownlo
     let platform = match env::consts::OS {
         "windows" => usable_launcher_download(info.downloads.windows.clone()),
         "linux" => match linux_package_preference() {
+            "flatpak" => usable_launcher_download(info.downloads.linux_flatpak.clone()),
             "rpm" => usable_launcher_download(info.downloads.linux_rpm.clone()),
             "deb" => usable_launcher_download(info.downloads.linux_deb.clone()),
             _ => None,
@@ -6148,9 +6151,22 @@ fn usable_launcher_download(download: Option<LauncherDownload>) -> Option<Launch
 }
 
 fn linux_package_preference() -> &'static str {
-    let text = fs::read_to_string("/etc/os-release")
-        .unwrap_or_default()
-        .to_lowercase();
+    let os_release = fs::read_to_string("/etc/os-release").unwrap_or_default();
+    linux_package_preference_for(running_inside_flatpak(), &os_release)
+}
+
+fn running_inside_flatpak() -> bool {
+    // Flatpak exports FLATPAK_ID and mounts /.flatpak-info inside every sandbox.
+    env::var_os("FLATPAK_ID").is_some() || Path::new("/.flatpak-info").is_file()
+}
+
+fn linux_package_preference_for(inside_flatpak: bool, os_release: &str) -> &'static str {
+    if inside_flatpak {
+        // The sandbox's /etc/os-release describes the Flatpak runtime, not the
+        // host distribution, and a Flatpak install updates with the .flatpak bundle.
+        return "flatpak";
+    }
+    let text = os_release.to_lowercase();
     if text.contains("fedora")
         || text.contains("rhel")
         || text.contains("centos")
@@ -6596,6 +6612,17 @@ fn open_external(target: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn flatpak_installs_update_with_the_flatpak_bundle_not_the_host_package() {
+        // Inside the sandbox /etc/os-release belongs to the GNOME runtime.
+        assert_eq!(super::linux_package_preference_for(true, "ID=org.gnome.platform\nVERSION_ID=51\n"), "flatpak");
+        assert_eq!(super::linux_package_preference_for(true, "ID=fedora\n"), "flatpak");
+        assert_eq!(super::linux_package_preference_for(false, "ID=fedora\nVERSION_ID=44\n"), "rpm");
+        assert_eq!(super::linux_package_preference_for(false, "ID=ubuntu\nID_LIKE=debian\n"), "deb");
+        assert_eq!(super::linux_package_preference_for(false, "ID=arch\n"), "jar");
+        assert_eq!(super::linux_package_preference_for(false, ""), "jar");
+    }
+
     #[test]
     fn client_shader_preference_is_authoritative_and_idempotent() {
         for disabled in [false, true] {

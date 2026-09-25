@@ -1,6 +1,8 @@
 #!/bin/sh
+# Bundled Java 21 from the openjdk21 SDK extension; the launcher checks
+# JAVA_HOME first when it starts Minecraft.
 export JAVA_HOME=/app/jre
 if [ -z "${GAMBLE_CLIENT_GAME_DIR:-}" ]; then
   export GAMBLE_CLIENT_GAME_DIR="$HOME/.local/share/gamble-client/minecraft"
 fi
-exec /app/jre/bin/java -jar /app/lib/gamble-client-launcher.jar --swing "$@"
+exec /app/libexec/gamble-client-launcher "$@"

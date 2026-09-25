@@ -141,7 +141,7 @@ Earlier audit/release evidence: docs/audit-2026-09-05.md and workspace outputs/l
 - Signed personalized-loader provenance, immutable-core/platform markers, enrollment and entitlements remain mandatory. Public loader jars must not contain executable payloads.
 - Private credential/enrollment/Java-argument staging, bounded HTTP/ZIP reads and OAuth callbacks, trusted HTTPS hosts and disabled bearer redirects remain mandatory.
 - JavaFX reflection bridge is preserved through ProGuard. Merge macOS dylibs for Intel and Apple Silicon and verify the final post-merge artifact.
-- Flatpak bundles Java21/Freedesktop25.08 and starts Swing compatibility UI. Keep sandbox grants restricted to required network/X11/audio/DRI/shared Gamble/Minecraft paths.
+- Flatpak ships the native Tauri launcher (same UI as Windows/RPM/DEB) on GNOME 51 (Freedesktop 26.08) with bundled Java 21; the workflow builds it with `npm run tauri -- build --no-bundle` and no longer uses the Swing JAR. Keep sandbox grants restricted to required network/Wayland+X11/audio/DRI/shared Gamble/Minecraft/Downloads paths.
 - Deferred hardening: Windows credential-store tokens, independently signed launcher artifacts, managed-Java digest pinning and packaged macOS native guard. Do not add an unsigned/unfinished injection route.
 
 ## Release ownership and verification

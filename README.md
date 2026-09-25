@@ -87,19 +87,23 @@ from a terminal when that happens.
 Cross-distribution Flatpak bundle:
 
 ```bash
-./gradlew test verifyHardenedLauncherJar stageFlatpakLauncher
+flatpak install --user flathub org.gnome.Platform//51 org.gnome.Sdk//51 \
+  org.freedesktop.Sdk.Extension.openjdk21//26.08
+npm ci && npm run tauri -- build --no-bundle
 flatpak-builder --user --force-clean --repo=flatpak-repo \
   flatpak-build flatpak/org.gambleclient.Launcher.yml
-flatpak build-bundle flatpak-repo Gamble-Client-Launcher-0.1.132.flatpak \
+flatpak build-bundle flatpak-repo Gamble-Client-Launcher-0.1.143.flatpak \
   org.gambleclient.Launcher
-flatpak install --user ./Gamble-Client-Launcher-0.1.132.flatpak
+flatpak install --user ./Gamble-Client-Launcher-0.1.143.flatpak
 flatpak run org.gambleclient.Launcher
 ```
 
-The Flatpak includes Java 21 and defaults to the Linux Swing interface, avoiding
-WebKit and host-Java dependencies. Its filesystem access is limited to the shared
-Gamble Client data folder and the standard `.minecraft` folder, so it can reuse
-native-launcher profiles without receiving access to the rest of the home folder.
+The Flatpak ships the same native Tauri launcher as the RPM and DEB packages on
+the GNOME 51 runtime (WebKitGTK 4.1) and bundles Java 21, so it needs no host
+Java. Its filesystem access is limited to the shared Gamble Client data folder,
+the standard `.minecraft` folder and the Downloads folder (for launcher
+updates), so it can reuse native-launcher profiles without receiving access to
+the rest of the home folder.
 
 Windows installer:
 

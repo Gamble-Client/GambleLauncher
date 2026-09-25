@@ -15,11 +15,11 @@ on:
     paths:
       - ".github/workflows/flatpak.yml"
       - "flatpak/**"
-      - "src/main/**"
-      - "build.gradle.kts"
-      - "settings.gradle.kts"
-      - "gradle/**"
-      - "gradlew"
+      - "src/**"
+      - "src-tauri/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
 
 jobs:
   flatpak:
@@ -30,18 +30,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Java 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
-          cache: gradle
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
 
       - name: Read package version
         id: package
@@ -49,18 +50,40 @@ jobs:
           version=$(node -p "require('./package.json').version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Install Flatpak tooling
+      - name: Install system dependencies and Flatpak tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder xvfb
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            flatpak \
+            flatpak-builder \
+            imagemagick \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget \
+            xvfb
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user --noninteractive -y flathub \
-            org.freedesktop.Platform//25.08 \
-            org.freedesktop.Sdk//25.08 \
-            org.freedesktop.Sdk.Extension.openjdk21//25.08
+            org.gnome.Platform//51 \
+            org.gnome.Sdk//51 \
+            org.freedesktop.Sdk.Extension.openjdk21//26.08
 
-      - name: Build and verify universal launcher JAR
-        run: ./gradlew test verifyHardenedLauncherJar stageFlatpakLauncher
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Verify launcher contracts
+        run: npm test
+
+      - name: Build native launcher
+        env:
+          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/src/gamble-client-launcher --remap-path-prefix=/home/runner/.cargo=/rust/cargo
+        run: npm run tauri -- build --no-bundle
 
       - name: Build Flatpak repository
         run: |
@@ -69,15 +92,29 @@ jobs:
           flatpak install --user --noninteractive -y ./flatpak-repo org.gambleclient.Launcher
 
       - name: Test packaged Flatpak network path
-        run: flatpak run --user org.gambleclient.Launcher --self-test
+        run: flatpak run --user org.gambleclient.Launcher --network-self-test
 
       - name: Smoke-test packaged Flatpak UI
         run: |
           set +e
-          timeout 15s xvfb-run -a flatpak run --user org.gambleclient.Launcher
+          timeout 15s xvfb-run -a --server-args="-screen 0 1280x800x24" sh -c '
+            flatpak run --user org.gambleclient.Launcher &
+            launcher=$!
+            sleep 10
+            import -window root "$GITHUB_WORKSPACE/launcher-flatpak-smoke.png" || true
+            wait "$launcher"
+          '
           launcher_status=$?
           set -e
           test "$launcher_status" -eq 124
+
+      - name: Upload the Flatpak UI smoke screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamble-client-launcher-flatpak-smoke-${{ steps.package.outputs.version }}
+          path: launcher-flatpak-smoke.png
+          if-no-files-found: warn
 
       - name: Build single-file Flatpak bundle
         run: |

@@ -133,27 +133,42 @@ test("launcher frontend and native package versions stay synchronized", async ()
     const flatpak = await source("flatpak/org.gambleclient.Launcher.yml");
     const flatpakMetadata = await source("flatpak/org.gambleclient.Launcher.metainfo.xml");
     assert.match(frontend, new RegExp(`const LAUNCHER_VERSION = ["']${packageJson.version.replaceAll(".", "\\.")}["'];`));
-    assert.match(flatpak, /build\/flatpak\/gamble-client-launcher\.jar/);
+    assert.match(flatpak, /path: \.\.\/src-tauri\/target\/release\/gamble-client-launcher\n/);
     assert.match(flatpakMetadata, new RegExp(`<release version="${packageJson.version.replaceAll(".", "\\.")}"`));
 });
 
-test("Flatpak bundles Java 21 and grants only launcher-required host capabilities", async () => {
+test("Flatpak ships the native launcher with Java 21 and grants only launcher-required host capabilities", async () => {
     const manifest = await source("flatpak/org.gambleclient.Launcher.yml");
     const wrapper = await source("flatpak/gamble-client-launcher");
+    const desktop = await source("flatpak/org.gambleclient.Launcher.desktop");
+    const workflow = await source(".github/workflows/flatpak.yml");
 
+    assert.match(manifest, /runtime: org\.gnome\.Platform\n/);
+    assert.match(manifest, /sdk: org\.gnome\.Sdk\n/);
     assert.match(manifest, /org\.freedesktop\.Sdk\.Extension\.openjdk21/);
     assert.match(manifest, /\/usr\/lib\/sdk\/openjdk21\/install\.sh/);
+    assert.match(manifest, /install -Dm755 gamble-client-launcher-native \/app\/libexec\/gamble-client-launcher/);
+    assert.match(manifest, /install -Dm755 gamble-client-launcher \/app\/bin\/gamble-client-launcher/);
+    assert.doesNotMatch(manifest, /\.jar|--swing/);
     assert.match(manifest, /--share=network/);
+    assert.match(manifest, /--socket=wayland/);
     assert.match(manifest, /--socket=x11/);
     assert.match(manifest, /--socket=pulseaudio/);
     assert.match(manifest, /--device=dri/);
     assert.match(manifest, /--filesystem=~\/\.minecraft:create/);
     assert.match(manifest, /--filesystem=~\/\.local\/share\/gamble-client:create/);
-    assert.doesNotMatch(manifest, /--filesystem=(?:host|home)|--device=all|--talk-name=|--socket=wayland/);
-    assert.match(wrapper, /\/app\/jre\/bin\/java/);
+    assert.match(manifest, /--filesystem=xdg-download/);
+    assert.doesNotMatch(manifest, /--filesystem=(?:host|home)|--device=all|--talk-name=|--own-name=|--socket=session-bus|--socket=system-bus/);
+    assert.match(wrapper, /export JAVA_HOME=\/app\/jre/);
     assert.match(wrapper, /if \[ -z "\$\{GAMBLE_CLIENT_GAME_DIR:-\}" \]/);
     assert.match(wrapper, /GAMBLE_CLIENT_GAME_DIR="\$HOME\/\.local\/share\/gamble-client\/minecraft"/);
-    assert.match(wrapper, /--swing "\$@"/);
+    assert.match(wrapper, /exec \/app\/libexec\/gamble-client-launcher "\$@"/);
+    assert.doesNotMatch(wrapper, /java -jar|--swing/);
+    assert.match(desktop, /StartupWMClass=gamble-client-launcher/);
+    assert.match(workflow, /npm run tauri -- build --no-bundle/);
+    assert.match(workflow, /flatpak run --user org\.gambleclient\.Launcher --network-self-test/);
+    assert.match(workflow, /test "\$launcher_status" -eq 124/);
+    assert.doesNotMatch(workflow, /stageFlatpakLauncher|--self-test\b/);
 });
 
 test("launcher settings survive unavailable WebView storage", async () => {

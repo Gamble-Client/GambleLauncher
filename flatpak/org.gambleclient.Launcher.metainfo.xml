@@ -14,8 +14,9 @@
       Gamble Client builds, Fabric dependencies, and Microsoft account sessions.
     </p>
     <p>
-      The Flatpak includes Java 21 and uses the Linux compatibility interface so
-      it does not depend on a system Java installation or an embedded web view.
+      The Flatpak ships the same native launcher interface as the Windows,
+      RPM and DEB packages, and includes Java 21 so it does not depend on a
+      system Java installation.
     </p>
   </description>
   <launchable type="desktop-id">org.gambleclient.Launcher.desktop</launchable>
