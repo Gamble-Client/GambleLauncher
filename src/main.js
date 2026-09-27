@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as tauriOpenDialog } from "@tauri-apps/plugin-dialog";
 import { canUseBuildForAccess, preferredBuildForAccess, canLaunchMultiple } from "./access-policy.js";
 import { launchState } from "./launch-state.js";
-import { UPGRADE_COPY, formatSaleCountdown, formatUsd, normalizeSale, planLabel, promoBanner, saleRemainingMs } from "./promo-policy.js";
+import { UPGRADE_COPY, UPGRADE_SHORT_PITCH, formatSaleCountdown, formatUsd, normalizeSale, planLabel, promoBanner, saleRemainingMs } from "./promo-policy.js";
 import "./styles.css";
 
 const SITE = "https://gambleclient.org";
@@ -107,7 +107,7 @@ function applyMotion({ stamp, viewChanged, previousDialogs, previousNavBar, prev
   if (promoKey !== renderedPromoKey) {
     promoShownAt = promoKey && !viewChanged ? stamp : NaN;
     if (promo && Number.isFinite(promoShownAt) && !renderedPromoKey) {
-      promoShift = { at: stamp, from: -(promo.getBoundingClientRect().height + 12) };
+      promoShift = { at: stamp, from: -promoOffset(promo) };
     }
     renderedPromoKey = promoKey;
   }
@@ -719,7 +719,7 @@ function render() {
         </div>
       </aside>
 
-      <section class="content" data-scroll-key="content">
+      <section class="content ${state.view === "play" && currentPromo() ? "has-promo" : ""}" data-scroll-key="content">
         ${topbar(signedIn)}
         <main class="view-frame" data-view-frame="${escapeAttr(state.view)}">
           ${state.view === "play" ? playView(profile, selectedBuild, canInstall, signedIn) : ""}
@@ -1014,6 +1014,12 @@ function promoCheckoutUrl(promo) {
   return ["lifetime", "beta_plus"].includes(plan) ? `${DASH}/dashboard.html?plan=${plan}` : DASHBOARD_CHECKOUT_URL;
 }
 
+// How far the current client moves when the banner appears or leaves.
+function promoOffset(banner) {
+  const panel = app.querySelector(".play-overview > .launch-panel");
+  return panel ? panel.getBoundingClientRect().top - banner.getBoundingClientRect().top : 0;
+}
+
 function promoBannerMarkup(promo) {
   if (!promo) return "";
   const dismiss = `<button class="promo-dismiss" type="button" data-action="promo-dismiss" aria-label="Dismiss until the launcher restarts" title="Dismiss">×</button>`;
@@ -1022,7 +1028,7 @@ function promoBannerMarkup(promo) {
     return `
       <section class="promo-banner" data-promo-key="upgrade" aria-label="Upgrade to Release">
         <span class="promo-tag">Upgrade</span>
-        <div class="promo-copy"><p class="promo-line is-tight"><strong>${escapeHtml(pitch)}</strong><span class="promo-dash" aria-hidden="true">—</span><span>${escapeHtml(prices)}</span></p></div>
+        <p class="promo-copy promo-pitch"><strong><span class="promo-long">${escapeHtml(pitch)}</span><span class="promo-short">${escapeHtml(UPGRADE_SHORT_PITCH)}</span></strong><span class="promo-dash" aria-hidden="true">—</span><span>${escapeHtml(prices)}</span></p>
         <div class="promo-actions">
           <button class="primary-small" type="button" data-action="promo-open">Get Release</button>
           ${dismiss}
@@ -1033,17 +1039,14 @@ function promoBannerMarkup(promo) {
   const { sale } = promo;
   const plan = planLabel(sale.plan);
   return `
-    <section class="promo-banner is-sale" data-promo-key="${escapeAttr(promoKey(promo))}" aria-label="${escapeAttr(sale.title)}">
+    <section class="promo-banner is-sale" data-promo-key="${escapeAttr(promoKey(promo))}" aria-label="${escapeAttr(promo.upgrade ? `${sale.title}. ${UPGRADE_COPY.split(" — ")[0]}` : sale.title)}">
       <span class="promo-tag">Sale</span>
-      <div class="promo-copy">
-        <p class="promo-line">
-          <strong>${escapeHtml(sale.title)}</strong>
-          <span class="promo-price">${escapeHtml(plan)} <s class="mono" aria-label="was ${escapeAttr(formatUsd(sale.listPriceCents))}">${escapeHtml(formatUsd(sale.listPriceCents))}</s> <b class="mono">${escapeHtml(formatUsd(sale.priceCents))}</b></span>
-          <span class="promo-ends">Ends in <span class="mono" data-sale-countdown>${escapeHtml(formatSaleCountdown(saleRemainingMs(sale)))}</span></span>
-          ${sale.couponCode ? `<span class="promo-code">Code <code>${escapeHtml(sale.couponCode)}</code><button class="promo-copy-code" type="button" data-action="promo-copy" aria-label="Copy code ${escapeAttr(sale.couponCode)}">Copy</button></span>` : ""}
-        </p>
-        ${promo.upgrade ? `<p class="promo-note">${escapeHtml(UPGRADE_COPY.split(" — ")[0])}.</p>` : ""}
-      </div>
+      <p class="promo-copy">
+        <strong title="${escapeAttr(sale.title)}">${escapeHtml(sale.title)}</strong>
+        <span class="promo-price">${escapeHtml(plan)} <s class="mono" aria-label="was ${escapeAttr(formatUsd(sale.listPriceCents))}">${escapeHtml(formatUsd(sale.listPriceCents))}</s> <b class="mono">${escapeHtml(formatUsd(sale.priceCents))}</b></span>
+        <span class="promo-ends">Ends in <span class="mono" data-sale-countdown>${escapeHtml(formatSaleCountdown(saleRemainingMs(sale)))}</span></span>
+        ${sale.couponCode ? `<span class="promo-code">Code <code>${escapeHtml(sale.couponCode)}</code><button class="promo-copy-code" type="button" data-action="promo-copy" aria-label="Copy code ${escapeAttr(sale.couponCode)}">Copy</button></span>` : ""}
+      </p>
       <div class="promo-actions">
         <button class="primary-small" type="button" data-action="promo-open">Get ${escapeHtml(plan)}</button>
         ${dismiss}
@@ -1125,7 +1128,7 @@ async function dismissPromo() {
   if (banner && motionEnabled()) {
     banner.classList.add("view-leave");
     await sleep(MOTION.leave);
-    promoShift = { at: motionClock(), from: banner.getBoundingClientRect().height + 12 };
+    promoShift = { at: motionClock(), from: promoOffset(banner) };
   }
   // A combined banner carries the upgrade pitch too, so it dismisses both.
   if (promo.upgrade) state.promoDismissed.upgrade = true;

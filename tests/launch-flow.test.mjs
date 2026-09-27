@@ -387,14 +387,21 @@ test("Home renders one banner: combined for Ad Tier, sale-only for paid, none fo
   const ui = harness(async () => liveSale());
   const markup = () => ui.promoBannerMarkup(ui.currentPromo());
   const count = (html) => (html.match(/class="promo-banner/g) || []).length;
+  // One row: a single copy paragraph, never a second line.
+  const rows = (html) => (html.match(/<p class="promo-copy/g) || []).length + (html.match(/promo-note|<br/g) || []).length;
 
   ui.state.account = freeAccount;
-  assert.match(markup(), /<strong>Release unlocks every module<\/strong><span class="promo-dash" aria-hidden="true">—<\/span><span>\$2\.99\/week or \$15 lifetime<\/span>/);
+  // Narrow windows swap in the short lead via CSS; the prices never change.
+  assert.match(markup(), /<strong><span class="promo-long">Release unlocks every module<\/span><span class="promo-short">Unlock every module<\/span><\/strong><span class="promo-dash" aria-hidden="true">—<\/span><span>\$2\.99\/week or \$15 lifetime<\/span>/);
   assert.match(markup(), /Get Release/);
+  assert.equal(rows(markup()), 1);
   await ui.refreshSale();
   const combined = markup();
   assert.equal(count(combined), 1);
-  assert.match(combined, /<strong>Weekend sale<\/strong>[\s\S]*<p class="promo-note">Release unlocks every module\.<\/p>/);
+  assert.equal(rows(combined), 1, "the combined banner is the sale row; the sale implies the upgrade");
+  assert.match(combined, /<strong title="Weekend sale">Weekend sale<\/strong>/);
+  assert.match(combined, /aria-label="Weekend sale\. Release unlocks every module"/);
+  assert.match(combined, /data-promo-key="sale:weekend-1:free"/);
   assert.match(combined, /<s class="mono"[^>]*>\$15<\/s> <b class="mono">\$10<\/b>/);
   assert.match(combined, /Ends in <span class="mono" data-sale-countdown>1d 04h<\/span>/);
   assert.match(combined, /<code>WEEKEND10<\/code>/);
@@ -402,7 +409,9 @@ test("Home renders one banner: combined for Ad Tier, sale-only for paid, none fo
   ui.state.account = { email: "giveaway.mason@example.test", selectedPlan: "weekly", accessStatus: "owned" };
   const saleOnly = markup();
   assert.equal(count(saleOnly), 1);
+  assert.equal(rows(saleOnly), 1);
   assert.doesNotMatch(saleOnly, /Release unlocks every module/);
+  assert.match(saleOnly, /data-promo-key="sale:weekend-1:paid"/);
   assert.match(saleOnly, /Get Lifetime/);
 
   ui.state.sale = null;

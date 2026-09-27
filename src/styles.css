@@ -1065,24 +1065,36 @@ label > span {
   color: var(--warning);
 }
 
-/* Upgrade / sale banner: one slim flat row above the current client. Black-1
-   panel, 1px line, a status-style tag with a silver dot, and a secondary
-   action; Play stays the only silver button on the screen. */
+/* Upgrade / sale banner: one slim flat row (36px) above the current client,
+   8px from it, so the default 1120x720 Home still fits without scrolling.
+   Black-1 panel, 1px line, a status-style tag with a silver dot and a
+   secondary action; Play stays the only silver button on the screen. The row
+   never wraps: at narrow widths the coupon chip drops out and the upgrade
+   copy shortens (container queries), and the title truncates last. */
 .promo-banner {
+  container: promo / inline-size;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 14px;
-  min-height: 48px;
-  padding: 7px 8px 7px 12px;
+  gap: 12px;
+  height: 36px;
+  min-width: 0;
+  margin-bottom: -4px;
+  padding: 0 3px 0 10px;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-1);
 }
 
+/* The banner takes 44px; Home gives back 12px of bottom padding so the
+   current client, cards and shortcuts stay on screen at the default size. */
+.content.has-promo {
+  padding-bottom: 12px;
+}
+
 .promo-tag {
   display: inline-flex;
-  flex: 0 0 auto;
+  flex: none;
   align-items: center;
   gap: 6px;
   height: 22px;
@@ -1107,48 +1119,50 @@ label > span {
 }
 
 .promo-copy {
-  display: grid;
-  flex: 1 1 300px;
-  gap: 2px;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 16px;
   min-width: 0;
+  overflow: hidden;
   color: var(--text-2);
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1;
+  white-space: nowrap;
 }
 
-.promo-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 16px;
+.promo-copy > * {
+  flex: none;
+}
+
+.promo-copy > strong {
+  flex: 0 1 auto;
   min-width: 0;
-}
-
-.promo-line.is-tight {
-  gap: 4px 8px;
-}
-
-.promo-line strong {
+  overflow: hidden;
   color: var(--text);
   font-weight: 600;
+  line-height: 1.4;
+  text-overflow: ellipsis;
 }
 
-.promo-note {
-  color: var(--text-2);
-  font-size: 12px;
+.promo-pitch {
+  gap: 8px;
 }
 
 .promo-dash {
   color: var(--muted);
 }
 
+.promo-short {
+  display: none;
+}
+
 .promo-price,
 .promo-ends,
 .promo-code {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
-  white-space: nowrap;
 }
 
 .promo-price s {
@@ -1165,12 +1179,8 @@ label > span {
   color: var(--text);
 }
 
-.promo-code {
-  align-items: center;
-}
-
 .promo-code code {
-  padding: 2px 7px;
+  padding: 3px 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
   background: var(--bg-2);
@@ -1181,7 +1191,7 @@ label > span {
 }
 
 .promo-copy-code {
-  height: 24px;
+  height: 22px;
   padding: 0 8px;
   border: 1px solid var(--border);
   background: var(--bg-2);
@@ -1199,16 +1209,21 @@ label > span {
 
 .promo-actions {
   display: flex;
-  flex: 0 0 auto;
+  flex: none;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   margin-left: auto;
+}
+
+.promo-actions .primary-small {
+  min-height: 28px;
+  padding: 0 10px;
 }
 
 .promo-dismiss {
   display: grid;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   place-items: center;
   padding: 0;
   background: transparent;
@@ -1226,6 +1241,24 @@ label > span {
 .promo-copy-code:active,
 .promo-dismiss:active {
   transform: scale(0.96);
+}
+
+/* Priority when space runs out: the Dashboard shows the code anyway, so the
+   chip goes first; the upgrade pitch switches to its short form. */
+@container promo (max-width: 740px) {
+  .promo-code {
+    display: none;
+  }
+}
+
+@container promo (max-width: 660px) {
+  .promo-long {
+    display: none;
+  }
+
+  .promo-short {
+    display: inline;
+  }
 }
 
 .home-grid {

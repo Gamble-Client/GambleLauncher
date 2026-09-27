@@ -3,6 +3,8 @@
 import { accessDenied, canUseBuildForAccess, hasBetaAccess, hasOwnedAccess, hasOwnerAccess } from "./access-policy.js";
 
 export const UPGRADE_COPY = "Release unlocks every module — $2.99/week or $15 lifetime";
+// Narrow windows: same offer and prices, shorter lead, so the banner stays one row.
+export const UPGRADE_SHORT_PITCH = "Unlock every module";
 
 const PAID_BUILDS = ["release", "beta_plus", "media", "dev"];
 const TIMED_PLANS = ["weekly", "monthly", "yearly"];
