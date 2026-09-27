@@ -583,22 +583,42 @@ fn launcher_info() -> Result<LauncherInfo, String> {
     })
 }
 
-#[tauri::command]
-fn launcher_api(input: ApiCommandBody) -> Result<serde_json::Value, String> {
-    let method = input.method.trim().to_uppercase();
-    let path = input.path.trim();
+/// Public site endpoints the launcher may read. Exact paths, GET only, and the
+/// launcher session is never attached to them.
+const PUBLIC_LAUNCHER_API_PATHS: &[&str] = &["/api/sale"];
+
+/// Returns whether the launcher session may be sent with this request.
+fn launcher_api_route(method: &str, path: &str) -> Result<bool, String> {
+    if PUBLIC_LAUNCHER_API_PATHS.contains(&path) {
+        if method != "GET" {
+            return Err("Launcher API method is not allowed.".to_string());
+        }
+        return Ok(false);
+    }
     if !path.starts_with("/api/launcher/")
         && path != "/api/spotify/status"
         && !path.starts_with("/api/friends")
     {
         return Err("Launcher API path is not allowed.".to_string());
     }
-
-    let url = format!("{SITE_URL}{path}");
-    if !matches!(method.as_str(), "GET" | "POST") {
+    if !matches!(method, "GET" | "POST") {
         return Err("Launcher API method is not allowed.".to_string());
     }
-    let token = input.token.trim().to_string();
+    Ok(true)
+}
+
+#[tauri::command]
+fn launcher_api(input: ApiCommandBody) -> Result<serde_json::Value, String> {
+    let method = input.method.trim().to_uppercase();
+    let path = input.path.trim();
+    let authenticated = launcher_api_route(&method, path)?;
+
+    let url = format!("{SITE_URL}{path}");
+    let token = if authenticated {
+        input.token.trim().to_string()
+    } else {
+        String::new()
+    };
     let body = input.body.clone();
     let response = send_first_party_request(&url, |client, target| {
         let mut request = match method.as_str() {
@@ -6908,6 +6928,21 @@ mod tests {
         assert_eq!(urls[0].query(), urls[2].query());
         assert!(first_party_request_urls("https://evil.example/api/launcher/poll").is_err());
         assert!(first_party_request_urls("http://gambleclient.org/api/launcher/poll").is_err());
+    }
+
+    #[test]
+    fn public_sale_endpoint_is_get_only_and_never_carries_the_launcher_session() {
+        assert_eq!(super::launcher_api_route("GET", "/api/sale"), Ok(false));
+        assert!(super::launcher_api_route("POST", "/api/sale").is_err());
+        assert!(super::launcher_api_route("DELETE", "/api/sale").is_err());
+        for path in ["/api/sale?x=1", "/api/sales", "/api/sale/admin", "/api/admin/sale", "/api/auth/session"] {
+            assert!(super::launcher_api_route("GET", path).is_err(), "{path}");
+        }
+        // Existing launcher routes keep their session and method rules.
+        assert_eq!(super::launcher_api_route("GET", "/api/launcher/account"), Ok(true));
+        assert_eq!(super::launcher_api_route("POST", "/api/friends/request"), Ok(true));
+        assert_eq!(super::launcher_api_route("GET", "/api/spotify/status"), Ok(true));
+        assert!(super::launcher_api_route("PUT", "/api/launcher/account").is_err());
     }
 
     #[test]

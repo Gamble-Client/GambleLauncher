@@ -1065,6 +1065,169 @@ label > span {
   color: var(--warning);
 }
 
+/* Upgrade / sale banner: one slim flat row above the current client. Black-1
+   panel, 1px line, a status-style tag with a silver dot, and a secondary
+   action; Play stays the only silver button on the screen. */
+.promo-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  min-height: 48px;
+  padding: 7px 8px 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-1);
+}
+
+.promo-tag {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  background: var(--bg-2);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.promo-tag::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--silver);
+}
+
+.promo-copy {
+  display: grid;
+  flex: 1 1 300px;
+  gap: 2px;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.promo-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  min-width: 0;
+}
+
+.promo-line.is-tight {
+  gap: 4px 8px;
+}
+
+.promo-line strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.promo-note {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.promo-dash {
+  color: var(--muted);
+}
+
+.promo-price,
+.promo-ends,
+.promo-code {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.promo-price s {
+  color: var(--muted);
+  text-decoration-thickness: 1px;
+}
+
+.promo-price b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.promo-ends .mono {
+  color: var(--text);
+}
+
+.promo-code {
+  align-items: center;
+}
+
+.promo-code code {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--bg-2);
+  color: var(--text);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  user-select: all;
+}
+
+.promo-copy-code {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background-color var(--fast) var(--ease), border-color var(--fast) var(--ease), color var(--fast) var(--ease), transform var(--press) var(--ease);
+}
+
+.promo-copy-code:hover {
+  border-color: var(--border-hover);
+  background: var(--bg-3);
+  color: var(--text);
+}
+
+.promo-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.promo-dismiss {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease), transform var(--press) var(--ease);
+}
+
+.promo-dismiss:hover {
+  background: var(--bg-3);
+  color: var(--text);
+}
+
+.promo-copy-code:active,
+.promo-dismiss:active {
+  transform: scale(0.96);
+}
+
 .home-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1fr);
@@ -2563,6 +2726,21 @@ label > span {
 
 .rise-in {
   animation: rise-in var(--rise-in) var(--ease) both;
+  animation-delay: var(--motion-delay, 0ms);
+}
+
+/* Home cards making room for (or closing over) the upgrade/sale banner. */
+@keyframes shift-in {
+  from {
+    transform: translateY(var(--shift-from, 0px));
+  }
+  to {
+    transform: none;
+  }
+}
+
+.shift-in {
+  animation: shift-in var(--rise-in) var(--ease) both;
   animation-delay: var(--motion-delay, 0ms);
 }
 

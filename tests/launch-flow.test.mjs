@@ -4,6 +4,7 @@ import vm from "node:vm";
 import test from "node:test";
 import { canUseBuildForAccess, preferredBuildForAccess, canLaunchMultiple } from "../src/access-policy.js";
 import { launchState } from "../src/launch-state.js";
+import * as promoPolicy from "../src/promo-policy.js";
 
 // Execute the actual event handler with a fake native boundary. Browser layout
 // is covered by the separate UI smoke; no test hook ships in the app.
@@ -16,14 +17,14 @@ const source = (await readFile(new URL("../src/main.js", import.meta.url), "utf8
 
 function harness(native) {
   const handlers = new Map();
-  const app = { addEventListener: (name, handler) => handlers.set(name, handler) };
+  const app = { addEventListener: (name, handler) => handlers.set(name, handler), querySelector: () => null, querySelectorAll: () => [] };
   const context = vm.createContext({
     document: { querySelector: () => app }, window: {}, location: { search: "" },
     setTimeout, clearTimeout, requestAnimationFrame: (fn) => fn(), URLSearchParams,
-    canUseBuildForAccess, preferredBuildForAccess, canLaunchMultiple, launchState, tauriInvoke: native,
+    canUseBuildForAccess, preferredBuildForAccess, canLaunchMultiple, launchState, ...promoPolicy, tauriInvoke: native,
     logoUrl: "", navigator: {}, console
   });
-  vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn, refreshMinecraftStatus, refreshSocial, refreshSpotifyStatus, refreshAccount, pollSignIn };`, context);
+  vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn, refreshMinecraftStatus, refreshSocial, refreshSpotifyStatus, refreshAccount, pollSignIn, refreshSale, currentPromo, promoBannerMarkup };`, context);
   const { state } = context.apiForTest;
   Object.assign(state, { starting: false, token: "test-session", account: {
     email: "player@example.test", accessStatus: "owned", selectedPlan: "lifetime"
@@ -351,4 +352,85 @@ test("late profile metadata and file lists cannot overwrite a newly selected pro
   await Promise.all([manifest, files]);
   assert.equal(ui.state.clientStatus, null);
   assert.equal(ui.state.mods.length, 0);
+});
+
+const liveSale = (overrides = {}) => {
+  const now = Date.now();
+  return { active: true, id: "weekend-1", title: "Weekend sale", plan: "lifetime", priceCents: 1000, listPriceCents: 1500,
+    couponCode: "WEEKEND10", startsAt: new Date(now - 3_600_000).toISOString(),
+    endsAt: new Date(now + 101_000_000).toISOString(), serverNow: new Date(now).toISOString(), ...overrides };
+};
+const freeAccount = { email: "free.river@example.test", selectedPlan: "ad_tier", accessStatus: "ad_tier", adTierAccess: true };
+
+test("the sale poll reads the public endpoint without the launcher session and fails silently", async () => {
+  const calls = [];
+  let reply = liveSale();
+  const ui = harness(async (command, args) => {
+    calls.push([command, args.input]);
+    if (reply instanceof Error) throw reply;
+    return reply;
+  });
+  await ui.refreshSale();
+  // The input object comes from the VM realm; compare its JSON shape.
+  assert.equal(JSON.stringify(calls[0]), JSON.stringify(["launcher_api", { method: "GET", path: "/api/sale", token: "", body: {} }]));
+  assert.equal(ui.state.sale.couponCode, "WEEKEND10");
+  reply = new Error("error sending request for url (https://gambleclient.org/api/sale)");
+  await ui.refreshSale();
+  assert.equal(ui.state.sale.key, "weekend-1", "offline keeps the sale already shown");
+  assert.equal(ui.state.popup, null);
+  reply = { active: false, serverNow: new Date().toISOString() };
+  await ui.refreshSale();
+  assert.equal(ui.state.sale, null);
+});
+
+test("Home renders one banner: combined for Ad Tier, sale-only for paid, none for paid without a sale", async () => {
+  const ui = harness(async () => liveSale());
+  const markup = () => ui.promoBannerMarkup(ui.currentPromo());
+  const count = (html) => (html.match(/class="promo-banner/g) || []).length;
+
+  ui.state.account = freeAccount;
+  assert.match(markup(), /<strong>Release unlocks every module<\/strong><span class="promo-dash" aria-hidden="true">—<\/span><span>\$2\.99\/week or \$15 lifetime<\/span>/);
+  assert.match(markup(), /Get Release/);
+  await ui.refreshSale();
+  const combined = markup();
+  assert.equal(count(combined), 1);
+  assert.match(combined, /<strong>Weekend sale<\/strong>[\s\S]*<p class="promo-note">Release unlocks every module\.<\/p>/);
+  assert.match(combined, /<s class="mono"[^>]*>\$15<\/s> <b class="mono">\$10<\/b>/);
+  assert.match(combined, /Ends in <span class="mono" data-sale-countdown>1d 04h<\/span>/);
+  assert.match(combined, /<code>WEEKEND10<\/code>/);
+
+  ui.state.account = { email: "giveaway.mason@example.test", selectedPlan: "weekly", accessStatus: "owned" };
+  const saleOnly = markup();
+  assert.equal(count(saleOnly), 1);
+  assert.doesNotMatch(saleOnly, /Release unlocks every module/);
+  assert.match(saleOnly, /Get Lifetime/);
+
+  ui.state.sale = null;
+  assert.equal(markup(), "");
+  ui.state.account = { ...freeAccount, accessStatus: "owner", ownerAccess: true };
+  await ui.refreshSale();
+  assert.equal(ui.state.sale?.key, "weekend-1");
+  assert.equal(markup(), "", "owner never sees a banner");
+});
+
+test("banner actions open checkout and dismiss for the session only", async () => {
+  const opened = [];
+  const ui = harness(async (command, args) => {
+    if (command === "open_url") { opened.push(args.url); return ""; }
+    if (command === "launcher_api") return liveSale();
+    throw new Error(command);
+  });
+  ui.state.account = freeAccount;
+  ui.state.busy = true;
+  await ui.click("promo-open");
+  assert.deepEqual(opened, ["https://dash.gambleclient.org/dashboard.html?section=account"], "works while busy");
+  ui.state.busy = false;
+  await ui.refreshSale();
+  await ui.click("promo-open");
+  assert.equal(opened[1], "https://dash.gambleclient.org/dashboard.html?plan=lifetime");
+  await ui.click("promo-dismiss");
+  assert.equal(ui.currentPromo(), null, "the combined banner dismisses both pitches");
+  assert.deepEqual({ ...ui.state.promoDismissed }, { upgrade: true, sale: "weekend-1" });
+  await ui.refreshSale();
+  assert.equal(ui.currentPromo(), null, "the same sale stays dismissed after the next poll");
 });

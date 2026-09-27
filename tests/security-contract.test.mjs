@@ -25,6 +25,21 @@ test("Ad Tier launchers send users to the Dashboard instead of embedding sponsor
     assert.doesNotMatch(javaFx, /MediaPlayer|MediaView|WebView|<video|cacheSponsorMedia/);
 });
 
+test("the sale banner reads only the public sale endpoint, via the native allowlist and without the session", async () => {
+    const frontend = await source("src/main.js");
+    const rust = await source("src-tauri/src/main.rs");
+    const config = JSON.parse(await source("src-tauri/tauri.conf.json"));
+
+    assert.match(frontend, /const SALE_PATH = "\/api\/sale";/);
+    assert.match(frontend, /invoke\("launcher_api", \{ input: \{ method: "GET", path: SALE_PATH, token: "", body: \{\} \} \}\)/);
+    assert.doesNotMatch(frontend, /\bfetch\(/);
+    assert.match(rust, /const PUBLIC_LAUNCHER_API_PATHS: &\[&str\] = &\["\/api\/sale"\];/);
+    assert.match(rust, /let authenticated = launcher_api_route\(&method, path\)\?;/);
+    assert.match(rust, /let token = if authenticated \{/);
+    // The WebView itself still cannot reach the network; everything goes through IPC.
+    assert.match(config.app.security.csp, /connect-src 'self' ipc: http:\/\/ipc\.localhost;/);
+});
+
 test("the native launcher security policy no longer grants embedded media access", async () => {
     const config = JSON.parse(await source("src-tauri/tauri.conf.json"));
     assert.doesNotMatch(config.app.security.csp, /media-src/);

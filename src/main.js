@@ -4,11 +4,16 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as tauriOpenDialog } from "@tauri-apps/plugin-dialog";
 import { canUseBuildForAccess, preferredBuildForAccess, canLaunchMultiple } from "./access-policy.js";
 import { launchState } from "./launch-state.js";
+import { UPGRADE_COPY, formatSaleCountdown, formatUsd, normalizeSale, planLabel, promoBanner, saleRemainingMs } from "./promo-policy.js";
 import "./styles.css";
 
 const SITE = "https://gambleclient.org";
 const DASH = "https://dash.gambleclient.org";
 const DASHBOARD_FREE_URL = `${DASH}/dashboard.html?section=free`;
+// Checkout lives in the Dashboard's Account section; ?plan= scrolls to that plan.
+const DASHBOARD_CHECKOUT_URL = `${DASH}/dashboard.html?section=account`;
+const SALE_PATH = "/api/sale";
+const SALE_POLL_MS = 10 * 60 * 1000;
 const LAUNCHER_DISMISS_KEY = "gamble.launcher.dismissedLauncherVersion";
 const CLIENT_DISMISS_KEY = "gamble.launcher.dismissedClientVersion";
 const CUSTOM_PROFILES_KEY = "gamble.launcher.customProfiles";
@@ -32,6 +37,9 @@ const PREVIEW = TEST_ACCOUNT_FIXTURES || (import.meta.env.DEV && !("__TAURI_INTE
 const PREVIEW_MODE = PREVIEW
   ? new URLSearchParams(globalThis.location?.search || "").get("preview") || ""
   : "";
+const PREVIEW_SALE = PREVIEW
+  ? new URLSearchParams(globalThis.location?.search || "").get("sale") === "1"
+  : false;
 
 const app = document.querySelector("#app");
 
@@ -45,6 +53,9 @@ const MOTION_EASE = "cubic-bezier(0.2, 0, 0, 1)";
 const MOTION = { view: 200, leave: 90, dialog: 180, popover: 140, knob: 140, nav: 200, rise: 180, opening: 300, progress: 240 };
 let openingAt = NaN;
 let viewEnteredAt = NaN;
+let renderedPromoKey = "";
+let promoShownAt = NaN;
+let promoShift = null;
 let pendingKnob = null;
 const dialogOpenedAt = new Map();
 let toastHost = null;
@@ -88,6 +99,26 @@ function applyMotion({ stamp, viewChanged, previousDialogs, previousNavBar, prev
   }
   if (viewChanged) viewEnteredAt = stamp;
   resumeAnimation(app.querySelector(".view-frame"), "view-enter", viewEnteredAt, MOTION.view);
+  // Home banner: one that arrives with the view rides its transition; one that
+  // appears later (sale fetched, sale started) rises in while the cards below
+  // slide down to make room, and a dismissed one lets them slide back up.
+  const promo = app.querySelector(".promo-banner");
+  const promoKey = promo?.dataset.promoKey || "";
+  if (promoKey !== renderedPromoKey) {
+    promoShownAt = promoKey && !viewChanged ? stamp : NaN;
+    if (promo && Number.isFinite(promoShownAt) && !renderedPromoKey) {
+      promoShift = { at: stamp, from: -(promo.getBoundingClientRect().height + 12) };
+    }
+    renderedPromoKey = promoKey;
+  }
+  resumeAnimation(promo, "rise-in", promoShownAt, MOTION.rise);
+  if (promoShift && state.view === "play" && !viewChanged) {
+    for (const block of app.querySelectorAll(".play-overview > .launch-panel, .play-overview > .home-grid")) {
+      block.style.setProperty("--shift-from", `${Math.round(promoShift.from)}px`);
+      resumeAnimation(block, "shift-in", promoShift.at, MOTION.rise);
+    }
+  }
+  if (promoShift && (viewChanged || stamp - promoShift.at >= MOTION.rise)) promoShift = null;
   resumeAnimation(app.querySelector(".topbar > div:first-child"), "fade-in", viewEnteredAt, 160);
   const bar = app.querySelector(".nav-bar");
   if (bar && previousNavBar && motionEnabled()) {
@@ -171,6 +202,9 @@ const state = {
   microsoftAccounts: [],
   ads: null,
   adsObservedAt: 0,
+  sale: null,
+  // Session-only: dismissals reset when the launcher restarts.
+  promoDismissed: { upgrade: false, sale: "" },
   social: null,
   friendUsername: "",
   selectedProfile: "gamble-client",
@@ -442,6 +476,14 @@ async function mockInvoke(command, args = {}) {
     }
     if (path === "/api/launcher/start") {
       return { loginUrl: "https://gambleclient.org/login", expiresAt: Math.floor(Date.now() / 1000) + 120, code: "preview" };
+    }
+    if (path === SALE_PATH) {
+      const now = Date.now();
+      const iso = (offsetMs) => new Date(now + offsetMs).toISOString();
+      return PREVIEW_SALE
+        ? { active: true, id: "preview-weekend", title: "Weekend sale", plan: "lifetime", priceCents: 1000, listPriceCents: 1500,
+          couponCode: "WEEKEND10", startsAt: iso(-7_200_000), endsAt: iso(101_520_000), serverNow: iso(0) }
+        : { active: false, serverNow: iso(0) };
     }
   }
   if (command === "client_install_status") {
@@ -869,6 +911,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
     : (state.minecraftSessionCount > 1 ? "Stop all sessions" : ready.label);
   return `
     <section class="play-stage play-overview">
+      ${promoBannerMarkup(currentPromo())}
       <section class="launch-panel ${state.refreshing ? "is-loading" : ""}" aria-labelledby="current-client-title" ${state.refreshing ? 'aria-busy="true"' : ""}>
         <header class="client-head">
           <div class="client-mark" aria-hidden="true">${profile.client ? "G" : profile.loader === "fabric" ? "F" : "V"}</div>
@@ -954,6 +997,140 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
       </div>
     </section>
   `;
+}
+
+// Upgrade / sale banner --------------------------------------------------------
+function currentPromo() {
+  return promoBanner({ account: state.token ? state.account : null, sale: state.sale, dismissed: state.promoDismissed });
+}
+
+function promoKey(promo) {
+  if (!promo) return "";
+  return promo.kind === "sale" ? `sale:${promo.sale.key}:${promo.upgrade ? "free" : "paid"}` : "upgrade";
+}
+
+function promoCheckoutUrl(promo) {
+  const plan = promo?.sale?.plan;
+  return ["lifetime", "beta_plus"].includes(plan) ? `${DASH}/dashboard.html?plan=${plan}` : DASHBOARD_CHECKOUT_URL;
+}
+
+function promoBannerMarkup(promo) {
+  if (!promo) return "";
+  const dismiss = `<button class="promo-dismiss" type="button" data-action="promo-dismiss" aria-label="Dismiss until the launcher restarts" title="Dismiss">×</button>`;
+  if (promo.kind === "upgrade") {
+    const [pitch, prices] = UPGRADE_COPY.split(" — ");
+    return `
+      <section class="promo-banner" data-promo-key="upgrade" aria-label="Upgrade to Release">
+        <span class="promo-tag">Upgrade</span>
+        <div class="promo-copy"><p class="promo-line is-tight"><strong>${escapeHtml(pitch)}</strong><span class="promo-dash" aria-hidden="true">—</span><span>${escapeHtml(prices)}</span></p></div>
+        <div class="promo-actions">
+          <button class="primary-small" type="button" data-action="promo-open">Get Release</button>
+          ${dismiss}
+        </div>
+      </section>
+    `;
+  }
+  const { sale } = promo;
+  const plan = planLabel(sale.plan);
+  return `
+    <section class="promo-banner is-sale" data-promo-key="${escapeAttr(promoKey(promo))}" aria-label="${escapeAttr(sale.title)}">
+      <span class="promo-tag">Sale</span>
+      <div class="promo-copy">
+        <p class="promo-line">
+          <strong>${escapeHtml(sale.title)}</strong>
+          <span class="promo-price">${escapeHtml(plan)} <s class="mono" aria-label="was ${escapeAttr(formatUsd(sale.listPriceCents))}">${escapeHtml(formatUsd(sale.listPriceCents))}</s> <b class="mono">${escapeHtml(formatUsd(sale.priceCents))}</b></span>
+          <span class="promo-ends">Ends in <span class="mono" data-sale-countdown>${escapeHtml(formatSaleCountdown(saleRemainingMs(sale)))}</span></span>
+          ${sale.couponCode ? `<span class="promo-code">Code <code>${escapeHtml(sale.couponCode)}</code><button class="promo-copy-code" type="button" data-action="promo-copy" aria-label="Copy code ${escapeAttr(sale.couponCode)}">Copy</button></span>` : ""}
+        </p>
+        ${promo.upgrade ? `<p class="promo-note">${escapeHtml(UPGRADE_COPY.split(" — ")[0])}.</p>` : ""}
+      </div>
+      <div class="promo-actions">
+        <button class="primary-small" type="button" data-action="promo-open">Get ${escapeHtml(plan)}</button>
+        ${dismiss}
+      </div>
+    </section>
+  `;
+}
+
+// Countdown text updates in place; the banner re-renders only when it has to
+// change (sale started or ended, which also swaps back to the upgrade pitch).
+function tickPromo() {
+  if (state.view !== "play" || state.starting) return;
+  const promo = currentPromo();
+  if (promoKey(promo) !== (app.querySelector(".promo-banner")?.dataset.promoKey || "")) {
+    render();
+    return;
+  }
+  if (!promo?.sale) return;
+  const text = formatSaleCountdown(saleRemainingMs(promo.sale));
+  for (const label of app.querySelectorAll("[data-sale-countdown]")) {
+    if (label.textContent !== text) label.textContent = text;
+  }
+}
+
+// Public read-only endpoint, fetched through the native allowlist without the
+// launcher session. Offline or failed polls keep what is shown; a shown sale
+// still ends on its own clock.
+let saleRequest = 0;
+async function refreshSale({ render: shouldRender = false } = {}) {
+  const request = ++saleRequest;
+  try {
+    const body = await invoke("launcher_api", { input: { method: "GET", path: SALE_PATH, token: "", body: {} } });
+    if (request !== saleRequest) return;
+    const before = promoKey(currentPromo());
+    state.sale = normalizeSale(body, Date.now());
+    if (shouldRender && promoKey(currentPromo()) !== before) render();
+  } catch {
+    // Silent by design: the banner is optional and the launcher works offline.
+  }
+}
+
+async function openPromoCheckout() {
+  const url = promoCheckoutUrl(currentPromo());
+  try {
+    await invoke("open_url", { url });
+    log("Opened the Dashboard checkout in your browser.");
+  } catch (error) {
+    log(`Could not open the Dashboard: ${publicMessage(error)}`);
+    // publicMessage() hides full URLs, so name the host instead.
+    showPopup("Open Dashboard", "Your browser did not open. Visit dash.gambleclient.org, sign in and open Account to check out.", "dashboard");
+  }
+}
+
+async function copyPromoCode() {
+  const code = currentPromo()?.sale?.couponCode;
+  if (!code) return;
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(code);
+    copied = true;
+  } catch {
+    // Some WebViews refuse the async clipboard; fall back to a selection copy.
+    const field = document.createElement("textarea");
+    field.value = code;
+    field.setAttribute("readonly", "");
+    field.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+    document.body.appendChild(field);
+    field.select();
+    try { copied = document.execCommand("copy"); } catch { copied = false; }
+    field.remove();
+  }
+  notify(copied ? `Copied code ${code}.` : `Copy failed. The code is ${code}.`);
+}
+
+async function dismissPromo() {
+  const promo = currentPromo();
+  if (!promo) return;
+  const banner = app.querySelector(".promo-banner");
+  if (banner && motionEnabled()) {
+    banner.classList.add("view-leave");
+    await sleep(MOTION.leave);
+    promoShift = { at: motionClock(), from: banner.getBoundingClientRect().height + 12 };
+  }
+  // A combined banner carries the upgrade pitch too, so it dismisses both.
+  if (promo.upgrade) state.promoDismissed.upgrade = true;
+  if (promo.sale) state.promoDismissed.sale = promo.sale.key;
+  render();
 }
 
 function accountsView(signedIn) {
@@ -1972,7 +2149,7 @@ async function boot() {
 
   state.token = await invoke("read_launcher_token").catch(() => "");
   await loadMicrosoftAccounts();
-  await Promise.allSettled([refreshVersion(), refreshFiles(), restoreSession()]);
+  await Promise.allSettled([refreshVersion(), refreshFiles(), restoreSession(), refreshSale()]);
   await invoke("ensure_profile", { profile: state.selectedProfile }).catch(() => {});
   await refreshProfileLoaderStatus();
   await refreshAntiScreenshareStatus();
@@ -1983,7 +2160,9 @@ async function boot() {
   setInterval(() => refreshMinecraftStatus({ render: true }), 3500);
   setInterval(() => {
     for (const label of app.querySelectorAll('[data-sponsor-time]')) label.textContent = sponsorTitle();
+    tickPromo();
   }, 1000);
+  setInterval(() => refreshSale({ render: true }), SALE_POLL_MS);
   window.addEventListener("focus", refreshSponsorOnReturn);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") refreshSponsorOnReturn();
@@ -2294,7 +2473,8 @@ async function refreshLauncherStateForUpdate() {
     refreshAntiScreenshareStatus(),
     loadMicrosoftAccounts(),
     refreshSpotifyStatus(),
-    refreshSocial()
+    refreshSocial(),
+    refreshSale()
   ]);
 }
 
@@ -2742,7 +2922,8 @@ app.addEventListener("click", async (event) => {
   const actionEl = event.target.closest("[data-action]");
   const action = actionEl?.dataset.action;
   if (!action) return;
-  if (actionEl.disabled || (state.busy && !["cancel-signin", "cancel-microsoft", "open-signin-link", "copy-signin-link", "open-microsoft-link"].includes(action))) return;
+  if (actionEl.disabled || (state.busy && !["cancel-signin", "cancel-microsoft", "open-signin-link", "copy-signin-link", "open-microsoft-link",
+    "promo-open", "promo-copy", "promo-dismiss"].includes(action))) return;
 
   if (action === "check-updates") {
     setBusy(true, "Checking updates");
@@ -2794,6 +2975,12 @@ app.addEventListener("click", async (event) => {
     await downloadLauncherUpdate();
   } else if (action === "open-dashboard") {
     await openDashboardForAds();
+  } else if (action === "promo-open") {
+    await openPromoCheckout();
+  } else if (action === "promo-copy") {
+    await copyPromoCode();
+  } else if (action === "promo-dismiss") {
+    await dismissPromo();
   } else if (action === "dismiss-launcher-popup") {
     state.dismissedLauncherVersion = latestLauncherVersion();
     writeStorage(LAUNCHER_DISMISS_KEY, state.dismissedLauncherVersion);
