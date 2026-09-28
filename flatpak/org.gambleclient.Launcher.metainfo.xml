@@ -24,6 +24,11 @@
   <url type="bugtracker">https://github.com/Gamble-Client/GambleLauncher/issues</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.1.147" date="2026-09-28">
+      <description>
+        <p>Verifies launcher updates with a Gamble Client signature and checks every Minecraft, Fabric and Java download against its published hash.</p>
+      </description>
+    </release>
     <release version="0.1.146" date="2026-09-27">
       <description>
         <p>Adds an upgrade banner for Ad Tier accounts and a sale banner with a countdown and coupon code to the launcher home screen.</p>
