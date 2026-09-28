@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod integrity;
 mod io_safety;
 #[cfg(test)]
 mod security_tests;
@@ -93,8 +94,31 @@ const LOADER_MUTABLE_ENTRIES: &[&str] = &[
 ];
 const MAX_NATIVE_FILES: usize = 2048;
 const MAX_NATIVE_EXPANDED_BYTES: u64 = 512 * 1024 * 1024;
-const TEMURIN_21_WINDOWS_URL: &str =
-    "https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jre/hotspot/normal/eclipse";
+/// Pinned Temurin 21 JREs for Windows, mirrored on our origin from Adoptium
+/// (jdk-21.0.12.1+1; checksums match Adoptium's). (arch, file, sha256, size)
+const MANAGED_JAVA_RUNTIMES: &[(&str, &str, &str, u64)] = &[
+    (
+        "x64",
+        "OpenJDK21U-jre_x64_windows_hotspot_21.0.12.1_1.zip",
+        "d35f31e712f0fcf6ac5a093edc90204fbff22f720ba3950bd09d331d5e621636",
+        48_999_141,
+    ),
+    (
+        "aarch64",
+        "OpenJDK21U-jre_aarch64_windows_hotspot_21.0.12.1_1.zip",
+        "e82cc17e0bf89a25b0b0ed106d072f2ea420587d0a6870534b71b1dce3ae28c3",
+        40_078_274,
+    ),
+];
+/// Ed25519 key (SPKI) whose private half exists only on the release machine.
+/// In-app updates must carry a signature from it (see scripts/sign-launcher-release.py
+/// in the site repository); neither Cloudflare nor CI can produce one.
+const LAUNCHER_UPDATE_PUBLIC_KEY: &str =
+    "MCowBQYDK2VwAyEAb0u5Su3UQ1TRBM8vB5q1O41Yx1U64CEEoqZvU54FgvI=";
+/// Domains we own. Credentials (the launcher session, one-use download tokens and
+/// login codes) are never sent to the pages.dev fallback, whose name we don't control forever.
+const CREDENTIAL_BACKEND_HOSTS: &[&str] = &["gambleclient.org", "dash.gambleclient.org"];
+const FABRIC_API_MODRINTH_PROJECT_ID: &str = "P7dR8mSH";
 const TRUSTED_NETWORK_HOSTS: &[&str] = &[
     "gambleclient.org",
     "dash.gambleclient.org",
@@ -114,12 +138,6 @@ const TRUSTED_NETWORK_HOSTS: &[&str] = &[
     "resources.download.minecraft.net",
     "repo1.maven.org",
     "repo.maven.apache.org",
-    // Adoptium currently redirects managed Windows Java downloads through GitHub.
-    "api.adoptium.net",
-    "github.com",
-    "release-assets.githubusercontent.com",
-    "objects.githubusercontent.com",
-    "github-releases.githubusercontent.com",
 ];
 const MAX_DOWNLOAD_REDIRECTS: usize = 4;
 #[cfg(target_os = "windows")]
@@ -393,6 +411,8 @@ struct LauncherDownload {
     sha256: String,
     #[serde(default)]
     size: u64,
+    #[serde(default)]
+    signature: String,
 }
 
 #[derive(Serialize)]
@@ -409,6 +429,8 @@ struct LauncherUpdateResult {
 struct ModrinthRelease {
     file_name: String,
     url: String,
+    sha512: String,
+    size: u64,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -462,6 +484,8 @@ struct MicrosoftDeviceStart {
 struct StandaloneLoaderVersionResponse {
     #[serde(default)]
     version: String,
+    #[serde(default, rename = "minVersion")]
+    min_version: String,
 }
 
 struct MicrosoftToken {
@@ -546,8 +570,12 @@ struct VersionProfile {
     main_class: String,
     asset_index_id: String,
     asset_index_url: String,
+    asset_index_sha1: String,
+    asset_index_size: u64,
     client_version_id: String,
     client_jar_url: String,
+    client_jar_sha1: String,
+    client_jar_size: u64,
     libraries: Vec<Library>,
     jvm_arguments: Vec<String>,
     game_arguments: Vec<String>,
@@ -559,15 +587,20 @@ struct Library {
     rules: Vec<serde_json::Value>,
     artifact_path: String,
     artifact_url: String,
+    artifact_sha1: String,
+    artifact_size: u64,
     natives: serde_json::Map<String, serde_json::Value>,
     classifier_paths: serde_json::Map<String, serde_json::Value>,
     classifier_urls: serde_json::Map<String, serde_json::Value>,
+    classifier_sha1s: serde_json::Map<String, serde_json::Value>,
+    classifier_sizes: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Clone)]
 struct AssetDownload {
     hash: String,
     path: PathBuf,
+    expected: integrity::Expected,
 }
 
 #[tauri::command]
@@ -586,6 +619,21 @@ fn launcher_info() -> Result<LauncherInfo, String> {
 /// Public site endpoints the launcher may read. Exact paths, GET only, and the
 /// launcher session is never attached to them.
 const PUBLIC_LAUNCHER_API_PATHS: &[&str] = &["/api/sale"];
+/// Routes that carry the launcher session, matched exactly: no prefixes, query
+/// strings or dot segments, so the webview cannot reach any other backend path.
+const AUTHENTICATED_LAUNCHER_API_PATHS: &[&str] = &[
+    "/api/launcher/account",
+    "/api/launcher/session",
+    "/api/launcher/version",
+    "/api/launcher/start",
+    "/api/launcher/poll",
+    "/api/spotify/status",
+    "/api/friends",
+    "/api/friends/request",
+    "/api/friends/respond",
+    "/api/friends/remove",
+    "/api/friends/settings",
+];
 
 /// Returns whether the launcher session may be sent with this request.
 fn launcher_api_route(method: &str, path: &str) -> Result<bool, String> {
@@ -595,10 +643,7 @@ fn launcher_api_route(method: &str, path: &str) -> Result<bool, String> {
         }
         return Ok(false);
     }
-    if !path.starts_with("/api/launcher/")
-        && path != "/api/spotify/status"
-        && !path.starts_with("/api/friends")
-    {
+    if !AUTHENTICATED_LAUNCHER_API_PATHS.contains(&path) {
         return Err("Launcher API path is not allowed.".to_string());
     }
     if !matches!(method, "GET" | "POST") {
@@ -1264,11 +1309,6 @@ fn add_mods(profile: String, paths: Vec<String>) -> Result<usize, String> {
 }
 
 #[tauri::command]
-fn open_path(path: String) -> Result<(), String> {
-    open_external(&path)
-}
-
-#[tauri::command]
 fn open_profile_folder(profile: String, kind: String) -> Result<String, String> {
     let profile = profile_id(&profile);
     let (path, label) = match kind.as_str() {
@@ -1828,16 +1868,31 @@ async fn download_launcher_update() -> Result<LauncherUpdateResult, String> {
 
 fn download_launcher_update_blocking() -> Result<LauncherUpdateResult, String> {
     let info = fetch_launcher_version_info()?;
-    let download = preferred_launcher_download(&info);
+    let (platform, download) = preferred_launcher_download(&info);
     if download.download_url.trim().is_empty() || download.file_name.trim().is_empty() {
         return Err("Launcher update download is not configured for this platform.".to_string());
     }
+    // Fail closed: only a release signed on the release machine is offered.
+    verify_launcher_update_signature(platform, &info.version, &download)?;
 
     let update_url = trusted_launcher_update_url(&download.download_url)?;
     let safe_name = safe_file_name(&download.file_name)?;
     let target = downloads_folder().join(safe_name);
-    download_file(update_url.as_str(), &target)?;
-    verify_file(&target, download.size, &download.sha256)?;
+    // Download beside the target and only give it the installer's name once it
+    // matches; a failed or tampered download never sits in Downloads.
+    let staging = downloads_folder().join(format!("{safe_name}.part"));
+    let _ = fs::remove_file(&staging);
+    if let Err(error) = download_file(update_url.as_str(), &staging)
+        .and_then(|_| verify_file(&staging, download.size, &download.sha256))
+    {
+        let _ = fs::remove_file(&staging);
+        return Err(error);
+    }
+    let _ = fs::remove_file(&target);
+    if let Err(error) = fs::rename(&staging, &target) {
+        let _ = fs::remove_file(&staging);
+        return Err(error_text(error));
+    }
     let target_text = display_path(&target);
     if let Some(parent) = target.parent() {
         let _ = open_external(&display_path(parent));
@@ -2076,6 +2131,9 @@ fn launch_game_attempt(
         12,
         13,
     );
+    if profile_installs_client(&profile) {
+        verify_loader_before_launch(&profile)?;
+    }
     emit_launch_progress(&app, "Starting", "Starting Minecraft", 13, 13);
     let command = match build_minecraft_command(
         &profile_dir,
@@ -3198,7 +3256,13 @@ fn ensure_vanilla_version_json_with_progress(
         .join("versions")
         .join(version_id)
         .join(format!("{version_id}.json"));
-    if path.is_file() {
+    // The version profile is the source of every library and asset hash, so it
+    // must match Mojang's manifest. Once checked it is trusted until it changes.
+    let already_checked = verified_files()
+        .lock()
+        .map(|cache| cache.unchanged_since_verified(&path))
+        .unwrap_or(false);
+    if path.is_file() && already_checked {
         if let Some(app) = app {
             emit_launch_progress(
                 app,
@@ -3232,14 +3296,19 @@ fn ensure_vanilla_version_json_with_progress(
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
-    let url = versions
+    let entry = versions
         .iter()
         .find(|entry| json_string(entry, "id") == version_id)
-        .map(|entry| json_string(entry, "url"))
-        .filter(|value| !value.trim().is_empty())
+        .cloned()
         .ok_or_else(|| {
             format!("Could not find Minecraft {version_id} in Mojang's version manifest.")
         })?;
+    let url = json_string(&entry, "url");
+    if url.trim().is_empty() {
+        return Err(format!("Mojang's manifest has no profile URL for Minecraft {version_id}."));
+    }
+    let expected = integrity::Expected::new(integrity::Algorithm::Sha1, &json_string(&entry, "sha1"), None)
+        .ok_or_else(|| format!("Mojang's manifest has no hash for Minecraft {version_id}."))?;
     if let Some(app) = app {
         emit_launch_progress(
             app,
@@ -3249,7 +3318,15 @@ fn ensure_vanilla_version_json_with_progress(
             12,
         );
     }
-    download_file_limited(&url, &path, MAX_TEXT_RESPONSE_BYTES)?;
+    integrity::ensure_file(
+        verified_files(),
+        &url,
+        &path,
+        Some(&expected),
+        &format!("Minecraft {version_id} profile"),
+        |url, path| download_file_limited(url, path, MAX_TEXT_RESPONSE_BYTES),
+    )?;
+    save_verified_files();
     Ok(path)
 }
 
@@ -3282,6 +3359,8 @@ fn load_version_profile(game_dir: &Path, version_id: &str) -> Result<VersionProf
         }
         if !url.is_empty() {
             profile.asset_index_url = url;
+            profile.asset_index_sha1 = json_string(asset, "sha1");
+            profile.asset_index_size = json_u64(asset, "size");
         }
     }
     if let Some(client) = body.pointer("/downloads/client") {
@@ -3289,6 +3368,8 @@ fn load_version_profile(game_dir: &Path, version_id: &str) -> Result<VersionProf
         if !url.is_empty() {
             profile.client_version_id = version_id.to_string();
             profile.client_jar_url = url;
+            profile.client_jar_sha1 = json_string(client, "sha1");
+            profile.client_jar_size = json_u64(client, "size");
         }
     }
     if let Some(libraries) = body.get("libraries").and_then(|v| v.as_array()) {
@@ -3332,9 +3413,14 @@ fn parse_library(value: &serde_json::Value) -> Option<Library> {
         .unwrap_or(&serde_json::Value::Null);
     let mut artifact_path = json_string(artifact, "path");
     let mut artifact_url = json_string(artifact, "url");
+    let mut artifact_sha1 = json_string(artifact, "sha1");
+    let mut artifact_size = json_u64(artifact, "size");
     if artifact_path.is_empty() {
         artifact_path = maven_artifact_path(&name);
         artifact_url = maven_artifact_url(&json_string(value, "url"), &artifact_path);
+        // Fabric's profile lists sha1/size beside the maven coordinates.
+        artifact_sha1 = json_string(value, "sha1");
+        artifact_size = json_u64(value, "size");
     }
     let classifiers = value
         .pointer("/downloads/classifiers")
@@ -3343,11 +3429,15 @@ fn parse_library(value: &serde_json::Value) -> Option<Library> {
         .unwrap_or_default();
     let mut classifier_paths = serde_json::Map::new();
     let mut classifier_urls = serde_json::Map::new();
+    let mut classifier_sha1s = serde_json::Map::new();
+    let mut classifier_sizes = serde_json::Map::new();
     for (key, item) in classifiers {
         classifier_paths.insert(
             key.clone(),
             serde_json::Value::String(json_string(&item, "path")),
         );
+        classifier_sha1s.insert(key.clone(), serde_json::Value::String(json_string(&item, "sha1")));
+        classifier_sizes.insert(key.clone(), serde_json::Value::from(json_u64(&item, "size")));
         classifier_urls.insert(key, serde_json::Value::String(json_string(&item, "url")));
     }
     Some(Library {
@@ -3359,6 +3449,8 @@ fn parse_library(value: &serde_json::Value) -> Option<Library> {
             .unwrap_or_default(),
         artifact_path,
         artifact_url,
+        artifact_sha1,
+        artifact_size,
         natives: value
             .get("natives")
             .and_then(|v| v.as_object())
@@ -3366,6 +3458,8 @@ fn parse_library(value: &serde_json::Value) -> Option<Library> {
             .unwrap_or_default(),
         classifier_paths,
         classifier_urls,
+        classifier_sha1s,
+        classifier_sizes,
     })
 }
 
@@ -3429,11 +3523,8 @@ fn ensure_libraries_with_progress(
             );
         }
         if !library.artifact_path.is_empty() {
-            let path = libraries_dir.join(&library.artifact_path);
+            let path = libraries_dir.join(safe_relative_path(&library.artifact_path)?);
             if !path.is_file() {
-                if library.artifact_url.is_empty() {
-                    return Err(format!("No download URL for library {}", library.name));
-                }
                 if let Some(app) = app {
                     emit_launch_progress(
                         app,
@@ -3443,19 +3534,23 @@ fn ensure_libraries_with_progress(
                         total,
                     );
                 }
-                download_file(&library.artifact_url, &path)?;
             }
+            let expected = integrity::Expected::new(
+                integrity::Algorithm::Sha1,
+                &library.artifact_sha1,
+                Some(library.artifact_size),
+            );
+            ensure_verified_download(
+                &library.artifact_url,
+                &path,
+                expected.as_ref(),
+                &format!("Library {}", library.name),
+            )?;
             classpath.push(path);
         }
         if let Some((path, url)) = native_artifact(library) {
-            let file = libraries_dir.join(path);
+            let file = libraries_dir.join(safe_relative_path(&path)?);
             if !file.is_file() {
-                if url.is_empty() {
-                    return Err(format!(
-                        "No native download URL for library {}",
-                        library.name
-                    ));
-                }
                 if let Some(app) = app {
                     emit_launch_progress(
                         app,
@@ -3465,10 +3560,16 @@ fn ensure_libraries_with_progress(
                         total,
                     );
                 }
-                download_file(&url, &file)?;
             }
+            ensure_verified_download(
+                &url,
+                &file,
+                native_expected(library).as_ref(),
+                &format!("Native library {}", library.name),
+            )?;
         }
     }
+    save_verified_files();
     Ok(classpath)
 }
 
@@ -3497,10 +3598,21 @@ fn ensure_client_jar_with_progress(
                 12,
             );
         }
-        download_file(&profile.client_jar_url, &path)?;
     } else if let Some(app) = app {
-        emit_launch_progress(app, "Minecraft", "Minecraft client jar is ready", 8, 12);
+        emit_launch_progress(app, "Minecraft", "Checking the Minecraft client jar", 8, 12);
     }
+    let expected = integrity::Expected::new(
+        integrity::Algorithm::Sha1,
+        &profile.client_jar_sha1,
+        Some(profile.client_jar_size),
+    );
+    ensure_verified_download(
+        &profile.client_jar_url,
+        &path,
+        expected.as_ref(),
+        &format!("Minecraft {} client jar", profile.client_version_id),
+    )?;
+    save_verified_files();
     Ok(path)
 }
 
@@ -3520,8 +3632,20 @@ fn ensure_assets_with_progress(
         if let Some(app) = app {
             emit_launch_progress(app, "Assets", "Downloading Minecraft asset index", 0, 1);
         }
-        download_file_limited(&profile.asset_index_url, &index, MAX_ASSET_INDEX_BYTES)?;
     }
+    let index_expected = integrity::Expected::new(
+        integrity::Algorithm::Sha1,
+        &profile.asset_index_sha1,
+        Some(profile.asset_index_size),
+    );
+    integrity::ensure_file(
+        verified_files(),
+        &profile.asset_index_url,
+        &index,
+        index_expected.as_ref(),
+        "Minecraft asset index",
+        |url, path| download_file_limited(url, path, MAX_ASSET_INDEX_BYTES),
+    )?;
     let body = serde_json::from_slice::<serde_json::Value>(&read_file_bounded(
         &index,
         MAX_ASSET_INDEX_BYTES,
@@ -3538,12 +3662,19 @@ fn ensure_assets_with_progress(
     for item in objects.values() {
         current = current.saturating_add(1);
         let hash = json_string(item, "hash");
-        if hash.len() < 2 {
+        // The object name is its SHA-1; anything else cannot be checked or stored safely.
+        let Some(expected) = integrity::Expected::new(
+            integrity::Algorithm::Sha1,
+            &hash,
+            Some(json_u64(item, "size")),
+        ) else {
             continue;
-        }
+        };
         let path = assets.join("objects").join(&hash[0..2]).join(&hash);
-        if !path.is_file() {
-            missing.push(AssetDownload { hash, path });
+        if !path.is_file() || !integrity::vouched(verified_files(), &path, &expected) {
+            // Missing, or not yet checked since it last changed: the workers hash
+            // it and fetch it again if it does not match.
+            missing.push(AssetDownload { hash, path, expected });
         } else if let Some(app) = app {
             if current == 1 || current == total || current % 50 == 0 {
                 emit_launch_progress(
@@ -3562,7 +3693,9 @@ fn ensure_assets_with_progress(
         }
         return Ok(());
     }
-    download_missing_assets(missing, app.cloned())
+    let result = download_missing_assets(missing, app.cloned());
+    save_verified_files();
+    result
 }
 
 fn download_missing_assets(
@@ -3581,7 +3714,7 @@ fn download_missing_assets(
         emit_launch_progress(
             app,
             "Assets",
-            format!("Downloading Minecraft assets 0/{total}"),
+            format!("Checking Minecraft assets 0/{total}"),
             0,
             total,
         );
@@ -3603,17 +3736,22 @@ fn download_missing_assets(
                     let Some(asset) = asset else {
                         return Ok(());
                     };
-                    if !asset.path.is_file() {
-                        let url = format!("{ASSET_BASE_URL}{}/{}", &asset.hash[0..2], asset.hash);
-                        download_file_with_client(&url, &asset.path, &client)?;
-                    }
+                    let url = format!("{ASSET_BASE_URL}{}/{}", &asset.hash[0..2], asset.hash);
+                    integrity::ensure_file(
+                        verified_files(),
+                        &url,
+                        &asset.path,
+                        Some(&asset.expected),
+                        &format!("Minecraft asset {}", asset.hash),
+                        |url, path| download_file_with_client(url, path, &client),
+                    )?;
                     let current = done.fetch_add(1, Ordering::SeqCst).saturating_add(1);
                     if let Some(app) = app.as_ref() {
                         if current == 1 || current == total || current % 20 == 0 {
                             emit_launch_progress(
                                 app,
                                 "Assets",
-                                format!("Downloading Minecraft assets {current}/{total}"),
+                                format!("Checking Minecraft assets {current}/{total}"),
                                 current,
                                 total,
                             );
@@ -3659,7 +3797,7 @@ fn extract_natives_with_progress(
         }
         current = current.saturating_add(1);
         if let Some((path, _)) = native_artifact(library) {
-            let file = libraries_dir.join(path);
+            let file = libraries_dir.join(safe_relative_path(&path)?);
             if file.is_file() {
                 if let Some(app) = app {
                     emit_launch_progress(
@@ -3872,6 +4010,9 @@ fn download_file_once(
     let parsed_url = trusted_network_url(url)?;
     let request_urls = if is_first_party_backend_url(&parsed_url) {
         first_party_request_urls(url)?
+            .into_iter()
+            .filter(|candidate| !url_carries_credentials(candidate) || may_carry_credentials(candidate))
+            .collect()
     } else {
         vec![parsed_url]
     };
@@ -3917,6 +4058,63 @@ fn unzip_natives(zip_path: &Path, target: &Path, expanded: &mut u64) -> Result<(
         MAX_NATIVE_EXPANDED_BYTES,
         expanded,
     )
+}
+
+fn native_expected(library: &Library) -> Option<integrity::Expected> {
+    let classifier = library
+        .natives
+        .get(os_name())
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .replace("${arch}", if is_64_bit() { "64" } else { "32" });
+    let sha1 = library
+        .classifier_sha1s
+        .get(&classifier)
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let size = library
+        .classifier_sizes
+        .get(&classifier)
+        .and_then(|v| v.as_u64());
+    integrity::Expected::new(integrity::Algorithm::Sha1, sha1, size)
+}
+
+/// Library paths come from downloaded metadata; keep them inside libraries/.
+fn safe_relative_path(value: &str) -> Result<PathBuf, String> {
+    let path = Path::new(value);
+    let normal = path
+        .components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)));
+    if value.trim().is_empty() || path.is_absolute() || !normal || value.contains('\\') {
+        return Err(format!("Refusing an unsafe library path from version metadata: {value}"));
+    }
+    Ok(path.to_path_buf())
+}
+
+fn verified_files() -> &'static Mutex<integrity::VerifiedFiles> {
+    static CACHE: std::sync::OnceLock<Mutex<integrity::VerifiedFiles>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        Mutex::new(integrity::VerifiedFiles::load(
+            launcher_data_folder().join("verified-files.json"),
+        ))
+    })
+}
+
+fn save_verified_files() {
+    if let Ok(mut cache) = verified_files().lock() {
+        cache.save();
+    }
+}
+
+fn ensure_verified_download(
+    url: &str,
+    path: &Path,
+    expected: Option<&integrity::Expected>,
+    label: &str,
+) -> Result<(), String> {
+    integrity::ensure_file(verified_files(), url, path, expected, label, |url, path| {
+        download_file(url, path)
+    })
 }
 
 fn native_artifact(library: &Library) -> Option<(String, String)> {
@@ -4141,13 +4339,17 @@ fn ensure_java_runtime(app: Option<&AppHandle>) -> Result<String, String> {
         "aarch64" => "aarch64",
         _ => "x64",
     };
-    let url = if arch == "x64" {
-        TEMURIN_21_WINDOWS_URL.to_string()
-    } else {
-        format!("https://api.adoptium.net/v3/binary/latest/21/ga/windows/{arch}/jre/hotspot/normal/eclipse")
-    };
-    download_file(&url, &archive)
-        .map_err(|error| format!("Managed Java 21 download failed: {error}"))?;
+    let (url, expected) = managed_java_runtime(arch)?;
+    let _ = fs::remove_file(&archive);
+    integrity::ensure_file(
+        verified_files(),
+        &url,
+        &archive,
+        Some(&expected),
+        "The managed Java 21 runtime",
+        |url, path| download_file(url, path),
+    )
+    .map_err(|error| format!("Managed Java 21 download failed: {error}"))?;
     let extracted = extract_runtime_zip(&archive, &install_root);
     let _ = fs::remove_file(&archive);
     extracted?;
@@ -4162,6 +4364,17 @@ fn ensure_java_runtime(app: Option<&AppHandle>) -> Result<String, String> {
         ));
     }
     Ok(display_path(&windowless_java(&candidate)))
+}
+
+/// The pinned runtime for this architecture: our mirror URL and its hardcoded hash.
+fn managed_java_runtime(arch: &str) -> Result<(String, integrity::Expected), String> {
+    let (_, file_name, sha256, size) = MANAGED_JAVA_RUNTIMES
+        .iter()
+        .find(|(candidate, ..)| *candidate == arch)
+        .ok_or_else(|| format!("No managed Java 21 runtime is published for Windows {arch}."))?;
+    let expected = integrity::Expected::new(integrity::Algorithm::Sha256, sha256, Some(*size))
+        .ok_or_else(|| "The pinned Java runtime hash is invalid.".to_string())?;
+    Ok((format!("{SITE_URL}/api/launcher/runtime/{file_name}"), expected))
 }
 
 fn java_candidate_is_compatible(candidate: &Path) -> bool {
@@ -4566,7 +4779,106 @@ fn network_self_test() -> Result<(), String> {
     Ok(())
 }
 
+/// Checks the integrity protections against production without launching the game:
+/// the signed update record for this system, the loader minimum, and hashed
+/// downloads from Mojang, Modrinth and the pinned Java mirror. Files go to a
+/// temporary folder that is removed afterwards.
+fn integrity_self_test() -> Result<(), String> {
+    let info = fetch_launcher_version_info()?;
+    let (platform, download) = preferred_launcher_download(&info);
+    verify_launcher_update_signature(platform, &info.version, &download)?;
+    println!(
+        "OK Update signature - {platform} {} {} verifies with the release key",
+        info.version, download.file_name
+    );
+    let mut forged = download.clone();
+    forged.sha256 = "0".repeat(64);
+    if verify_launcher_update_signature(platform, &info.version, &forged).is_ok() {
+        return Err("A forged update record verified.".to_string());
+    }
+    println!("OK Update signature - a forged record is refused");
+
+    let minimum = fetch_standalone_loader_minimum()?;
+    require_supported_loader(&minimum, &minimum)?;
+    if compare_version_strings("1.4.28", &minimum) == std::cmp::Ordering::Less
+        && require_supported_loader("1.4.28", &minimum).is_ok()
+    {
+        return Err("An old loader was accepted.".to_string());
+    }
+    println!("OK Loader minimum - {minimum}; older loaders are refused");
+
+    let root = env::temp_dir().join(format!("gamble-integrity-self-test-{}", random_base64_url(9)));
+    let result = (|| -> Result<(), String> {
+        let cache = Mutex::new(integrity::VerifiedFiles::in_memory());
+        ensure_vanilla_version_json_with_progress(&root, MINECRAFT_VERSION, None)?;
+        println!("OK Minecraft {MINECRAFT_VERSION} profile matches Mojang's manifest SHA-1");
+        let profile = load_version_profile(&root, MINECRAFT_VERSION)?;
+        let library = profile
+            .libraries
+            .iter()
+            .find(|library| rules_allow(&library.rules) && !library.artifact_sha1.is_empty())
+            .ok_or_else(|| "No hashed library in the Minecraft profile.".to_string())?;
+        let expected = integrity::Expected::new(integrity::Algorithm::Sha1, &library.artifact_sha1, Some(library.artifact_size))
+            .ok_or_else(|| "Library hash is malformed.".to_string())?;
+        let library_path = root.join("libraries").join(safe_relative_path(&library.artifact_path)?);
+        integrity::ensure_file(&cache, &library.artifact_url, &library_path, Some(&expected), "library", |url, path| download_file(url, path))?;
+        println!("OK Library {} matches its SHA-1", library.name);
+        fs::write(&library_path, b"tampered").map_err(error_text)?;
+        if integrity::matches(&cache, &library_path, &expected)? {
+            return Err("A tampered library matched its hash.".to_string());
+        }
+        println!("OK A tampered library is detected");
+
+        let hash = "5ff04807c356f1beed0b86ccf659b44b9983e3fa";
+        let asset = integrity::Expected::new(integrity::Algorithm::Sha1, hash, Some(781)).unwrap();
+        let asset_path = root.join("assets").join(&hash[0..2]).join(hash);
+        integrity::ensure_file(&cache, ASSET_NETWORK_SELF_TEST_URL, &asset_path, Some(&asset), "asset", |url, path| download_file(url, path))?;
+        println!("OK Minecraft asset matches its SHA-1 name");
+
+        let release = fetch_modrinth_release(&modrinth_versions_url("fabric-api"))?;
+        let fabric = integrity::Expected::new(integrity::Algorithm::Sha512, &release.sha512, Some(release.size))
+            .ok_or_else(|| "Modrinth did not publish a SHA-512 for Fabric API.".to_string())?;
+        let fabric_path = root.join(safe_file_name(&release.file_name)?);
+        integrity::ensure_file(&cache, &release.url, &fabric_path, Some(&fabric), "Fabric API", |url, path| download_file(url, path))?;
+        match verify_existing_fabric_api(&fabric_path) {
+            FabricApiCheck::Genuine => println!("OK Fabric API {} matches Modrinth's SHA-512 and is recognised", release.file_name),
+            FabricApiCheck::NotModrinth => return Err("Modrinth did not recognise a genuine Fabric API jar.".to_string()),
+            FabricApiCheck::Unknown => println!("WARN Fabric API downloaded and hashed, but Modrinth could not be asked"),
+        }
+
+        for arch in ["x64", "aarch64"] {
+            let (url, expected) = managed_java_runtime(arch)?;
+            let response = trusted_download_http_client()?
+                .head(&url)
+                .send()
+                .map_err(error_text)?
+                .error_for_status()
+                .map_err(error_text)?;
+            let length = response.content_length().unwrap_or(0);
+            if expected.size.is_some_and(|size| size != length) {
+                return Err(format!("The {arch} Java mirror serves {length} bytes, not the pinned size."));
+            }
+            println!("OK Java 21 {arch} mirror serves the pinned {length}-byte archive");
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
+}
+
 fn main() {
+    if env::args()
+        .skip(1)
+        .any(|argument| argument == "--integrity-self-test")
+    {
+        match integrity_self_test() {
+            Ok(()) => std::process::exit(0),
+            Err(error) => {
+                eprintln!("Integrity self-test failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
     if env::args()
         .skip(1)
         .any(|argument| argument == "--network-self-test")
@@ -4609,7 +4921,6 @@ fn main() {
             toggle_local_file,
             add_resource_packs,
             add_mods,
-            open_path,
             open_profile_folder,
             diagnostics,
             anti_screenshare_status,
@@ -5524,11 +5835,24 @@ fn ensure_fabric_api(profile: &str) -> Result<(), String> {
 fn ensure_fabric_api_with_progress(profile: &str, app: Option<&AppHandle>) -> Result<(), String> {
     let mods = mods_folder(profile);
     fs::create_dir_all(&mods).map_err(error_text)?;
-    if find_managed_mod_jar(&mods, "fabric-api-", false)?.is_some() {
+    if let Some(existing) = find_managed_mod_jar(&mods, "fabric-api-", false)? {
         if let Some(app) = app {
-            emit_launch_progress(app, "Fabric", "Fabric API is ready", 5, 12);
+            emit_launch_progress(app, "Fabric", "Checking Fabric API", 5, 12);
         }
-        return Ok(());
+        match verify_existing_fabric_api(&existing) {
+            FabricApiCheck::Genuine | FabricApiCheck::Unknown => {
+                if let Some(app) = app {
+                    emit_launch_progress(app, "Fabric", "Fabric API is ready", 5, 12);
+                }
+                return Ok(());
+            }
+            FabricApiCheck::NotModrinth => {
+                // Not a published Fabric API file: set it aside and install a genuine one.
+                let aside = existing.with_extension("jar.unverified");
+                let _ = fs::remove_file(&aside);
+                fs::rename(&existing, &aside).map_err(error_text)?;
+            }
+        }
     }
 
     if let Some(disabled) = find_managed_mod_jar(&mods, "fabric-api-", true)? {
@@ -5550,11 +5874,57 @@ fn ensure_fabric_api_with_progress(profile: &str, app: Option<&AppHandle>) -> Re
         ));
     }
 
-    let target = mods.join(release.file_name);
+    let target = mods.join(safe_file_name(&release.file_name)?);
     if let Some(app) = app {
         emit_launch_progress(app, "Fabric", "Downloading Fabric API", 5, 12);
     }
-    download_file(&release.url, &target)
+    let expected = integrity::Expected::new(integrity::Algorithm::Sha512, &release.sha512, Some(release.size))
+        .ok_or_else(|| "Modrinth did not publish a SHA-512 for Fabric API.".to_string())?;
+    ensure_verified_download(&release.url, &target, Some(&expected), "Fabric API")?;
+    save_verified_files();
+    Ok(())
+}
+
+enum FabricApiCheck {
+    Genuine,
+    NotModrinth,
+    /// Modrinth could not be asked; keep the jar (the mods folder is the player's).
+    Unknown,
+}
+
+fn verify_existing_fabric_api(path: &Path) -> FabricApiCheck {
+    let Ok(sha512) = integrity::file_digest(path, integrity::Algorithm::Sha512) else {
+        return FabricApiCheck::Unknown;
+    };
+    let Some(expected) = integrity::Expected::new(integrity::Algorithm::Sha512, &sha512, None) else {
+        return FabricApiCheck::Unknown;
+    };
+    if integrity::vouched(verified_files(), path, &expected) {
+        return FabricApiCheck::Genuine;
+    }
+    let url = format!("https://api.modrinth.com/v2/version_file/{sha512}?algorithm=sha512");
+    let Ok(client) = http_client() else {
+        return FabricApiCheck::Unknown;
+    };
+    let Ok(response) = client.get(url).send() else {
+        return FabricApiCheck::Unknown;
+    };
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return FabricApiCheck::NotModrinth;
+    }
+    let Ok(response) = response.error_for_status() else {
+        return FabricApiCheck::Unknown;
+    };
+    let Ok(body) = response.bounded_json::<serde_json::Value>() else {
+        return FabricApiCheck::Unknown;
+    };
+    if json_string(&body, "project_id") != FABRIC_API_MODRINTH_PROJECT_ID {
+        return FabricApiCheck::NotModrinth;
+    }
+    if integrity::matches(verified_files(), path, &expected).unwrap_or(false) {
+        save_verified_files();
+    }
+    FabricApiCheck::Genuine
 }
 
 fn fetch_modrinth_release(url: &str) -> Result<ModrinthRelease, String> {
@@ -5586,6 +5956,12 @@ fn fetch_modrinth_release(url: &str) -> Result<ModrinthRelease, String> {
     Ok(ModrinthRelease {
         file_name: json_string(&selected, "filename"),
         url: json_string(&selected, "url"),
+        sha512: selected
+            .pointer("/hashes/sha512")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string(),
+        size: json_u64(&selected, "size"),
     })
 }
 
@@ -5933,6 +6309,9 @@ where
             let request = build_request(client, url.clone())
                 .build()
                 .map_err(|_| "Backend request could not be created.".to_string())?;
+            if request_carries_credentials(&request) && !may_carry_credentials(request.url()) {
+                break;
+            }
             let idempotent = matches!(
                 *request.method(),
                 reqwest::Method::GET | reqwest::Method::HEAD
@@ -5962,6 +6341,20 @@ where
     Err(format!(
         "Could not reach the Gamble Client backend. Check your internet connection, VPN/firewall, and system clock, then try again. ({last_kind})"
     ))
+}
+
+fn may_carry_credentials(url: &reqwest::Url) -> bool {
+    url.host_str()
+        .is_some_and(|host| CREDENTIAL_BACKEND_HOSTS.contains(&host))
+}
+
+fn url_carries_credentials(url: &reqwest::Url) -> bool {
+    url.query_pairs()
+        .any(|(key, _)| matches!(key.as_ref(), "token" | "code" | "ticket"))
+}
+
+fn request_carries_credentials(request: &reqwest::blocking::Request) -> bool {
+    request.headers().contains_key(reqwest::header::AUTHORIZATION) || url_carries_credentials(request.url())
 }
 
 fn may_resend_request(idempotent: bool, failed_before_sending: bool) -> bool {
@@ -6144,25 +6537,126 @@ fn fetch_standalone_loader_version() -> Result<String, String> {
     Ok(response.version)
 }
 
-fn preferred_launcher_download(info: &LauncherVersionResponse) -> LauncherDownload {
+/// The oldest loader the server still accepts (defaults to the current one).
+fn fetch_standalone_loader_minimum() -> Result<String, String> {
+    let url = format!("{SITE_URL}/api/standalone/version");
+    let response = send_first_party_request(&url, |client, target| client.get(target))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Gamble Client standalone-loader metadata returned HTTP {}.",
+            response.status().as_u16()
+        ));
+    }
+    let response = response
+        .bounded_json::<StandaloneLoaderVersionResponse>()
+        .map_err(error_text)?;
+    let minimum = if response.min_version.trim().is_empty() {
+        response.version
+    } else {
+        response.min_version
+    };
+    if minimum.trim().is_empty() {
+        return Err("Backend did not return a standalone loader version.".to_string());
+    }
+    Ok(minimum)
+}
+
+/// Refuses a signed loader older than the server's minimum (no rollback).
+fn require_supported_loader(installed: &str, minimum: &str) -> Result<(), String> {
+    if compare_version_strings(installed, minimum) == std::cmp::Ordering::Less {
+        return Err(format!(
+            "The Gamble Client loader ({installed}) is older than the minimum supported version ({minimum}). Launch again to install the current loader."
+        ));
+    }
+    Ok(())
+}
+
+/// Re-checks the installed loader just before Java starts: it must still be the
+/// signed, current loader that ensure_loader_jar installed.
+fn verify_loader_before_launch(profile: &str) -> Result<(), String> {
+    let loader = mods_folder(profile).join(LOADER_JAR_NAME);
+    let bytes = read_file_bounded(&loader, MAX_LOADER_BYTES)
+        .map_err(|_| "The Gamble Client loader is missing. Launch again to reinstall it.".to_string())?;
+    verify_memory_loader_bytes(&bytes)
+        .map_err(|error| format!("The Gamble Client loader changed after it was checked: {error}"))?;
+    let installed = memory_loader_version(&loader)
+        .ok_or_else(|| "Installed standalone loader has no readable version.".to_string())?;
+    require_supported_loader(&installed, &fetch_standalone_loader_minimum()?)
+}
+
+/// The download for this system and its platform id in the signed update record.
+fn preferred_launcher_download(info: &LauncherVersionResponse) -> (&'static str, LauncherDownload) {
     let platform = match env::consts::OS {
-        "windows" => usable_launcher_download(info.downloads.windows.clone()),
+        "windows" => usable_launcher_download(info.downloads.windows.clone()).map(|d| ("windows", d)),
         "linux" => match linux_package_preference() {
-            "flatpak" => usable_launcher_download(info.downloads.linux_flatpak.clone()),
-            "rpm" => usable_launcher_download(info.downloads.linux_rpm.clone()),
-            "deb" => usable_launcher_download(info.downloads.linux_deb.clone()),
+            "flatpak" => usable_launcher_download(info.downloads.linux_flatpak.clone())
+                .map(|d| ("linux-flatpak", d)),
+            "rpm" => usable_launcher_download(info.downloads.linux_rpm.clone()).map(|d| ("linux-rpm", d)),
+            "deb" => usable_launcher_download(info.downloads.linux_deb.clone()).map(|d| ("linux-deb", d)),
             _ => None,
         },
         _ => None,
     };
     platform
-        .or_else(|| usable_launcher_download(info.downloads.jar.clone()))
-        .unwrap_or_else(|| LauncherDownload {
-            file_name: info.file_name.clone(),
-            download_url: info.download_url.clone(),
-            sha256: String::new(),
-            size: 0,
+        .or_else(|| usable_launcher_download(info.downloads.jar.clone()).map(|d| ("jar", d)))
+        .unwrap_or_else(|| {
+            (
+                "jar",
+                LauncherDownload {
+                    file_name: info.file_name.clone(),
+                    download_url: info.download_url.clone(),
+                    sha256: String::new(),
+                    size: 0,
+                    signature: String::new(),
+                },
+            )
         })
+}
+
+fn launcher_update_canonical(platform: &str, version: &str, download: &LauncherDownload) -> String {
+    [
+        "gamble-launcher-update-v1",
+        platform,
+        version,
+        &download.file_name,
+        &download.size.to_string(),
+        &download.sha256.to_ascii_lowercase(),
+    ]
+    .join("\n")
+}
+
+fn verify_launcher_update_signature(
+    platform: &str,
+    version: &str,
+    download: &LauncherDownload,
+) -> Result<(), String> {
+    verify_launcher_update_signature_with(LAUNCHER_UPDATE_PUBLIC_KEY, platform, version, download)
+}
+
+fn verify_launcher_update_signature_with(
+    public_key_spki: &str,
+    platform: &str,
+    version: &str,
+    download: &LauncherDownload,
+) -> Result<(), String> {
+    const REFUSED: &str = "This launcher update is not signed by Gamble Client, so it was not downloaded. Download the launcher from gambleclient.org/download instead.";
+    if download.size == 0 || !is_sha256(&download.sha256) || version.trim().is_empty() {
+        return Err(REFUSED.to_string());
+    }
+    let spki = STANDARD.decode(public_key_spki).map_err(|_| REFUSED.to_string())?;
+    let public_key = spki
+        .get(spki.len().saturating_sub(32)..)
+        .filter(|key| key.len() == 32)
+        .ok_or_else(|| REFUSED.to_string())?;
+    let signature = STANDARD
+        .decode(download.signature.trim())
+        .map_err(|_| REFUSED.to_string())?;
+    UnparsedPublicKey::new(&ED25519, public_key)
+        .verify(
+            launcher_update_canonical(platform, version, download).as_bytes(),
+            &signature,
+        )
+        .map_err(|_| REFUSED.to_string())
 }
 
 fn usable_launcher_download(download: Option<LauncherDownload>) -> Option<LauncherDownload> {
@@ -6874,11 +7368,12 @@ mod tests {
     #[test]
     fn network_downloads_require_known_https_origins_without_credentials_or_ports() {
         assert!(trusted_network_url("https://meta.fabricmc.net/v2/versions/loader").is_ok());
-        assert!(trusted_network_url("https://api.adoptium.net/v3/binary/latest/21").is_ok());
-        assert!(
-            trusted_network_url("https://release-assets.githubusercontent.com/file.zip").is_ok()
-        );
         for value in [
+            // Java now comes from our own mirror; hosts anyone can publish to are gone.
+            "https://api.adoptium.net/v3/binary/latest/21",
+            "https://github.com/adoptium/temurin21-binaries/releases/download/x.zip",
+            "https://release-assets.githubusercontent.com/file.zip",
+            "https://objects.githubusercontent.com/file.zip",
             "http://meta.fabricmc.net/file",
             "https://evil.example/file",
             "https://user:password@meta.fabricmc.net/file",
@@ -6928,6 +7423,120 @@ mod tests {
         assert_eq!(urls[0].query(), urls[2].query());
         assert!(first_party_request_urls("https://evil.example/api/launcher/poll").is_err());
         assert!(first_party_request_urls("http://gambleclient.org/api/launcher/poll").is_err());
+    }
+
+    #[test]
+    fn launcher_api_paths_are_matched_exactly() {
+        for path in [
+            "/api/launcher/../admin/users",
+            "/api/launcher/%2e%2e/admin",
+            "/api/launcher/unknown",
+            "/api/friends?x=1",
+            "/api/friends/",
+            "/api/friendsx",
+            "/api/launcher/account/../../admin",
+        ] {
+            assert!(super::launcher_api_route("GET", path).is_err(), "{path}");
+        }
+        assert_eq!(super::launcher_api_route("POST", "/api/launcher/poll"), Ok(true));
+        assert_eq!(super::launcher_api_route("GET", "/api/friends"), Ok(true));
+    }
+
+    #[test]
+    fn credentials_never_go_to_the_pages_dev_fallback() {
+        let owned = reqwest::Url::parse("https://gambleclient.org/api/download/x.jar?token=secret").unwrap();
+        let fallback = reqwest::Url::parse("https://gamble-client-b67.pages.dev/api/download/x.jar?token=secret").unwrap();
+        assert!(super::may_carry_credentials(&owned));
+        assert!(!super::may_carry_credentials(&fallback));
+        assert!(super::url_carries_credentials(&fallback));
+        assert!(!super::url_carries_credentials(
+            &reqwest::Url::parse("https://gamble-client-b67.pages.dev/api/launcher/version").unwrap()
+        ));
+        let client = reqwest::blocking::Client::new();
+        let bearer = client
+            .get("https://gamble-client-b67.pages.dev/api/launcher/account")
+            .bearer_auth("session")
+            .build()
+            .unwrap();
+        assert!(super::request_carries_credentials(&bearer));
+        let public = client
+            .get("https://gamble-client-b67.pages.dev/api/launcher/version")
+            .build()
+            .unwrap();
+        assert!(!super::request_carries_credentials(&public));
+    }
+
+    fn signed_download(size: u64, sha256: &str, signature: &str) -> super::LauncherDownload {
+        super::LauncherDownload {
+            file_name: "Gamble Client Launcher_0.1.146_x64-setup.exe".to_string(),
+            download_url: "https://gambleclient.org/api/launcher/download/windows".to_string(),
+            sha256: sha256.to_string(),
+            size,
+            signature: signature.to_string(),
+        }
+    }
+
+    #[test]
+    fn the_published_release_signature_verifies_with_the_embedded_key() {
+        // Real record for launcher 0.1.146 on Windows, signed on the release machine by
+        // scripts/sign-launcher-release.py: proves the launcher and the signer agree.
+        let download = signed_download(
+            2_622_323,
+            "3eda269ed2e957e97ded7422086fddded6ac8902fc5f422d1a3e7524bd4b395f",
+            "RuuatCD/TEYoedCrnNk/pXBm6+0FoG2WhRgkj0dApPAeBPitdJPgeoWvms+fWqkXI3942H5MLmYZiRBiEcIBBQ==",
+        );
+        assert!(super::verify_launcher_update_signature("windows", "0.1.146", &download).is_ok());
+        // Any change to the record breaks it.
+        assert!(super::verify_launcher_update_signature("windows", "0.1.147", &download).is_err());
+        assert!(super::verify_launcher_update_signature("linux-deb", "0.1.146", &download).is_err());
+        let mut altered = download.clone();
+        altered.size += 1;
+        assert!(super::verify_launcher_update_signature("windows", "0.1.146", &altered).is_err());
+        let mut altered = download.clone();
+        altered.sha256 = "0".repeat(64);
+        assert!(super::verify_launcher_update_signature("windows", "0.1.146", &altered).is_err());
+    }
+
+    #[test]
+    fn unsigned_or_foreign_updates_are_refused() {
+        use base64::Engine as _;
+        let unsigned = signed_download(10, &"a".repeat(64), "");
+        let error = super::verify_launcher_update_signature("windows", "0.1.147", &unsigned).unwrap_err();
+        assert!(error.contains("not signed by Gamble Client"), "{error}");
+        let rng = ring::rand::SystemRandom::new();
+        let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
+        let key = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        use ring::signature::KeyPair;
+        let mut spki = vec![0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00];
+        spki.extend_from_slice(key.public_key().as_ref());
+        let foreign_key = super::STANDARD.encode(&spki);
+        let mut download = signed_download(10, &"a".repeat(64), "");
+        let message = super::launcher_update_canonical("windows", "0.1.147", &download);
+        download.signature = super::STANDARD.encode(key.sign(message.as_bytes()).as_ref());
+        assert!(super::verify_launcher_update_signature_with(&foreign_key, "windows", "0.1.147", &download).is_ok());
+        assert!(super::verify_launcher_update_signature("windows", "0.1.147", &download).is_err(),
+            "a signature from any other key is refused");
+    }
+
+    #[test]
+    fn library_paths_from_metadata_stay_inside_libraries() {
+        assert!(super::safe_relative_path("org/lwjgl/lwjgl/3.3.3/lwjgl-3.3.3.jar").is_ok());
+        for value in ["../evil.jar", "org/../../evil.jar", "/etc/passwd", "", "C:\\evil.jar", "a\\b.jar"] {
+            assert!(super::safe_relative_path(value).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn old_loaders_are_refused_and_the_java_runtime_is_pinned_to_our_origin() {
+        assert!(super::require_supported_loader("1.4.28", "1.4.29").is_err());
+        assert!(super::require_supported_loader("1.4.29", "1.4.29").is_ok());
+        assert!(super::require_supported_loader("1.4.30", "1.4.29").is_ok());
+        let (url, expected) = super::managed_java_runtime("x64").unwrap();
+        assert!(url.starts_with("https://gambleclient.org/api/launcher/runtime/OpenJDK21U-jre_x64_windows"));
+        assert!(super::trusted_network_url(&url).is_ok());
+        assert_eq!(expected.digest, "d35f31e712f0fcf6ac5a093edc90204fbff22f720ba3950bd09d331d5e621636");
+        assert!(super::managed_java_runtime("aarch64").is_ok());
+        assert!(super::managed_java_runtime("riscv64").is_err());
     }
 
     #[test]
@@ -7055,6 +7664,9 @@ mod tests {
             .map(|hash| AssetDownload {
                 hash: hash.clone(),
                 path: root.join(&hash[0..2]).join(hash),
+                // Each object is now checked against its SHA-1 name as it lands.
+                expected: crate::integrity::Expected::new(crate::integrity::Algorithm::Sha1, hash, None)
+                    .expect("asset names are SHA-1 digests"),
             })
             .collect::<Vec<_>>();
         download_missing_assets(downloads, None).expect("bounded Mojang asset batch");

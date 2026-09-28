@@ -155,7 +155,7 @@ public class Main {
 
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.146";
+    private static final String LAUNCHER_VERSION = "0.1.147";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -184,6 +184,10 @@ public class Main {
         "https://dash.gambleclient.org",
         "https://gamble-client-b67.pages.dev"
     );
+    // Domains we own. Credentials never go to the pages.dev fallback.
+    private static final List<String> CREDENTIAL_API_HOSTS = List.of("gambleclient.org", "dash.gambleclient.org");
+    private static final String FABRIC_API_MODRINTH_PROJECT_ID = "P7dR8mSH";
+    private DownloadIntegrity downloadIntegrity;
     private static final String CAPE_OWNERS_PATH = "/api/capes/owners.txt";
     private static final String CAPES_PATH = "/api/capes/capes.txt";
     private static final String MINECRAFT_VERSION = "1.21.11";
@@ -3351,6 +3355,22 @@ public class Main {
         return version;
     }
 
+    /** The oldest loader the server still accepts (defaults to the current one). */
+    private String fetchStandaloneLoaderMinimum() throws IOException {
+        ApiResponse response = apiRequest("GET", "/api/standalone/version", "", "", 200);
+        String minimum = Json.string(response.body.get("minVersion"));
+        if (minimum.isEmpty()) minimum = Json.string(response.body.get("version"));
+        if (minimum.isEmpty()) throw new IOException("Backend did not return a standalone loader version.");
+        return minimum;
+    }
+
+    static void requireSupportedLoader(String installed, String minimum) throws IOException {
+        if (compareVersionStrings(installed, minimum) < 0) {
+            throw new IOException("The Gamble Client loader (" + installed + ") is older than the minimum supported version ("
+                + minimum + "). Launch again to install the current loader.");
+        }
+    }
+
     private void installSelectedBuild(final boolean launchAfterInstall) {
         final LaunchProfile profile = selectedProfile();
         if (!profile.includesGambleClient) {
@@ -3779,6 +3799,13 @@ public class Main {
 
     private void ensureManagedFabricModInstalled(File mods, String displayName, String filePrefix, String modrinthUrl, String tempPrefix, boolean enableByDefault, String directUrl, String directFileName) throws IOException {
         File enabled = findManagedFabricModJar(mods, filePrefix, false);
+        if (enabled != null && "fabric-api-".equals(filePrefix) && !isGenuineFabricApi(enabled)) {
+            // Not a published Fabric API file: set it aside and install a genuine one.
+            File aside = new File(enabled.getParentFile(), enabled.getName() + ".unverified");
+            Files.move(enabled.toPath(), aside.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            log("Set aside an unverified Fabric API jar: " + aside.getName());
+            enabled = null;
+        }
         if (enabled != null) return;
 
         File disabled = findManagedFabricModJar(mods, filePrefix, true);
@@ -3799,9 +3826,17 @@ public class Main {
         }
 
         log("Installing managed " + displayName + ": " + release.fileName);
+        String safeName = DownloadIntegrity.safeRelativePath(release.fileName);
+        if (safeName.contains("/")) throw new IOException("Refusing an unsafe mod file name: " + safeName);
         File temp = File.createTempFile(tempPrefix, ".jar");
-        downloadFile(release.url, temp, release.fileName, false);
-        File target = new File(mods, enableByDefault ? release.fileName : release.fileName + ".disabled");
+        Files.deleteIfExists(temp.toPath());
+        DownloadIntegrity.Expected expected = DownloadIntegrity.Expected.of("SHA-512", release.sha512, release.size);
+        if (expected == null && (directUrl == null || directUrl.trim().isEmpty())) {
+            throw new IOException("Modrinth did not publish a SHA-512 for " + displayName + ".");
+        }
+        integrity().ensureFile(release.url, temp, expected, displayName,
+            (url, target) -> downloadFile(url, target, release.fileName, false));
+        File target = new File(mods, enableByDefault ? safeName : safeName + ".disabled");
         Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING);
         if (!enableByDefault) log("Left optional compatibility layer disabled: " + target.getName());
     }
@@ -3825,6 +3860,42 @@ public class Main {
         Files.write(marker.toPath(), Collections.singletonList("Launcher " + LAUNCHER_VERSION + " disabled optional compatibility layers by default."), StandardCharsets.UTF_8);
     }
 
+    private DownloadIntegrity integrity() {
+        synchronized (this) {
+            if (downloadIntegrity == null) {
+                downloadIntegrity = new DownloadIntegrity(new File(getLauncherDataFolder(), "verified-files.tsv"));
+            }
+            return downloadIntegrity;
+        }
+    }
+
+    /** Whether Modrinth recognises this jar as a published Fabric API file (unknown counts as yes). */
+    private boolean isGenuineFabricApi(File jar) {
+        try {
+            String sha512 = DownloadIntegrity.digest(jar, "SHA-512");
+            DownloadIntegrity.Expected expected = DownloadIntegrity.Expected.of("SHA-512", sha512, jar.length());
+            if (expected != null && integrity().vouched(jar, expected)) return true;
+            HttpURLConnection connection = openTrustedHttpConnection(
+                "https://api.modrinth.com/v2/version_file/" + sha512 + "?algorithm=sha512", false);
+            try {
+                connection.setConnectTimeout(15000);
+                connection.setReadTimeout(30000);
+                int status = connection.getResponseCode();
+                if (status == 404) return false;
+                if (status != 200) return true;
+                Map<String, Object> body = Json.asObject(Json.parse(readSmall(connection.getInputStream())));
+                if (!FABRIC_API_MODRINTH_PROJECT_ID.equals(Json.string(body.get("project_id")))) return false;
+                if (expected != null && integrity().matches(jar, expected)) integrity().save();
+                return true;
+            } finally {
+                connection.disconnect();
+            }
+        } catch (IOException | RuntimeException error) {
+            // Modrinth could not be asked; keep the jar (the mods folder is the player's).
+            return true;
+        }
+    }
+
     private ModrinthRelease fetchModrinthRelease(String modrinthUrl) throws IOException {
         List<Object> versions = Json.asArray(Json.parse(readUrl(modrinthUrl)));
         if (versions.isEmpty()) return new ModrinthRelease("", "");
@@ -3841,7 +3912,9 @@ public class Main {
             if (selected.isEmpty()) selected = file;
         }
 
-        return new ModrinthRelease(Json.string(selected.get("filename")), Json.string(selected.get("url")));
+        Map<String, Object> hashes = Json.asObject(selected.get("hashes"));
+        return new ModrinthRelease(Json.string(selected.get("filename")), Json.string(selected.get("url")),
+            Json.string(hashes.get("sha512")), jsonLong(selected.get("size")));
     }
 
     private File findFabricApiJar(File mods, boolean includeDisabled) {
@@ -4116,7 +4189,9 @@ public class Main {
     private void ensureVanillaVersionJson(File gameDir, String versionId) throws IOException {
         File versionDir = new File(new File(gameDir, "versions"), versionId);
         File versionJson = new File(versionDir, versionId + ".json");
-        if (versionJson.exists()) return;
+        // The profile is the source of every library and asset hash, so it must
+        // match Mojang's manifest. Once checked it is trusted until it changes.
+        if (versionJson.isFile() && integrity().unchangedSinceVerified(versionJson)) return;
 
         if (!versionDir.exists() && !versionDir.mkdirs()) {
             throw new IOException("Failed to create Minecraft version folder: " + versionDir);
@@ -4127,10 +4202,12 @@ public class Main {
         Map<String, Object> manifest = Json.asObject(Json.parse(manifestText));
         List<Object> versions = Json.asArray(manifest.get("versions"));
         String versionUrl = null;
+        String versionSha1 = "";
         for (Object entry : versions) {
             Map<String, Object> version = Json.asObject(entry);
             if (versionId.equals(Json.string(version.get("id")))) {
                 versionUrl = Json.string(version.get("url"));
+                versionSha1 = Json.string(version.get("sha1"));
                 break;
             }
         }
@@ -4139,8 +4216,12 @@ public class Main {
             throw new IOException("Could not find Minecraft " + versionId + " in Mojang version manifest.");
         }
 
-        log("Downloading Minecraft " + versionId + " profile.");
-        downloadFile(versionUrl, versionJson, "Minecraft profile", false);
+        DownloadIntegrity.Expected expected = DownloadIntegrity.Expected.of("SHA-1", versionSha1, 0L);
+        if (expected == null) throw new IOException("Mojang's manifest has no hash for Minecraft " + versionId + ".");
+        log("Checking Minecraft " + versionId + " profile.");
+        integrity().ensureFile(versionUrl, versionJson, expected, "Minecraft " + versionId + " profile",
+            (url, target) -> downloadFile(url, target, "Minecraft profile", false));
+        integrity().save();
     }
 
     private VersionProfile loadVersionProfile(File gameDir, String versionId) throws IOException {
@@ -4159,6 +4240,8 @@ public class Main {
         if (!assetIndex.isEmpty()) {
             profile.assetIndexId = Json.string(assetIndex.get("id"));
             profile.assetIndexUrl = Json.string(assetIndex.get("url"));
+            profile.assetIndexSha1 = Json.string(assetIndex.get("sha1"));
+            profile.assetIndexSize = jsonLong(assetIndex.get("size"));
         }
 
         Map<String, Object> downloads = Json.asObject(root.get("downloads"));
@@ -4166,6 +4249,8 @@ public class Main {
         if (!clientDownload.isEmpty()) {
             profile.clientVersionId = versionId;
             profile.clientJarUrl = Json.string(clientDownload.get("url"));
+            profile.clientJarSha1 = Json.string(clientDownload.get("sha1"));
+            profile.clientJarSize = jsonLong(clientDownload.get("size"));
         }
 
         List<Object> libraries = Json.asArray(root.get("libraries"));
@@ -4210,9 +4295,14 @@ public class Main {
         Map<String, Object> artifact = Json.asObject(downloads.get("artifact"));
         library.artifactPath = Json.string(artifact.get("path"));
         library.artifactUrl = Json.string(artifact.get("url"));
+        library.artifactSha1 = Json.string(artifact.get("sha1"));
+        library.artifactSize = jsonLong(artifact.get("size"));
         if (library.artifactPath.isEmpty()) {
             library.artifactPath = mavenArtifactPath(name);
             library.artifactUrl = mavenArtifactUrl(Json.string(object.get("url")), library.artifactPath);
+            // Fabric's profile lists sha1/size beside the maven coordinates.
+            library.artifactSha1 = Json.string(object.get("sha1"));
+            library.artifactSize = jsonLong(object.get("size"));
         }
 
         library.natives = Json.asStringMap(Json.asObject(object.get("natives")));
@@ -4221,6 +4311,8 @@ public class Main {
             Map<String, Object> classifier = Json.asObject(entry.getValue());
             library.classifierPaths.put(entry.getKey(), Json.string(classifier.get("path")));
             library.classifierUrls.put(entry.getKey(), Json.string(classifier.get("url")));
+            library.classifierSha1s.put(entry.getKey(), Json.string(classifier.get("sha1")));
+            library.classifierSizes.put(entry.getKey(), jsonLong(classifier.get("size")));
         }
 
         return library;
@@ -4284,26 +4376,26 @@ public class Main {
             if (!rulesAllow(library.rules)) continue;
 
             if (!library.artifactPath.isEmpty()) {
-                File file = new File(librariesDir, library.artifactPath);
-                if (!file.exists()) {
-                    if (library.artifactUrl.isEmpty()) throw new IOException("No download URL for library: " + library.name);
-                    log("Downloading library: " + library.name);
-                    downloadFile(library.artifactUrl, file, library.name, false);
-                }
+                File file = new File(librariesDir, DownloadIntegrity.safeRelativePath(library.artifactPath));
+                if (!file.exists()) log("Downloading library: " + library.name);
+                integrity().ensureFile(library.artifactUrl, file,
+                    DownloadIntegrity.Expected.of("SHA-1", library.artifactSha1, library.artifactSize),
+                    "Library " + library.name, (url, target) -> downloadFile(url, target, library.name, false));
                 classpath.add(file);
             }
 
             NativeArtifact nativeArtifact = nativeArtifact(library);
             if (nativeArtifact != null) {
-                File file = new File(librariesDir, nativeArtifact.path);
-                if (!file.exists()) {
-                    if (nativeArtifact.url.isEmpty()) throw new IOException("No native download URL for library: " + library.name);
-                    log("Downloading native: " + library.name);
-                    downloadFile(nativeArtifact.url, file, library.name + " native", false);
-                }
+                File file = new File(librariesDir, DownloadIntegrity.safeRelativePath(nativeArtifact.path));
+                if (!file.exists()) log("Downloading native: " + library.name);
+                integrity().ensureFile(nativeArtifact.url, file,
+                    DownloadIntegrity.Expected.of("SHA-1", nativeArtifact.sha1, nativeArtifact.size),
+                    "Native library " + library.name,
+                    (url, target) -> downloadFile(url, target, library.name + " native", false));
             }
         }
 
+        integrity().save();
         return classpath;
     }
 
@@ -4313,10 +4405,12 @@ public class Main {
         }
 
         File clientJar = new File(new File(new File(gameDir, "versions"), profile.clientVersionId), profile.clientVersionId + ".jar");
-        if (!clientJar.exists()) {
-            log("Downloading Minecraft client jar: " + profile.clientVersionId);
-            downloadFile(profile.clientJarUrl, clientJar, "Minecraft client jar", true);
-        }
+        if (!clientJar.exists()) log("Downloading Minecraft client jar: " + profile.clientVersionId);
+        integrity().ensureFile(profile.clientJarUrl, clientJar,
+            DownloadIntegrity.Expected.of("SHA-1", profile.clientJarSha1, profile.clientJarSize),
+            "Minecraft " + profile.clientVersionId + " client jar",
+            (url, target) -> downloadFile(url, target, "Minecraft client jar", true));
+        integrity().save();
         return clientJar;
     }
 
@@ -4328,10 +4422,10 @@ public class Main {
         File assetsDir = new File(gameDir, "assets");
         File indexesDir = new File(assetsDir, "indexes");
         File indexFile = new File(indexesDir, profile.assetIndexId + ".json");
-        if (!indexFile.exists()) {
-            log("Downloading asset index: " + profile.assetIndexId);
-            downloadFile(profile.assetIndexUrl, indexFile, "asset index", false);
-        }
+        if (!indexFile.exists()) log("Downloading asset index: " + profile.assetIndexId);
+        integrity().ensureFile(profile.assetIndexUrl, indexFile,
+            DownloadIntegrity.Expected.of("SHA-1", profile.assetIndexSha1, profile.assetIndexSize),
+            "Minecraft asset index", (url, target) -> downloadFile(url, target, "asset index", false));
 
         Map<String, Object> index = Json.asObject(Json.parse(readFile(indexFile)));
         Map<String, Object> objects = Json.asObject(index.get("objects"));
@@ -4339,10 +4433,12 @@ public class Main {
         for (Object value : objects.values()) {
             Map<String, Object> asset = Json.asObject(value);
             String hash = Json.string(asset.get("hash"));
-            if (hash.length() < 2) continue;
+            // The object name is its SHA-1; anything else cannot be checked or stored safely.
+            DownloadIntegrity.Expected expected = DownloadIntegrity.Expected.of("SHA-1", hash, jsonLong(asset.get("size")));
+            if (expected == null) continue;
             File objectFile = new File(new File(new File(assetsDir, "objects"), hash.substring(0, 2)), hash);
-            if (!objectFile.exists()) {
-                missing.add(new AssetDownload(hash, objectFile));
+            if (!objectFile.exists() || !integrity().vouched(objectFile, expected)) {
+                missing.add(new AssetDownload(hash, objectFile, expected));
             }
         }
 
@@ -4361,9 +4457,9 @@ public class Main {
                 @Override
                 public void run() {
                     try {
-                        if (!asset.file.exists()) {
-                            downloadFile(ASSET_BASE_URL + asset.hash.substring(0, 2) + "/" + asset.hash, asset.file, "asset " + asset.hash, false);
-                        }
+                        integrity().ensureFile(ASSET_BASE_URL + asset.hash.substring(0, 2) + "/" + asset.hash, asset.file,
+                            asset.expected, "Minecraft asset " + asset.hash,
+                            (url, target) -> downloadFile(url, target, "asset " + asset.hash, false));
                         int value = done.incrementAndGet();
                         if (value == missing.size() || value % 20 == 0) {
                             int valuePct = 50 + Math.min(18, (value * 18) / Math.max(1, missing.size()));
@@ -4391,6 +4487,7 @@ public class Main {
                 throw new IOException("Asset download failed: " + cause.getMessage(), cause);
             }
         }
+        integrity().save();
     }
 
     private File extractNatives(File gameDir, String versionId, VersionProfile profile) throws IOException {
@@ -4625,7 +4722,9 @@ public class Main {
         String path = library.classifierPaths.get(classifier);
         String url = library.classifierUrls.get(classifier);
         if (path == null || path.isEmpty()) return null;
-        return new NativeArtifact(path, url == null ? "" : url);
+        String sha1 = library.classifierSha1s.get(classifier);
+        Long size = library.classifierSizes.get(classifier);
+        return new NativeArtifact(path, url == null ? "" : url, sha1 == null ? "" : sha1, size == null ? 0L : size);
     }
 
     private boolean rulesAllow(List<Object> rules) {
@@ -5038,7 +5137,8 @@ public class Main {
 
     private ApiResponse apiRequest(String method, String path, String body, String bearerToken, int... acceptedStatuses) throws IOException {
         String urlText = path.startsWith("http://") || path.startsWith("https://") ? path : siteUrl() + path;
-        List<String> urls = firstPartyApiUrls(urlText);
+        boolean credentials = (bearerToken != null && !bearerToken.trim().isEmpty()) || urlCarriesCredentials(urlText);
+        List<String> urls = credentialSafeUrls(firstPartyApiUrls(urlText), credentials);
         IOException lastTransportError = null;
         for (int index = 0; index < urls.size(); index++) {
             try {
@@ -5114,6 +5214,27 @@ public class Main {
         } finally {
             connection.disconnect();
         }
+    }
+
+    /** Drops origins we don't own when the request carries a session, token or code. */
+    static List<String> credentialSafeUrls(List<String> urls, boolean carriesCredentials) {
+        if (!carriesCredentials) return urls;
+        List<String> safe = new ArrayList<>();
+        for (String url : urls) {
+            String host = URI.create(url).getHost();
+            if (host != null && CREDENTIAL_API_HOSTS.contains(host.toLowerCase(Locale.ROOT))) safe.add(url);
+        }
+        return List.copyOf(safe);
+    }
+
+    static boolean urlCarriesCredentials(String url) {
+        String query = URI.create(url == null ? "" : url.trim()).getRawQuery();
+        if (query == null) return false;
+        for (String pair : query.split("&")) {
+            String key = pair.contains("=") ? pair.substring(0, pair.indexOf('=')) : pair;
+            if (key.equals("token") || key.equals("code") || key.equals("ticket")) return true;
+        }
+        return false;
     }
 
     static List<String> firstPartyApiUrls(String urlText) throws IOException {
@@ -5558,7 +5679,7 @@ public class Main {
 
         ensureSignedIn();
         File temporary = PrivateFileSecurity.createPrivateTempFile(mods.toPath(), ".loader-").toFile();
-        List<String> endpoints = firstPartyApiUrls(siteUrl() + "/api/standalone/loader");
+        List<String> endpoints = credentialSafeUrls(firstPartyApiUrls(siteUrl() + "/api/standalone/loader"), true);
         IOException lastTransportError = null;
         for (int index = 0; index < endpoints.size(); index++) {
             try {
@@ -7314,10 +7435,18 @@ public class Main {
     private static final class ModrinthRelease {
         final String fileName;
         final String url;
+        final String sha512;
+        final long size;
 
         ModrinthRelease(String fileName, String url) {
+            this(fileName, url, "", 0L);
+        }
+
+        ModrinthRelease(String fileName, String url, String sha512, long size) {
             this.fileName = fileName;
             this.url = url;
+            this.sha512 = sha512;
+            this.size = size;
         }
     }
 
@@ -7521,8 +7650,12 @@ public class Main {
         String mainClass = "";
         String assetIndexId = "";
         String assetIndexUrl = "";
+        String assetIndexSha1 = "";
+        long assetIndexSize;
         String clientVersionId = "";
         String clientJarUrl = "";
+        String clientJarSha1 = "";
+        long clientJarSize;
         final List<Library> libraries = new ArrayList<>();
         final List<String> jvmArguments = new ArrayList<>();
         final List<String> gameArguments = new ArrayList<>();
@@ -7531,10 +7664,12 @@ public class Main {
     private static final class AssetDownload {
         final String hash;
         final File file;
+        final DownloadIntegrity.Expected expected;
 
-        AssetDownload(String hash, File file) {
+        AssetDownload(String hash, File file, DownloadIntegrity.Expected expected) {
             this.hash = hash;
             this.file = file;
+            this.expected = expected;
         }
     }
 
@@ -7548,19 +7683,27 @@ public class Main {
         String name = "";
         String artifactPath = "";
         String artifactUrl = "";
+        String artifactSha1 = "";
+        long artifactSize;
         List<Object> rules = new ArrayList<>();
         Map<String, String> natives = new LinkedHashMap<>();
         Map<String, String> classifierPaths = new LinkedHashMap<>();
         Map<String, String> classifierUrls = new LinkedHashMap<>();
+        Map<String, String> classifierSha1s = new LinkedHashMap<>();
+        Map<String, Long> classifierSizes = new LinkedHashMap<>();
     }
 
     private static final class NativeArtifact {
         final String path;
         final String url;
+        final String sha1;
+        final long size;
 
-        NativeArtifact(String path, String url) {
+        NativeArtifact(String path, String url, String sha1, long size) {
             this.path = path;
             this.url = url;
+            this.sha1 = sha1;
+            this.size = size;
         }
     }
 

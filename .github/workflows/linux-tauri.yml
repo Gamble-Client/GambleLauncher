@@ -26,19 +26,19 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: "npm"
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
       - name: Restore Rust build cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: src-tauri
 
@@ -84,11 +84,11 @@ jobs:
         run: ./src-tauri/target/release/gamble-client-launcher --network-self-test
 
       - name: Install upload tooling
-        if: ${{ github.event_name == 'push' || inputs.publish }}
-        run: npm install --no-save --package-lock=false --ignore-scripts wrangler@4
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+        run: npm install --no-save --package-lock=false --ignore-scripts wrangler@4.143.0
 
       - name: Upload Linux packages directly to R2
-        if: ${{ github.event_name == 'push' || inputs.publish }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -126,7 +126,7 @@ jobs:
           ./node_modules/.bin/wrangler r2 object put "gamble-client-jars/release-manifests/$manifest_name" --file "$manifest_name" --remote
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gamble-client-launcher-linux-${{ steps.package.outputs.version }}
           path: |
