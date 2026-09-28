@@ -4854,7 +4854,13 @@ fn integrity_self_test() -> Result<(), String> {
                 .map_err(error_text)?
                 .error_for_status()
                 .map_err(error_text)?;
-            let length = response.content_length().unwrap_or(0);
+            // A HEAD response has no body, so read the header rather than the body size.
+            let length = response
+                .headers()
+                .get(reqwest::header::CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(0);
             if expected.size.is_some_and(|size| size != length) {
                 return Err(format!("The {arch} Java mirror serves {length} bytes, not the pinned size."));
             }

@@ -102,6 +102,39 @@ class DownloadIntegrityTest {
         assertFalse(Main.urlCarriesCredentials("https://gambleclient.org/api/launcher/version"));
     }
 
+    /** Real published files: Mojang's SHA-1 names and Modrinth's SHA-512 match what the class computes. */
+    @Test
+    void realMojangAndModrinthFilesVerify() throws Exception {
+        java.net.http.HttpClient http = java.net.http.HttpClient.newBuilder()
+            .followRedirects(java.net.http.HttpClient.Redirect.NORMAL).build();
+        DownloadIntegrity.Downloader fetch = (url, target) -> {
+            try {
+                var response = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(url)).build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofFile(target.toPath()));
+                if (response.statusCode() != 200) throw new IOException("HTTP " + response.statusCode());
+            } catch (InterruptedException e) {
+                throw new IOException(e);
+            }
+        };
+        DownloadIntegrity integrity = new DownloadIntegrity(null);
+        String asset = "5ff04807c356f1beed0b86ccf659b44b9983e3fa";
+        File assetFile = temp.resolve(asset).toFile();
+        integrity.ensureFile("https://resources.download.minecraft.net/5f/" + asset, assetFile,
+            DownloadIntegrity.Expected.of("SHA-1", asset, 781), "asset", fetch);
+        assertEquals(781, assetFile.length());
+
+        String versions = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(
+                "https://api.modrinth.com/v2/project/fabric-api/version?game_versions=%5B%221.21.11%22%5D&loaders=%5B%22fabric%22%5D")).build(),
+            java.net.http.HttpResponse.BodyHandlers.ofString()).body();
+        var matcher = java.util.regex.Pattern.compile(
+            "\\{[^{}]*\"sha512\":\"([0-9a-f]{128})\"[^{}]*\\},\"url\":\"([^\"]+)\",\"filename\":\"([^\"]+)\"[^{}]*\"primary\":true")
+            .matcher(versions);
+        assertTrue(matcher.find(), "Modrinth listing parsed");
+        File fabric = temp.resolve(matcher.group(3)).toFile();
+        integrity.ensureFile(matcher.group(2), fabric, DownloadIntegrity.Expected.of("SHA-512", matcher.group(1), 0), "Fabric API", fetch);
+        assertTrue(fabric.length() > 100_000);
+    }
+
     @Test
     void oldLoadersAreRefused() throws IOException {
         assertThrows(IOException.class, () -> Main.requireSupportedLoader("1.4.28", "1.4.29"));
