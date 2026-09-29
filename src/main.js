@@ -5,6 +5,7 @@ import { open as tauriOpenDialog } from "@tauri-apps/plugin-dialog";
 import { canUseBuildForAccess, preferredBuildForAccess, canLaunchMultiple } from "./access-policy.js";
 import { launchState } from "./launch-state.js";
 import { UPGRADE_COPY, UPGRADE_SHORT_PITCH, formatSaleCountdown, formatUsd, normalizeSale, planLabel, promoBanner, saleRemainingMs } from "./promo-policy.js";
+import clientLogo from "./assets/cg-mod-icon.png";
 import "./styles.css";
 
 const SITE = "https://gambleclient.org";
@@ -690,6 +691,7 @@ function render() {
       <section class="shell ${state.animationsEnabled ? "" : "animations-off"}">
       <aside class="rail">
         <div class="brand">
+          <img class="brand-logo" src="${clientLogo}" alt="" draggable="false">
           <strong class="wordmark">GAMBLE</strong>
           <span class="brand-meta">Launcher</span>
         </div>
@@ -811,6 +813,25 @@ const NAV_ICONS = {
   external: '<path d="M9.5 2.5h4v4M13.5 2.5 7.5 8.5M11.5 9.5v4h-9v-9h4"/>'
 };
 
+// Line icons for profile types and folders, drawn like the nav icons.
+const MARK_ICONS = {
+  vanilla: '<path d="M8 2.5 13.5 5.5v5L8 13.5 2.5 10.5v-5z"/><path d="M2.5 5.5 8 8.5l5.5-3M8 8.5v5"/><path d="M4.2 7.4v1.2M6.1 8.4v1.4M9.9 8.4v1.1M11.8 7.4v1.3"/>',
+  fabric: '<path d="M8 2.5 13.5 5.25 8 8 2.5 5.25z"/><path d="m2.5 8 5.5 2.75L13.5 8"/><path d="m2.5 10.75 5.5 2.75 5.5-2.75"/>',
+  mods: '<path d="M6 2.5h2.5v1.2a1.3 1.3 0 1 0 2.6 0V2.5h2.4V6h-1.2a1.3 1.3 0 1 0 0 2.6h1.2v4.9H10v-1.2a1.3 1.3 0 1 0-2.6 0v1.2H2.5V9.1h1.2a1.3 1.3 0 1 0 0-2.6H2.5V2.5z"/>',
+  packs: '<rect x="2.5" y="3" width="11" height="10" rx="1.2"/><path d="m2.8 11 3.4-3.4 2.6 2.6 1.6-1.6 2.9 2.9"/><circle cx="10.6" cy="5.9" r="1"/>',
+  folder: '<path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.3 1.5h4.7a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>'
+};
+
+function markIcon(id) {
+  return `<svg class="mark-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">${MARK_ICONS[id] || ""}</svg>`;
+}
+
+/** The Gamble Client dice for client profiles; line icons for Fabric and Vanilla. */
+function profileMarkMarkup(profile) {
+  if (profile?.client) return `<img class="mark-logo" src="${clientLogo}" alt="" draggable="false">`;
+  return markIcon(profile?.loader === "fabric" ? "fabric" : "vanilla");
+}
+
 function navIcon(id) {
   return `<svg class="nav-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">${NAV_ICONS[id] || ""}</svg>`;
 }
@@ -914,7 +935,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
       ${promoBannerMarkup(currentPromo())}
       <section class="launch-panel ${state.refreshing ? "is-loading" : ""}" aria-labelledby="current-client-title" ${state.refreshing ? 'aria-busy="true"' : ""}>
         <header class="client-head">
-          <div class="client-mark" aria-hidden="true">${profile.client ? "G" : profile.loader === "fabric" ? "F" : "V"}</div>
+          <div class="client-mark" aria-hidden="true">${profileMarkMarkup(profile)}</div>
           <div class="client-title">
             <span class="eyebrow">Current client</span>
             <h2 id="current-client-title">${escapeHtml(profile.custom || !profile.client ? profile.label : state.clientDisplayName)}</h2>
@@ -1287,7 +1308,7 @@ function updatesView(profile, selectedBuild, canInstall, signedIn) {
           <div><dt>Installed</dt><dd class="mono">${escapeHtml(state.info?.version || LAUNCHER_VERSION)}</dd></div>
           <div><dt>Latest</dt><dd class="mono">${escapeHtml(latestLauncherVersion() || "Not checked")}</dd></div>
         </dl>
-        <p>Keep the launcher current to unlock launching and sign-in.</p>
+        <p>${launcherUpdate ? "Update the launcher to keep launching and signing in." : "You have the latest launcher."}</p>
         <button class="primary-small" type="button" data-action="download-launcher" ${state.busy || !latestLauncherVersion() || !launcherUpdate ? "disabled" : ""}>Update Launcher</button>
       </article>
       <article class="update-card ${clientNeedsUpdate() ? "warn" : ""}">
@@ -1313,7 +1334,7 @@ function profilesView(profile, selectedBuild) {
   const activeAccount = profileAccount(profile);
   const selectedAccountUuid = String(state.profileAccountOverrides?.[profile.id] || "").replaceAll("-", "").toLowerCase();
   const allowedBuilds = builds.filter((item) => canUseBuild(item.id));
-  const profileMark = profile.client ? "G" : profile.loader === "fabric" ? "F" : "V";
+  const profileMark = profileMarkMarkup(profile);
   const accountMark = String(activeAccount?.name || "?").trim().slice(0, 1).toUpperCase() || "?";
   return `
     <section class="screen-band profile-page-head">
@@ -1336,9 +1357,9 @@ function profilesView(profile, selectedBuild) {
               <span>Type</span>
               <div class="profile-type-options" role="radiogroup" aria-label="Profile type">
                 ${[
-                  ["client", "G", "Gamble"],
-                  ["fabric", "F", "Fabric"],
-                  ["vanilla", "V", "Vanilla"]
+                  ["client", profileMarkMarkup({ client: true }), "Gamble"],
+                  ["fabric", profileMarkMarkup({ loader: "fabric" }), "Fabric"],
+                  ["vanilla", profileMarkMarkup({}), "Vanilla"]
                 ].map(([type, mark, label]) => `<button class="profile-type-choice ${state.newProfileType === type ? "active" : ""}" type="button" data-action="select-new-profile-type" data-profile-type="${type}" role="radio" aria-checked="${state.newProfileType === type}"><span>${mark}</span>${label}</button>`).join("")}
               </div>
             </div>
@@ -1355,7 +1376,7 @@ function profilesView(profile, selectedBuild) {
       <div class="profile-list-heading">Your profiles <span>${profilesList.length}</span></div>
       <div class="profile-switcher" data-scroll-key="profile-switcher">
         ${profilesList.map((item) => {
-          const mark = item.client ? "G" : item.loader === "fabric" ? "F" : "V";
+          const mark = profileMarkMarkup(item);
           return `<button class="profile-switch ${item.id === profile.id ? "active" : ""}" type="button" data-action="select-profile" data-profile="${escapeAttr(item.id)}" aria-pressed="${item.id === profile.id}"><span class="profile-switch-mark">${mark}</span><span><strong>${escapeHtml(item.label)}</strong><small>${escapeHtml(profileTypeLabel(item))}</small></span></button>`;
         }).join("")}
       </div>
@@ -1398,25 +1419,25 @@ function profilesView(profile, selectedBuild) {
         <section class="profile-folders-panel">
           <div class="profile-panel-title"><div><span class="eyebrow">On this computer</span><h3>Profile folders</h3></div></div>
           <article class="profile-folder-row ${profileHasMods(profile) ? "" : "disabled"}">
-            <span class="profile-folder-mark">M</span>
+            <span class="profile-folder-mark">${markIcon("mods")}</span>
             <div><strong>Mods</strong><small>${profileHasMods(profile) ? `${state.mods.length} file${state.mods.length === 1 ? "" : "s"}` : "Unavailable for Vanilla"}</small></div>
             <div class="profile-folder-actions"><button type="button" data-view="mods" ${profileHasMods(profile) ? "" : "disabled"}>Manage</button><button type="button" data-action="open-mods" ${profileHasMods(profile) ? "" : "disabled"}>Open</button></div>
           </article>
           <article class="profile-folder-row">
-            <span class="profile-folder-mark">R</span>
+            <span class="profile-folder-mark">${markIcon("packs")}</span>
             <div><strong>Resource packs</strong><small>${state.packs.length} file${state.packs.length === 1 ? "" : "s"}</small></div>
             <div class="profile-folder-actions"><button type="button" data-view="packs">Manage</button><button type="button" data-action="open-packs">Open</button></div>
           </article>
           <article class="profile-folder-row">
-            <span class="profile-folder-mark">D</span>
-            <div><strong>Profile data</strong><small>Settings, saves, screenshots, and logs</small></div>
+            <span class="profile-folder-mark">${markIcon("folder")}</span>
+            <div><strong>Profile data</strong><small>Saves, settings and logs</small></div>
             <div class="profile-folder-actions"><button type="button" data-action="open-data">Open</button></div>
           </article>
           ${contextHelp("profile-location", "Folder location", profileRootPath)}
         </section>
       </div>
         ${profile.loader === "fabric" ? `
-          <footer class="profile-loader-strip"><div><span class="profile-folder-mark">F</span><div><strong>${escapeHtml(state.profileLoaderStatus?.version ? `Fabric Loader ${state.profileLoaderStatus.version}` : "Fabric Loader")}</strong><small>${escapeHtml(state.profileLoaderStatus?.updateAvailable ? `Update ${state.profileLoaderStatus.latestVersion} available` : "Used only by this profile")}</small></div></div><button class="ghost" type="button" data-action="update-loader" ${state.busy ? "disabled" : ""}>${state.profileLoaderStatus?.updateAvailable ? "Update" : "Check"}</button></footer>
+          <footer class="profile-loader-strip"><div><span class="profile-folder-mark">${markIcon("fabric")}</span><div><strong>${escapeHtml(state.profileLoaderStatus?.version ? `Fabric Loader ${state.profileLoaderStatus.version}` : "Fabric Loader")}</strong><small>${escapeHtml(state.profileLoaderStatus?.updateAvailable ? `Update ${state.profileLoaderStatus.latestVersion} available` : "Used only by this profile")}</small></div></div><button class="ghost" type="button" data-action="update-loader" ${state.busy ? "disabled" : ""}>${state.profileLoaderStatus?.updateAvailable ? "Update" : "Check"}</button></footer>
         ` : ""}
       <footer class="profile-play-footer"><span>Changes save automatically</span><button class="primary-small" type="button" data-view="play">Back to Home</button></footer>
     </section>
@@ -1713,9 +1734,25 @@ function friendAvatarStyle(friend = {}) {
   return "";
 }
 
+// Skins that failed to load (offline, unknown name) fall back to initials instead of a blank tile.
+const failedAvatarUrls = new Set();
+const probedAvatarUrls = new Set();
+
+function probeAvatar(url) {
+  if (probedAvatarUrls.has(url) || typeof Image === "undefined") return;
+  probedAvatarUrls.add(url);
+  const image = new Image();
+  image.onerror = () => {
+    failedAvatarUrls.add(url);
+    render();
+  };
+  image.src = url;
+}
+
 function remoteAvatarStyle(url, sizing = "cover") {
   const clean = String(url || "").trim();
-  if (!/^https?:\/\//i.test(clean)) return "";
+  if (!/^https?:\/\//i.test(clean) || failedAvatarUrls.has(clean)) return "";
+  probeAvatar(clean);
   // Flat image only: no tint layer (design system v2.1 bans gradient fills).
   return `background-image:url("${cssUrl(clean)}");background-size:${sizing};background-position:center;background-repeat:no-repeat;`;
 }
@@ -1790,7 +1827,6 @@ function fileView(kind, profile, files) {
       <div class="top-actions">
         <button class="ghost" type="button" data-action="${isPacks ? "add-packs" : "add-mods"}" ${disabled ? "disabled" : ""}>Add</button>
         <button class="ghost" type="button" data-action="open-${isPacks ? "packs" : "mods"}">Open Folder</button>
-        <button class="ghost" type="button" data-action="reload-files">Refresh</button>
       </div>
     </section>
     ${disabled ? `<p class="empty">Vanilla has no mods folder. Switch to a Fabric profile to manage jar files.</p>` : ""}

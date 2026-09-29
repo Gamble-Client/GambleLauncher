@@ -22,7 +22,7 @@ function harness(native) {
     document: { querySelector: () => app }, window: {}, location: { search: "" },
     setTimeout, clearTimeout, requestAnimationFrame: (fn) => fn(), URLSearchParams,
     canUseBuildForAccess, preferredBuildForAccess, canLaunchMultiple, launchState, ...promoPolicy, tauriInvoke: native,
-    logoUrl: "", navigator: {}, console
+    logoUrl: "", clientLogo: "", navigator: {}, console
   });
   vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn, refreshMinecraftStatus, refreshSocial, refreshSpotifyStatus, refreshAccount, pollSignIn, refreshSale, currentPromo, promoBannerMarkup };`, context);
   const { state } = context.apiForTest;

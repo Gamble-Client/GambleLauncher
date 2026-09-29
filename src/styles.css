@@ -517,8 +517,20 @@ label > span {
 
 .brand {
   display: grid;
-  gap: 2px;
+  grid-template-columns: 30px auto;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  row-gap: 1px;
+  align-items: center;
   padding: 4px 10px 16px;
+}
+
+.brand-logo {
+  grid-row: 1 / span 2;
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  user-select: none;
 }
 
 /* Wordmark: flat text-1, uppercase tracking. Never a gradient. */
@@ -1944,7 +1956,7 @@ label > span {
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
@@ -1957,8 +1969,11 @@ label > span {
 }
 
 .profile-folder-row strong {
+  overflow: hidden;
   font-size: 13px;
   font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .profile-folder-row small {
@@ -1984,6 +1999,10 @@ label > span {
   min-height: 28px;
   padding: 0 10px;
   font-size: 12px;
+}
+
+.profile-folder-actions button {
+  padding: 0 8px;
 }
 
 .profile-loader-strip {
@@ -2965,4 +2984,37 @@ label > span {
   .identity-fields {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* Profile marks: the Gamble Client dice, or a line icon. Flat, no fills. */
+.mark-logo {
+  display: block;
+  width: 72%;
+  height: 72%;
+  object-fit: contain;
+  user-select: none;
+}
+
+.mark-icon {
+  display: block;
+  width: 58%;
+  height: 58%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.profile-type-choice span {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+}
+
+.profile-type-choice span .mark-logo,
+.profile-type-choice span .mark-icon {
+  width: 16px;
+  height: 16px;
 }
