@@ -24,6 +24,11 @@
   <url type="bugtracker">https://github.com/Gamble-Client/GambleLauncher/issues</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.1.148" date="2026-09-29">
+      <description>
+        <p>The client build picked in Profiles is now the build that launches. The Gamble Client logo and clearer icons replace the letter badges, and accounts whose skin cannot load show their initial.</p>
+      </description>
+    </release>
     <release version="0.1.147" date="2026-09-28">
       <description>
         <p>Verifies launcher updates with a Gamble Client signature and checks every Minecraft, Fabric and Java download against its published hash.</p>
