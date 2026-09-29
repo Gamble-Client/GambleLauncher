@@ -88,6 +88,19 @@ test("both launcher implementations bind manifests to the requested tier and ins
     assert.doesNotMatch(rust, /Launcher-managed memory bootstrap/);
 });
 
+test("the Profiles build picker is recorded with the server before the loader is installed", async () => {
+    const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
+    const rust = await source("src-tauri/src/main.rs");
+
+    // The loader fetches "this account's build" from the server, so the picked build
+    // only takes effect when the launcher records it first.
+    assert.match(rust, /sync_launcher_build_choice\(&build, &token\)\?;\n    let manifest = fetch_client_manifest\(&build, &token\)\?;/);
+    assert.match(rust, /\/api\/launcher\/build-choice/);
+    assert.match(java, /syncBuildChoice\(build\);\n        LauncherManifest manifest = fetchLauncherManifest\(build\);/);
+    assert.match(java, /syncBuildChoice\(launchBuild\);\n\s+File mods = new File\(getMinecraftFolder\(resolvedProfile\), "mods"\);/);
+    assert.match(java, /"\/api\/launcher\/build-choice"/);
+});
+
 test("launch authorization stays in the standalone loader instead of launcher files", async () => {
     const java = await source("src/main/java/com/gambleclient/launcher/Main.java");
     const rust = await source("src-tauri/src/main.rs");

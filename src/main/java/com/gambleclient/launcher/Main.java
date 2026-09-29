@@ -3294,6 +3294,17 @@ public class Main {
         }
     }
 
+    /** The server accepts only builds this account may use; an error stops the launch. */
+    private void syncBuildChoice(Build build) throws IOException {
+        apiRequest(
+            "POST",
+            "/api/launcher/build-choice",
+            "{\"build\":\"" + jsonEscape(build.id) + "\"}",
+            launcherToken,
+            200
+        );
+    }
+
     private LauncherManifest fetchLauncherManifest(Build build) throws IOException {
         ApiResponse response = apiRequest(
             "POST",
@@ -3419,6 +3430,9 @@ public class Main {
 
     private UpdateResult checkAndInstallBuild(Build build) throws IOException {
         ensureSignedIn();
+        // The loader asks the server for "this account's build"; record the picked
+        // build first so it downloads that one, not the account default.
+        syncBuildChoice(build);
         LauncherManifest manifest = fetchLauncherManifest(build);
         File loader = new File(getModsFolder(), LOADER_JAR_NAME);
         boolean alreadyReady = loader.isFile() && isCurrentMemoryLoaderJar(loader);
@@ -3629,6 +3643,7 @@ public class Main {
                     // The standalone loader owns authorization, update selection, and
                     // the client bootstrap. The launcher only installs that loader;
                     // it never passes a client JAR to Fabric's addMods path.
+                    syncBuildChoice(launchBuild);
                     File mods = new File(getMinecraftFolder(resolvedProfile), "mods");
                     removeManagedClientArtifactsForMemory(mods);
                     ensureLoaderJar(mods);

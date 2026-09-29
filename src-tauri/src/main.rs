@@ -1940,6 +1940,9 @@ fn install_client_manifest_blocking(
     }
     ensure_profile_folders(&profile)?;
 
+    // The loader asks the server for "this account's build"; record the Profiles
+    // choice first so it downloads the build picked here, not the account default.
+    sync_launcher_build_choice(&build, &token)?;
     let manifest = fetch_client_manifest(&build, &token)?;
 
     let loader = mods_folder(&profile).join(LOADER_JAR_NAME);
@@ -6487,6 +6490,17 @@ fn service_label_for_url(url: &str) -> &'static str {
     } else {
         "Service"
     }
+}
+
+/// Records the build picked in Profiles for this account. The server accepts only
+/// builds the account may use; an error stops the launch rather than run another tier.
+fn sync_launcher_build_choice(build: &str, token: &str) -> Result<(), String> {
+    post_json(
+        &format!("{SITE_URL}/api/launcher/build-choice"),
+        &json!({ "build": build }),
+        token,
+    )?;
+    Ok(())
 }
 
 fn fetch_client_manifest(build: &str, token: &str) -> Result<ManifestResponse, String> {
