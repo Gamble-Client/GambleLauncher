@@ -2081,27 +2081,70 @@ function launcherNeedsUpdate() {
   const current = state.info?.version || "0.0.0";
   const latest = latestLauncherVersion();
   const minimum = String(state.version?.minVersion || "").trim();
-  return (latest && compareVersions(current, latest) < 0) || (minimum && compareVersions(current, minimum) < 0);
+  const behindLatest = latest ? compareVersions(current, latest) : null;
+  const belowMinimum = minimum ? compareVersions(current, minimum) : null;
+  return (behindLatest !== null && behindLatest < 0) || (belowMinimum !== null && belowMinimum < 0);
 }
 
 function launcherUpdateTarget() {
   const current = state.info?.version || "0.0.0";
   const latest = latestLauncherVersion();
   const minimum = String(state.version?.minVersion || "").trim();
-  if (!latest || compareVersions(current, latest) >= 0) return "";
-  if (minimum && compareVersions(latest, minimum) < 0) return "";
+  if (!latest) return "";
+  const installedToLatest = compareVersions(current, latest);
+  if (installedToLatest === null || installedToLatest >= 0) return "";
+  if (minimum) {
+    const latestToMinimum = compareVersions(latest, minimum);
+    if (latestToMinimum === null || latestToMinimum < 0) return "";
+  }
   return latest;
 }
 
 function compareVersions(left, right) {
-  const a = String(left || "").match(/\d+/g) || [0];
-  const b = String(right || "").match(/\d+/g) || [0];
-  const length = Math.max(a.length, b.length);
-  for (let index = 0; index < length; index += 1) {
-    const diff = Number(a[index] || 0) - Number(b[index] || 0);
-    if (diff !== 0) return diff < 0 ? -1 : 1;
+  const a = parseSemVer(left);
+  const b = parseSemVer(right);
+  if (!a || !b) return null;
+
+  for (let index = 0; index < 3; index += 1) {
+    const comparison = compareNumericSemVerIdentifiers(a.core[index], b.core[index]);
+    if (comparison !== 0) return comparison;
   }
-  return 0;
+
+  if (a.prerelease.length === 0 || b.prerelease.length === 0) {
+    if (a.prerelease.length !== b.prerelease.length) return a.prerelease.length === 0 ? 1 : -1;
+    return 0;
+  }
+
+  for (let index = 0; index < Math.min(a.prerelease.length, b.prerelease.length); index += 1) {
+    const leftIdentifier = a.prerelease[index];
+    const rightIdentifier = b.prerelease[index];
+    const leftNumeric = /^\d+$/.test(leftIdentifier);
+    const rightNumeric = /^\d+$/.test(rightIdentifier);
+    let comparison;
+    if (leftNumeric && rightNumeric) {
+      comparison = compareNumericSemVerIdentifiers(leftIdentifier, rightIdentifier);
+    } else if (leftNumeric !== rightNumeric) {
+      comparison = leftNumeric ? -1 : 1;
+    } else {
+      comparison = leftIdentifier < rightIdentifier ? -1 : leftIdentifier > rightIdentifier ? 1 : 0;
+    }
+    if (comparison !== 0) return comparison;
+  }
+
+  return Math.sign(a.prerelease.length - b.prerelease.length);
+}
+
+function parseSemVer(value) {
+  const match = String(value || "").match(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/);
+  if (!match) return null;
+  const prerelease = match[4] ? match[4].split(".") : [];
+  if (prerelease.some((identifier) => /^\d+$/.test(identifier) && identifier.length > 1 && identifier.startsWith("0"))) return null;
+  return { core: [match[1], match[2], match[3]], prerelease };
+}
+
+function compareNumericSemVerIdentifiers(left, right) {
+  if (left.length !== right.length) return left.length < right.length ? -1 : 1;
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function log(message) {

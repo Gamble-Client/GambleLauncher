@@ -2732,30 +2732,18 @@ public class Main {
     );
 
     static boolean isLauncherVersionNewer(String installed, String advertised) {
-        LauncherSemanticVersion current = parseLauncherSemanticVersion(installed);
-        LauncherSemanticVersion candidate = parseLauncherSemanticVersion(advertised);
-        return current != null && candidate != null && compareLauncherSemanticVersions(candidate, current) > 0;
-    }
-
-    private static LauncherSemanticVersion parseLauncherSemanticVersion(String value) {
-        if (value == null) return null;
-        var matcher = LAUNCHER_SEMVER_PATTERN.matcher(value);
-        if (!matcher.matches()) return null;
-        String prerelease = matcher.group(4);
-        if (prerelease != null) {
-            for (String identifier : prerelease.split("\\.", -1)) {
-                if (isNumericSemanticIdentifier(identifier)
-                    && identifier.length() > 1 && identifier.charAt(0) == '0') return null;
-            }
+        try {
+            return compareLauncherVersions(advertised, installed) > 0;
+        } catch (IllegalArgumentException invalidVersion) {
+            return false;
         }
-        return new LauncherSemanticVersion(
-            matcher.group(1), matcher.group(2), matcher.group(3),
-            prerelease == null ? List.of() : List.of(prerelease.split("\\.", -1)),
-            prerelease == null
-        );
     }
 
-    private static int compareLauncherSemanticVersions(LauncherSemanticVersion left, LauncherSemanticVersion right) {
+    static int compareLauncherVersions(String leftValue, String rightValue) {
+        LauncherSemanticVersion left = parseLauncherSemanticVersion(leftValue);
+        LauncherSemanticVersion right = parseLauncherSemanticVersion(rightValue);
+        if (left == null || right == null) throw new IllegalArgumentException("Invalid semantic version.");
+
         for (int index = 0; index < 3; index++) {
             int comparison = compareNumericSemanticIdentifiers(left.core().get(index), right.core().get(index));
             if (comparison != 0) return comparison;
@@ -2777,6 +2765,24 @@ public class Main {
             if (comparison != 0) return comparison;
         }
         return Integer.compare(left.prerelease().size(), right.prerelease().size());
+    }
+
+    private static LauncherSemanticVersion parseLauncherSemanticVersion(String value) {
+        if (value == null) return null;
+        var matcher = LAUNCHER_SEMVER_PATTERN.matcher(value);
+        if (!matcher.matches()) return null;
+        String prerelease = matcher.group(4);
+        if (prerelease != null) {
+            for (String identifier : prerelease.split("\\.", -1)) {
+                if (isNumericSemanticIdentifier(identifier)
+                    && identifier.length() > 1 && identifier.charAt(0) == '0') return null;
+            }
+        }
+        return new LauncherSemanticVersion(
+            matcher.group(1), matcher.group(2), matcher.group(3),
+            prerelease == null ? List.of() : List.of(prerelease.split("\\.", -1)),
+            prerelease == null
+        );
     }
 
     private static int compareNumericSemanticIdentifiers(String left, String right) {

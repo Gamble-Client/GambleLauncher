@@ -24,7 +24,7 @@ function harness(native) {
     canUseBuildForAccess, preferredBuildForAccess, canLaunchMultiple, launchState, ...promoPolicy, tauriInvoke: native,
     logoUrl: "", clientLogo: "", navigator: {}, console
   });
-  vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn, refreshMinecraftStatus, refreshSocial, refreshSpotifyStatus, refreshAccount, pollSignIn, refreshSale, currentPromo, promoBannerMarkup, updatePopup, launcherNeedsUpdate, latestLauncherVersion, launcherUpdateTarget, downloadLauncherUpdate };`, context);
+  vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn, refreshMinecraftStatus, refreshSocial, refreshSpotifyStatus, refreshAccount, pollSignIn, refreshSale, currentPromo, promoBannerMarkup, updatePopup, launcherNeedsUpdate, latestLauncherVersion, launcherUpdateTarget, downloadLauncherUpdate, compareVersions };`, context);
   const { state } = context.apiForTest;
   Object.assign(state, { starting: false, token: "test-session", account: {
     email: "player@example.test", accessStatus: "owned", selectedPlan: "lifetime"
@@ -34,6 +34,15 @@ function harness(native) {
     click: (action = "launch") => handlers.get("click")({ target: { closest: (selector) => selector === "[data-action]" ? { dataset: { action } } : null } })
   };
 }
+
+test("launcher SemVer precedence matches the shared vectors", async () => {
+  const vectors = (await readFile(new URL("./fixtures/semver-precedence.tsv", import.meta.url), "utf8"))
+    .trim().split("\n").map((line) => line.split("\t"));
+  const { compareVersions } = harness(async () => { throw new Error("native call not expected"); });
+  for (const [left, right, expected] of vectors) {
+    assert.equal(compareVersions(left, right), Number(expected), `${left} compared with ${right}`);
+  }
+});
 
 test("Launch another forwards a separate action and keeps Stop explicit", async () => {
   let input;
@@ -71,6 +80,18 @@ test("launcher update modal never offers an older or below-minimum advertised re
   assert.equal(ui.updatePopup(), "");
   await ui.downloadLauncherUpdate();
   assert.equal(invoked, false);
+});
+
+test("launcher update modal treats SemVer prereleases and build metadata by precedence", () => {
+  for (const version of ["0.1.148-rc.1", "0.1.148+build.2"]) {
+    const ui = harness(async () => { throw new Error("equal/older update must not be offered"); });
+    Object.assign(ui.state, {
+      info: { version: "0.1.148" },
+      version: { version, minVersion: "0.1.148" },
+    });
+    assert.equal(ui.launcherNeedsUpdate(), false, version);
+    assert.equal(ui.launcherUpdateTarget(), "", version);
+  }
 });
 
 test("Stop retains stop-only intent when the last child exits during status refresh", async () => {

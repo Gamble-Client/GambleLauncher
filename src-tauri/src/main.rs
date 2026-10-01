@@ -1916,12 +1916,16 @@ fn download_launcher_update_blocking() -> Result<LauncherUpdateResult, String> {
     })
 }
 
-fn require_newer_launcher_update_version(candidate: &str, installed: &str) -> Result<(), String> {
-    let candidate = semver::Version::parse(candidate)
+fn compare_semver_precedence(left: &str, right: &str) -> Result<std::cmp::Ordering, String> {
+    let left = semver::Version::parse(left)
         .map_err(|_| "Launcher update has an invalid semantic version.".to_string())?;
-    let installed = semver::Version::parse(installed)
+    let right = semver::Version::parse(right)
         .map_err(|_| "Installed launcher version is invalid; refusing the update.".to_string())?;
-    if candidate.cmp_precedence(&installed) != std::cmp::Ordering::Greater {
+    Ok(left.cmp_precedence(&right))
+}
+
+fn require_newer_launcher_update_version(candidate: &str, installed: &str) -> Result<(), String> {
+    if compare_semver_precedence(candidate, installed)? != std::cmp::Ordering::Greater {
         return Err(format!(
             "Launcher update version {candidate} is not newer than the installed version {installed}."
         ));
@@ -7671,6 +7675,24 @@ mod tests {
             "1.0.0+build.1"
         )
         .is_err());
+    }
+
+    #[test]
+    fn launcher_version_precedence_matches_shared_semver_vectors() {
+        let vectors = include_str!("../../tests/fixtures/semver-precedence.tsv");
+        for line in vectors.lines().filter(|line| !line.trim().is_empty()) {
+            let fields: Vec<_> = line.split('\t').collect();
+            assert_eq!(fields.len(), 3, "invalid SemVer vector: {line}");
+            let left = fields[0];
+            let right = fields[1];
+            let expected: i32 = fields[2].parse().expect("valid vector precedence");
+            let actual = match super::compare_semver_precedence(left, right).expect("valid SemVer vector") {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            };
+            assert_eq!(actual, expected, "{left} compared with {right}");
+        }
     }
 
     #[test]

@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -26,6 +28,18 @@ final class LauncherVersionOrderTest {
         assertFalse(newer(helper, "0.1.149+installed", "0.1.149+advertised"));
         assertFalse(newer(helper, "0.1.149", "not-a-version"));
         assertFalse(newer(helper, "0.1.149", " 0.1.150"));
+    }
+
+    @Test
+    void swingSemVerPrecedenceMatchesSharedVectors() throws Exception {
+        for (String line : Files.readAllLines(Path.of("tests/fixtures/semver-precedence.tsv"))) {
+            if (line.isBlank()) continue;
+            String[] fields = line.split("\\t");
+            assertEquals(3, fields.length, "invalid SemVer vector: " + line);
+            int expected = Integer.parseInt(fields[2]);
+            assertEquals(expected, Integer.signum(Main.compareLauncherVersions(fields[0], fields[1])),
+                fields[0] + " vs " + fields[1]);
+        }
     }
 
     private static boolean newer(Method helper, String installed, String advertised) throws Exception {
