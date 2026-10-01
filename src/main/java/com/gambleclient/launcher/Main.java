@@ -2714,12 +2714,7 @@ public class Main {
     private String checkLauncherVersionStatus() {
         try {
             LauncherVersion latest = fetchLauncherVersion();
-            if (latest.version.isEmpty()) return "Launcher check unavailable.";
-            if (!isLauncherVersionNewer(LAUNCHER_VERSION, latest.version)) {
-                return "Launcher latest: " + LAUNCHER_VERSION + ".";
-            }
-            String suffix = latest.downloadUrl.isEmpty() ? "" : " Download: " + latest.downloadUrl;
-            return "Launcher update available: " + latest.version + "." + suffix;
+            return launcherVersionStatus(LAUNCHER_VERSION, latest.version, latest.minVersion, latest.downloadUrl);
         } catch (Exception e) {
             return "Could not check launcher update: " + rootMessage(e);
         }
@@ -2765,6 +2760,27 @@ public class Main {
             if (comparison != 0) return comparison;
         }
         return Integer.compare(left.prerelease().size(), right.prerelease().size());
+    }
+
+    static String launcherVersionStatus(String installed, String latest, String minimum, String downloadUrl) {
+        if (latest == null || latest.isBlank()) return "Launcher check unavailable.";
+        String requiredVersion = minimum == null || minimum.isBlank() ? latest : minimum.trim();
+        try {
+            boolean belowMinimum = compareLauncherVersions(installed, requiredVersion) < 0;
+            if (compareLauncherVersions(latest, requiredVersion) < 0) {
+                return belowMinimum
+                    ? "Launcher update required: minimum " + requiredVersion + " is not available yet."
+                    : "Launcher latest: " + installed + ".";
+            }
+            if (!belowMinimum && compareLauncherVersions(latest, installed) <= 0) {
+                return "Launcher latest: " + installed + ".";
+            }
+            String suffix = downloadUrl == null || downloadUrl.isBlank() ? "" : " Download: " + downloadUrl;
+            return (belowMinimum ? "Launcher update required: " : "Launcher update available: ")
+                + latest + "." + suffix;
+        } catch (IllegalArgumentException invalidVersion) {
+            return "Launcher check unavailable.";
+        }
     }
 
     private static LauncherSemanticVersion parseLauncherSemanticVersion(String value) {
