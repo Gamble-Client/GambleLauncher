@@ -42,6 +42,11 @@ final class JavaLaunchArgumentsTest {
     }
 
     @Test
+    void realJavaLoadsApplicationWithAttachDisabled() throws Exception {
+        roundTrip(List.of("attach-disabled-startup-probe"), "attach-disabled-startup-probe", true);
+    }
+
+    @Test
     void realJavaPreservesUnicodeIncludingSupplementaryAndCombiningCharacters() throws Exception {
         List<String> values = List.of("caf\u00e9", "\u4e2d\u6587", "\u041f\u0440\u0438\u0432\u0435\u0442",
             "emoji \ud83c\udfb2", "e\u0301", "\ufeff", "\u8868\\\"\n\u8868");
@@ -268,6 +273,10 @@ final class JavaLaunchArgumentsTest {
     }
 
     private void roundTrip(List<String> values, String directoryName) throws Exception {
+        roundTrip(values, directoryName, false);
+    }
+
+    private void roundTrip(List<String> values, String directoryName, boolean disableAttach) throws Exception {
         // Use a relative input when the workspace and temp directory share a
         // drive; Windows runners put them on D: and C:, where no relative path
         // exists. Both cases still require an absolute @file for the child cwd.
@@ -276,7 +285,9 @@ final class JavaLaunchArgumentsTest {
         Path inputDirectory = workspace.getRoot().equals(directory.toAbsolutePath().getRoot())
             ? workspace.relativize(directory.toAbsolutePath()) : directory.toAbsolutePath();
         Path workingDirectory = Files.createDirectory(temporaryDirectory.resolve("game " + directoryName));
-        try (JavaLaunchArguments arguments = JavaLaunchArguments.create(inputDirectory, probeCommand(values))) {
+        List<String> command = probeCommand(values);
+        if (disableAttach) command.add(1, "-XX:+DisableAttachMechanism");
+        try (JavaLaunchArguments arguments = JavaLaunchArguments.create(inputDirectory, command)) {
             Path file = argumentFile(arguments);
             assertOwnerOnly(file);
             Process process = arguments.start(builder(arguments).directory(workingDirectory.toFile()));

@@ -156,6 +156,7 @@ public class Main {
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
     private static final String LAUNCHER_VERSION = "0.1.148";
+    private static final String DEVELOPER_ATTACH_OVERRIDE_ENV = "GAMBLE_CLIENT_DEVELOPER_ALLOW_ATTACH";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
     private static final String LOADER_SIGNING_KEY_ID = "617acff9930c4e68";
@@ -4103,6 +4104,7 @@ public class Main {
                 ProcessBuilder builder = new ProcessBuilder(arguments.command());
                 builder.directory(gameDir);
                 builder.redirectErrorStream(false);
+                builder.environment().remove(DEVELOPER_ATTACH_OVERRIDE_ENV);
                 applyGraphicsEnvironment(builder.environment(), graphicsMode, gpuSelector);
                 if (another && !LauncherAccessPolicy.canLaunchAnother(accessPolicyAccount(refreshLauncherAccountBlocking().user))) {
                     throw new IOException("Owner/dev access changed while preparing this launch. Please sign in again.");
@@ -4665,6 +4667,7 @@ public class Main {
             // when old inherited/custom JVM args contain a different mod path.
             command.add("-Dfabric.modsFolder=" + new File(gameDir, "mods").getAbsolutePath());
         }
+        enforceAttachProtection(command, developerAttachOverrideEnabled());
         command.add("-cp");
         command.add(joinClasspath(classpath));
         command.add(profile.mainClass);
@@ -4691,6 +4694,24 @@ public class Main {
         }
 
         return command;
+    }
+
+    private static boolean developerAttachOverrideEnabled() {
+        return developerAttachOverrideEnabled(System.getenv(DEVELOPER_ATTACH_OVERRIDE_ENV));
+    }
+
+    static boolean developerAttachOverrideEnabled(String value) {
+        return "1".equals(value);
+    }
+
+    static void enforceAttachProtection(List<String> command, boolean allowAttach) {
+        command.removeIf(argument -> argument.equals("-XX:+DisableAttachMechanism")
+            || argument.equals("-XX:-DisableAttachMechanism"));
+        if (!allowAttach) {
+            int classpathIndex = command.indexOf("-cp");
+            if (classpathIndex < 0) command.add("-XX:+DisableAttachMechanism");
+            else command.add(classpathIndex, "-XX:+DisableAttachMechanism");
+        }
     }
 
     private static void applyClientShaderPreference(List<String> command, boolean disabled) {

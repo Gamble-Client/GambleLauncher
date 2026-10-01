@@ -42,6 +42,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::os::windows::process::CommandExt;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const DEVELOPER_ATTACH_OVERRIDE_ENV: &str = "GAMBLE_CLIENT_DEVELOPER_ALLOW_ATTACH";
 const SITE_URL: &str = "https://gambleclient.org";
 const FIRST_PARTY_BACKEND_HOSTS: &[&str] = &[
     "gambleclient.org",
@@ -2169,6 +2170,7 @@ fn launch_game_attempt(
         &graphics_mode,
         &gpu_selector,
         &java,
+        developer_attach_override_enabled(),
     ) {
         Ok(command) => command,
         Err(error) => return Err(error),
@@ -2216,7 +2218,8 @@ fn launch_game_attempt(
         process
             .current_dir(&profile_dir)
             .stdout(Stdio::from(stdout))
-            .stderr(Stdio::from(stderr));
+            .stderr(Stdio::from(stderr))
+            .env_remove(DEVELOPER_ATTACH_OVERRIDE_ENV);
         apply_game_graphics_environment(&mut process, &graphics_mode, &gpu_selector);
         #[cfg(target_os = "windows")]
         process.creation_flags(CREATE_NO_WINDOW);
@@ -3840,6 +3843,23 @@ fn apply_client_shader_preference(command: &mut Vec<String>, disabled: bool) {
     }
 }
 
+fn attach_override_enabled(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+fn developer_attach_override_enabled() -> bool {
+    attach_override_enabled(env::var(DEVELOPER_ATTACH_OVERRIDE_ENV).ok().as_deref())
+}
+
+fn enforce_attach_protection(command: &mut Vec<String>, allow_attach: bool) {
+    command.retain(|argument| {
+        argument != "-XX:+DisableAttachMechanism" && argument != "-XX:-DisableAttachMechanism"
+    });
+    if !allow_attach {
+        command.push("-XX:+DisableAttachMechanism".to_string());
+    }
+}
+
 fn build_minecraft_command(
     game_dir: &Path,
     profile_id: &str,
@@ -3857,6 +3877,7 @@ fn build_minecraft_command(
     graphics_mode: &str,
     gpu_selector: &str,
     java: &str,
+    allow_attach: bool,
 ) -> Result<Vec<String>, String> {
     let graphics_mode = normalize_graphics_mode(graphics_mode)?;
     let gpu_selector = validate_gpu_selector(gpu_selector)?;
@@ -3910,6 +3931,7 @@ fn build_minecraft_command(
             display_path(&mods_folder(profile_id))
         ));
     }
+    enforce_attach_protection(&mut command, allow_attach);
     command.push("-cp".to_string());
     command.push(join_classpath(classpath));
     command.push(profile.main_class.clone());
@@ -7182,6 +7204,96 @@ mod tests {
             super::apply_client_shader_preference(&mut command, disabled);
             assert_eq!(command, expected);
         }
+    }
+
+    #[test]
+    fn generated_minecraft_command_disables_attach_by_default() {
+        let profile = super::VersionProfile {
+            main_class: "net.minecraft.client.main.Main".to_string(),
+            jvm_arguments: vec!["-XX:-DisableAttachMechanism".to_string()],
+            ..Default::default()
+        };
+        let identity = super::MinecraftProfile {
+            uuid: "fixture-uuid".to_string(),
+            name: "Fixture".to_string(),
+            xuid: String::new(),
+            access_token: "fixture-token".to_string(),
+            expires_at: 0,
+            user_type: "msa".to_string(),
+        };
+        let command = super::build_minecraft_command(
+            std::path::Path::new("/fixture/.minecraft"),
+            "vanilla",
+            "",
+            "1.21.11",
+            &profile,
+            &[],
+            std::path::Path::new("/fixture/natives"),
+            &identity,
+            4,
+            "-XX:-DisableAttachMechanism",
+            false,
+            false,
+            "Gamble Client",
+            "automatic",
+            "",
+            "java",
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            command
+                .iter()
+                .filter(|argument| *argument == "-XX:+DisableAttachMechanism")
+                .count(),
+            1,
+            "generated JVM command must disable dynamic attachment: {command:?}"
+        );
+        assert!(!command
+            .iter()
+            .any(|argument| argument == "-XX:-DisableAttachMechanism"));
+        assert!(
+            command
+                .iter()
+                .position(|argument| argument == "-XX:+DisableAttachMechanism")
+                < command.iter().position(|argument| argument == "-cp")
+        );
+
+        let override_command = super::build_minecraft_command(
+            std::path::Path::new("/fixture/.minecraft"),
+            "vanilla",
+            "",
+            "1.21.11",
+            &profile,
+            &[],
+            std::path::Path::new("/fixture/natives"),
+            &identity,
+            4,
+            "-XX:-DisableAttachMechanism",
+            false,
+            false,
+            "Gamble Client",
+            "automatic",
+            "",
+            "java",
+            true,
+        )
+        .unwrap();
+        assert!(!override_command
+            .iter()
+            .any(|argument| argument == "-XX:+DisableAttachMechanism"));
+        assert!(!override_command
+            .iter()
+            .any(|argument| argument == "-XX:-DisableAttachMechanism"));
+    }
+
+    #[test]
+    fn launcher_attach_override_requires_an_explicit_developer_value() {
+        assert!(!super::attach_override_enabled(None));
+        assert!(!super::attach_override_enabled(Some("true")));
+        assert!(!super::attach_override_enabled(Some("0")));
+        assert!(super::attach_override_enabled(Some("1")));
     }
 
     #[test]
