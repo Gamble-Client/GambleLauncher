@@ -1868,6 +1868,7 @@ async fn download_launcher_update() -> Result<LauncherUpdateResult, String> {
 
 fn download_launcher_update_blocking() -> Result<LauncherUpdateResult, String> {
     let info = fetch_launcher_version_info()?;
+    require_newer_launcher_update_version(&info.version, VERSION)?;
     let (platform, download) = preferred_launcher_download(&info);
     if download.download_url.trim().is_empty() || download.file_name.trim().is_empty() {
         return Err("Launcher update download is not configured for this platform.".to_string());
@@ -1912,6 +1913,19 @@ fn download_launcher_update_blocking() -> Result<LauncherUpdateResult, String> {
         path: target_text,
         message: open_message,
     })
+}
+
+fn require_newer_launcher_update_version(candidate: &str, installed: &str) -> Result<(), String> {
+    let candidate = semver::Version::parse(candidate)
+        .map_err(|_| "Launcher update has an invalid semantic version.".to_string())?;
+    let installed = semver::Version::parse(installed)
+        .map_err(|_| "Installed launcher version is invalid; refusing the update.".to_string())?;
+    if candidate.cmp_precedence(&installed) != std::cmp::Ordering::Greater {
+        return Err(format!(
+            "Launcher update version {candidate} is not newer than the installed version {installed}."
+        ));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -7515,6 +7529,36 @@ mod tests {
         let mut altered = download.clone();
         altered.sha256 = "0".repeat(64);
         assert!(super::verify_launcher_update_signature("windows", "0.1.146", &altered).is_err());
+    }
+
+    #[test]
+    fn launcher_updates_reject_rollbacks_and_compare_semver_precedence() {
+        // This fixture is a valid signed older Windows installer. Authenticity
+        // alone must not make it eligible when VERSION is newer.
+        let older_signed_download = signed_download(
+            2_622_323,
+            "3eda269ed2e957e97ded7422086fddded6ac8902fc5f422d1a3e7524bd4b395f",
+            "RuuatCD/TEYoedCrnNk/pXBm6+0FoG2WhRgkj0dApPAeBPitdJPgeoWvms+fWqkXI3942H5MLmYZiRBiEcIBBQ==",
+        );
+        assert!(super::verify_launcher_update_signature(
+            "windows",
+            "0.1.146",
+            &older_signed_download
+        )
+        .is_ok());
+        assert!(super::require_newer_launcher_update_version("0.1.146", super::VERSION).is_err());
+        assert!(super::require_newer_launcher_update_version(super::VERSION, super::VERSION).is_err());
+        assert!(super::require_newer_launcher_update_version("not-a-version", super::VERSION).is_err());
+        assert!(super::require_newer_launcher_update_version("1.0.0", "not-a-version").is_err());
+
+        assert!(super::require_newer_launcher_update_version("1.10.0", "1.9.99").is_ok());
+        assert!(super::require_newer_launcher_update_version("1.0.0-alpha.10", "1.0.0-alpha.2").is_ok());
+        assert!(super::require_newer_launcher_update_version("1.0.0", "1.0.0-rc.1").is_ok());
+        assert!(super::require_newer_launcher_update_version(
+            "1.0.0+build.2",
+            "1.0.0+build.1"
+        )
+        .is_err());
     }
 
     #[test]
