@@ -24,7 +24,7 @@ function harness(native) {
     canUseBuildForAccess, preferredBuildForAccess, canLaunchMultiple, launchState, ...promoPolicy, tauriInvoke: native,
     logoUrl: "", clientLogo: "", navigator: {}, console
   });
-  vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn, refreshMinecraftStatus, refreshSocial, refreshSpotifyStatus, refreshAccount, pollSignIn, refreshSale, currentPromo, promoBannerMarkup };`, context);
+  vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn, refreshMinecraftStatus, refreshSocial, refreshSpotifyStatus, refreshAccount, pollSignIn, refreshSale, currentPromo, promoBannerMarkup, updatePopup, launcherNeedsUpdate, latestLauncherVersion, launcherUpdateTarget, downloadLauncherUpdate };`, context);
   const { state } = context.apiForTest;
   Object.assign(state, { starting: false, token: "test-session", account: {
     email: "player@example.test", accessStatus: "owned", selectedPlan: "lifetime"
@@ -56,6 +56,21 @@ test("ordinary accounts cannot invoke Launch another from the UI", async () => {
   Object.assign(ui.state, { minecraftRunning: true });
   await ui.click("launch-another");
   assert.equal(ui.state.minecraftRunning, true);
+});
+
+test("launcher update modal never offers an older or below-minimum advertised release", async () => {
+  let invoked = false;
+  const ui = harness(async () => { invoked = true; throw new Error("stale native update must not be called"); });
+  Object.assign(ui.state, {
+    info: { version: "0.1.149" },
+    version: { version: "0.1.148", minVersion: "0.1.150" },
+  });
+
+  assert.equal(ui.launcherNeedsUpdate(), true);
+  assert.equal(ui.launcherUpdateTarget(), "");
+  assert.equal(ui.updatePopup(), "");
+  await ui.downloadLauncherUpdate();
+  assert.equal(invoked, false);
 });
 
 test("Stop retains stop-only intent when the last child exits during status refresh", async () => {
