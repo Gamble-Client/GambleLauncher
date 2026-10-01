@@ -42,6 +42,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::os::windows::process::CommandExt;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const DEVELOPER_ATTACH_OVERRIDE_ENV: &str = "GAMBLE_CLIENT_DEVELOPER_ALLOW_ATTACH";
 const SITE_URL: &str = "https://gambleclient.org";
 const FIRST_PARTY_BACKEND_HOSTS: &[&str] = &[
     "gambleclient.org",
@@ -1868,6 +1869,7 @@ async fn download_launcher_update() -> Result<LauncherUpdateResult, String> {
 
 fn download_launcher_update_blocking() -> Result<LauncherUpdateResult, String> {
     let info = fetch_launcher_version_info()?;
+    require_launcher_update_policy(&info.version, &info.min_version, VERSION)?;
     let (platform, download) = preferred_launcher_download(&info);
     if download.download_url.trim().is_empty() || download.file_name.trim().is_empty() {
         return Err("Launcher update download is not configured for this platform.".to_string());
@@ -1888,6 +1890,26 @@ fn download_launcher_update_blocking() -> Result<LauncherUpdateResult, String> {
         let _ = fs::remove_file(&staging);
         return Err(error);
     }
+
+    // Metadata can change while a large installer is downloading. Re-check
+    // the latest release and its minimum before making the staged installer
+    // available to open.
+    let install_policy = (|| {
+        let current = fetch_launcher_version_info()?;
+        require_launcher_update_policy(&current.version, &current.min_version, VERSION)?;
+        if current.version != info.version {
+            return Err(
+                "Launcher update metadata changed while downloading; check for updates again before installing."
+                    .to_string(),
+            );
+        }
+        Ok(())
+    })();
+    if let Err(error) = install_policy {
+        let _ = fs::remove_file(&staging);
+        return Err(error);
+    }
+
     let _ = fs::remove_file(&target);
     if let Err(error) = fs::rename(&staging, &target) {
         let _ = fs::remove_file(&staging);
@@ -1912,6 +1934,57 @@ fn download_launcher_update_blocking() -> Result<LauncherUpdateResult, String> {
         path: target_text,
         message: open_message,
     })
+}
+
+fn compare_semver_precedence(left: &str, right: &str) -> Result<std::cmp::Ordering, String> {
+    let left = semver::Version::parse(left)
+        .map_err(|_| "Launcher update has an invalid semantic version.".to_string())?;
+    let right = semver::Version::parse(right)
+        .map_err(|_| "Installed launcher version is invalid; refusing the update.".to_string())?;
+    Ok(left.cmp_precedence(&right))
+}
+
+fn require_newer_launcher_update_version(candidate: &str, installed: &str) -> Result<(), String> {
+    if compare_semver_precedence(candidate, installed)? != std::cmp::Ordering::Greater {
+        return Err(format!(
+            "Launcher update version {candidate} is not newer than the installed version {installed}."
+        ));
+    }
+    Ok(())
+}
+
+/// Rejects invalid server metadata, any latest release below minVersion, and
+/// any release that is not strictly newer than this installation.
+fn require_launcher_update_policy(
+    candidate: &str,
+    minimum: &str,
+    installed: &str,
+) -> Result<(), String> {
+    let minimum = minimum.trim();
+    if minimum.is_empty() {
+        return Err(
+            "Launcher update metadata is missing minVersion; could not check for updates."
+                .to_string(),
+        );
+    }
+    if semver::Version::parse(minimum).is_err() {
+        return Err(
+            "Launcher update metadata has an invalid minVersion; could not check for updates."
+                .to_string(),
+        );
+    }
+    if semver::Version::parse(candidate).is_err() {
+        return Err(
+            "Launcher update metadata has an invalid latest version; could not check for updates."
+                .to_string(),
+        );
+    }
+    if compare_semver_precedence(candidate, minimum)? == std::cmp::Ordering::Less {
+        return Err(format!(
+            "Launcher update metadata is invalid: latest version {candidate} is below the required minimum version {minimum}."
+        ));
+    }
+    require_newer_launcher_update_version(candidate, installed)
 }
 
 #[tauri::command]
@@ -2155,6 +2228,7 @@ fn launch_game_attempt(
         &graphics_mode,
         &gpu_selector,
         &java,
+        developer_attach_override_enabled(),
     ) {
         Ok(command) => command,
         Err(error) => return Err(error),
@@ -2202,7 +2276,8 @@ fn launch_game_attempt(
         process
             .current_dir(&profile_dir)
             .stdout(Stdio::from(stdout))
-            .stderr(Stdio::from(stderr));
+            .stderr(Stdio::from(stderr))
+            .env_remove(DEVELOPER_ATTACH_OVERRIDE_ENV);
         apply_game_graphics_environment(&mut process, &graphics_mode, &gpu_selector);
         #[cfg(target_os = "windows")]
         process.creation_flags(CREATE_NO_WINDOW);
@@ -3826,6 +3901,23 @@ fn apply_client_shader_preference(command: &mut Vec<String>, disabled: bool) {
     }
 }
 
+fn attach_override_enabled(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+fn developer_attach_override_enabled() -> bool {
+    attach_override_enabled(env::var(DEVELOPER_ATTACH_OVERRIDE_ENV).ok().as_deref())
+}
+
+fn enforce_attach_protection(command: &mut Vec<String>, allow_attach: bool) {
+    command.retain(|argument| {
+        argument != "-XX:+DisableAttachMechanism" && argument != "-XX:-DisableAttachMechanism"
+    });
+    if !allow_attach {
+        command.push("-XX:+DisableAttachMechanism".to_string());
+    }
+}
+
 fn build_minecraft_command(
     game_dir: &Path,
     profile_id: &str,
@@ -3843,6 +3935,7 @@ fn build_minecraft_command(
     graphics_mode: &str,
     gpu_selector: &str,
     java: &str,
+    allow_attach: bool,
 ) -> Result<Vec<String>, String> {
     let graphics_mode = normalize_graphics_mode(graphics_mode)?;
     let gpu_selector = validate_gpu_selector(gpu_selector)?;
@@ -3896,6 +3989,7 @@ fn build_minecraft_command(
             display_path(&mods_folder(profile_id))
         ));
     }
+    enforce_attach_protection(&mut command, allow_attach);
     command.push("-cp".to_string());
     command.push(join_classpath(classpath));
     command.push(profile.main_class.clone());
@@ -7171,6 +7265,96 @@ mod tests {
     }
 
     #[test]
+    fn generated_minecraft_command_disables_attach_by_default() {
+        let profile = super::VersionProfile {
+            main_class: "net.minecraft.client.main.Main".to_string(),
+            jvm_arguments: vec!["-XX:-DisableAttachMechanism".to_string()],
+            ..Default::default()
+        };
+        let identity = super::MinecraftProfile {
+            uuid: "fixture-uuid".to_string(),
+            name: "Fixture".to_string(),
+            xuid: String::new(),
+            access_token: "fixture-token".to_string(),
+            expires_at: 0,
+            user_type: "msa".to_string(),
+        };
+        let command = super::build_minecraft_command(
+            std::path::Path::new("/fixture/.minecraft"),
+            "vanilla",
+            "",
+            "1.21.11",
+            &profile,
+            &[],
+            std::path::Path::new("/fixture/natives"),
+            &identity,
+            4,
+            "-XX:-DisableAttachMechanism",
+            false,
+            false,
+            "Gamble Client",
+            "automatic",
+            "",
+            "java",
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            command
+                .iter()
+                .filter(|argument| *argument == "-XX:+DisableAttachMechanism")
+                .count(),
+            1,
+            "generated JVM command must disable dynamic attachment: {command:?}"
+        );
+        assert!(!command
+            .iter()
+            .any(|argument| argument == "-XX:-DisableAttachMechanism"));
+        assert!(
+            command
+                .iter()
+                .position(|argument| argument == "-XX:+DisableAttachMechanism")
+                < command.iter().position(|argument| argument == "-cp")
+        );
+
+        let override_command = super::build_minecraft_command(
+            std::path::Path::new("/fixture/.minecraft"),
+            "vanilla",
+            "",
+            "1.21.11",
+            &profile,
+            &[],
+            std::path::Path::new("/fixture/natives"),
+            &identity,
+            4,
+            "-XX:-DisableAttachMechanism",
+            false,
+            false,
+            "Gamble Client",
+            "automatic",
+            "",
+            "java",
+            true,
+        )
+        .unwrap();
+        assert!(!override_command
+            .iter()
+            .any(|argument| argument == "-XX:+DisableAttachMechanism"));
+        assert!(!override_command
+            .iter()
+            .any(|argument| argument == "-XX:-DisableAttachMechanism"));
+    }
+
+    #[test]
+    fn launcher_attach_override_requires_an_explicit_developer_value() {
+        assert!(!super::attach_override_enabled(None));
+        assert!(!super::attach_override_enabled(Some("true")));
+        assert!(!super::attach_override_enabled(Some("0")));
+        assert!(super::attach_override_enabled(Some("1")));
+    }
+
+    #[test]
     fn legacy_launch_request_defaults_client_shaders_on() {
         let request: super::LaunchRequest = serde_json::from_value(serde_json::json!({"profile":"gamble-client", "build":"beta", "token":"", "username":"fixture", "memory":4, "javaArgs":"", "antiScreenshare":false})).unwrap();
         assert!(!request.disable_client_shaders);
@@ -7515,6 +7699,122 @@ mod tests {
         let mut altered = download.clone();
         altered.sha256 = "0".repeat(64);
         assert!(super::verify_launcher_update_signature("windows", "0.1.146", &altered).is_err());
+    }
+
+    #[test]
+    fn launcher_updates_reject_rollbacks_and_compare_semver_precedence() {
+        // This fixture is a valid signed older Windows installer. Authenticity
+        // alone must not make it eligible when VERSION is newer.
+        let older_signed_download = signed_download(
+            2_622_323,
+            "3eda269ed2e957e97ded7422086fddded6ac8902fc5f422d1a3e7524bd4b395f",
+            "RuuatCD/TEYoedCrnNk/pXBm6+0FoG2WhRgkj0dApPAeBPitdJPgeoWvms+fWqkXI3942H5MLmYZiRBiEcIBBQ==",
+        );
+        assert!(super::verify_launcher_update_signature(
+            "windows",
+            "0.1.146",
+            &older_signed_download
+        )
+        .is_ok());
+        assert!(super::require_newer_launcher_update_version("0.1.146", super::VERSION).is_err());
+        assert!(super::require_newer_launcher_update_version(super::VERSION, super::VERSION).is_err());
+        assert!(super::require_newer_launcher_update_version("not-a-version", super::VERSION).is_err());
+        assert!(super::require_newer_launcher_update_version("1.0.0", "not-a-version").is_err());
+
+        assert!(super::require_newer_launcher_update_version("1.10.0", "1.9.99").is_ok());
+        assert!(super::require_newer_launcher_update_version("1.0.0-alpha.10", "1.0.0-alpha.2").is_ok());
+        assert!(super::require_newer_launcher_update_version("1.0.0", "1.0.0-rc.1").is_ok());
+        assert!(super::require_newer_launcher_update_version(
+            "1.0.0+build.2",
+            "1.0.0+build.1"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn launcher_updates_reject_candidate_below_metadata_minimum() {
+        // Verifier repro: a 0.1.146 install accepts advertised 0.1.147 even
+        // though the server says 0.1.148 is the minimum launcher version.
+        let installed = "0.1.146";
+        let latest = "0.1.147";
+        let minimum = "0.1.148";
+        let result = super::require_launcher_update_policy(latest, minimum, installed);
+        assert!(
+            result
+                .as_ref()
+                .is_err_and(|error| error.contains("below the required minimum version")),
+            "native updater did not classify latest {latest} below minVersion {minimum} as invalid metadata: {result:?}"
+        );
+
+        // Even an installed version that has already moved past the latest
+        // release must not make inconsistent server metadata look acceptable.
+        let invalid_metadata =
+            super::require_launcher_update_policy("0.1.147", "0.1.148", "0.1.149");
+        assert!(
+            invalid_metadata
+                .as_ref()
+                .is_err_and(|error| error.contains("below the required minimum version"))
+        );
+    }
+
+    #[test]
+    fn launcher_update_policy_fails_closed_without_valid_minimum_and_newer_candidate() {
+        let missing_minimum =
+            super::require_launcher_update_policy("0.1.149", "", "0.1.148").unwrap_err();
+        assert!(missing_minimum.contains("missing minVersion"), "{missing_minimum}");
+        assert!(missing_minimum.contains("could not check for updates"));
+
+        let malformed_minimum = super::require_launcher_update_policy(
+            "0.1.149",
+            "not-a-version",
+            "0.1.148",
+        )
+        .unwrap_err();
+        assert!(
+            malformed_minimum.contains("invalid minVersion"),
+            "{malformed_minimum}"
+        );
+        assert!(malformed_minimum.contains("could not check for updates"));
+
+        let malformed_latest = super::require_launcher_update_policy(
+            "not-a-version",
+            "0.1.148",
+            "0.1.147",
+        )
+        .unwrap_err();
+        assert!(
+            malformed_latest.contains("invalid latest version"),
+            "{malformed_latest}"
+        );
+        assert!(malformed_latest.contains("could not check for updates"));
+
+        assert!(
+            super::require_launcher_update_policy("0.1.148", "0.1.148", "0.1.147").is_ok()
+        );
+        let equal =
+            super::require_launcher_update_policy("0.1.148", "0.1.147", "0.1.148").unwrap_err();
+        assert!(equal.contains("is not newer than the installed version"), "{equal}");
+        let older =
+            super::require_launcher_update_policy("0.1.147", "0.1.147", "0.1.148").unwrap_err();
+        assert!(older.contains("is not newer than the installed version"), "{older}");
+    }
+
+    #[test]
+    fn launcher_version_precedence_matches_shared_semver_vectors() {
+        let vectors = include_str!("../../tests/fixtures/semver-precedence.tsv");
+        for line in vectors.lines().filter(|line| !line.trim().is_empty()) {
+            let fields: Vec<_> = line.split('\t').collect();
+            assert_eq!(fields.len(), 3, "invalid SemVer vector: {line}");
+            let left = fields[0];
+            let right = fields[1];
+            let expected: i32 = fields[2].parse().expect("valid vector precedence");
+            let actual = match super::compare_semver_precedence(left, right).expect("valid SemVer vector") {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            };
+            assert_eq!(actual, expected, "{left} compared with {right}");
+        }
     }
 
     #[test]

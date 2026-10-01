@@ -926,6 +926,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
   const clientBuild = profile.client ? (state.clientStatus?.buildVersion || "—") : "—";
   const stopping = ready.action === "stop" || state.minecraftSessionCount > 1;
   const launcherUpdate = launcherNeedsUpdate();
+  const launcherTarget = launcherUpdateTarget();
   const launching = Boolean(state.launchProgress) && ["start", "another", "stop"].includes(state.launchIntent);
   const launchLabel = launching
     ? (state.launchIntent === "stop" ? "Stopping…" : "Launching…")
@@ -991,7 +992,7 @@ function playView(profile, selectedBuild, canInstall, signedIn) {
         <section class="home-card download-card" aria-labelledby="home-downloads-title">
           <span class="eyebrow" id="home-downloads-title">Downloads</span>
           <dl class="status-list">
-            <div><dt>Launcher</dt><dd><span class="mono">${escapeHtml(state.info?.version || LAUNCHER_VERSION)}</span><span class="status-dot ${launcherUpdate ? "warn" : "ok"}">${launcherUpdate ? `Update ${escapeHtml(latestLauncherVersion())}` : "Current"}</span></dd></div>
+            <div><dt>Launcher</dt><dd><span class="mono">${escapeHtml(state.info?.version || LAUNCHER_VERSION)}</span><span class="status-dot ${launcherUpdate ? "warn" : "ok"}">${launcherTarget ? `Update ${escapeHtml(launcherTarget)}` : (launcherUpdate ? "Update unavailable" : "Current")}</span></dd></div>
             <div><dt>Client</dt><dd>${escapeHtml(profile.client ? clientStatusLabel() : "Not used")}</dd></div>
           </dl>
           ${profile.client && state.clientStatus?.message ? `<p class="card-note">${escapeHtml(state.clientStatus.message)}</p>` : ""}
@@ -1289,6 +1290,8 @@ function friendRequestRow(request) {
 
 function updatesView(profile, selectedBuild, canInstall, signedIn) {
   const launcherUpdate = launcherNeedsUpdate();
+  const launcherTarget = launcherUpdateTarget();
+  const launcherVersionLabel = launcherTarget || (launcherUpdate ? "Unavailable" : (latestLauncherVersion() || "Not checked"));
   return `
     <section class="screen-band">
       <div>
@@ -1302,14 +1305,14 @@ function updatesView(profile, selectedBuild, canInstall, signedIn) {
       <article class="update-card ${launcherUpdate ? "warn" : ""}">
         <div class="update-card-head">
           <span>Launcher</span>
-          <strong>${escapeHtml(launcherUpdate ? "Update required" : "Current")}</strong>
+          <strong>${escapeHtml(launcherTarget ? "Update required" : (launcherUpdate ? "Update unavailable" : "Current"))}</strong>
         </div>
         <dl class="status-list">
           <div><dt>Installed</dt><dd class="mono">${escapeHtml(state.info?.version || LAUNCHER_VERSION)}</dd></div>
-          <div><dt>Latest</dt><dd class="mono">${escapeHtml(latestLauncherVersion() || "Not checked")}</dd></div>
+          <div><dt>Latest</dt><dd class="mono">${escapeHtml(launcherVersionLabel)}</dd></div>
         </dl>
-        <p>${launcherUpdate ? "Update the launcher to keep launching and signing in." : "You have the latest launcher."}</p>
-        <button class="primary-small" type="button" data-action="download-launcher" ${state.busy || !latestLauncherVersion() || !launcherUpdate ? "disabled" : ""}>Update Launcher</button>
+        <p>${launcherTarget ? "Update the launcher to keep launching and signing in." : (launcherUpdate ? (launcherUpdateMetadataValid() ? "The published launcher release cannot satisfy the server minimum yet." : "Could not check for launcher updates. Try again later.") : "You have the latest launcher.")}</p>
+        <button class="primary-small" type="button" data-action="download-launcher" ${state.busy || !launcherTarget ? "disabled" : ""}>Update Launcher</button>
       </article>
       <article class="update-card ${clientNeedsUpdate() ? "warn" : ""}">
         <div class="update-card-head">
@@ -1629,13 +1632,14 @@ function updatePopup() {
   // cancelled. Automatic update modals would otherwise cover that flow with a
   // disabled action while state.busy is true.
   if (signInInProgress()) return "";
-  if (launcherNeedsUpdate() && state.dismissedLauncherVersion !== latestLauncherVersion()) {
+  const launcherTarget = launcherUpdateTarget();
+  if (launcherTarget && state.dismissedLauncherVersion !== launcherTarget) {
     return `
       <section class="modal-scrim">
         <article class="update-modal" role="dialog" aria-modal="true" aria-label="Launcher update" tabindex="-1">
           <span class="eyebrow">Launcher update</span>
           <h2>Update required</h2>
-          <p>Installed ${escapeHtml(state.info?.version || "unknown")}. Latest is ${escapeHtml(latestLauncherVersion() || "unknown")}.</p>
+          <p>Installed ${escapeHtml(state.info?.version || "unknown")}. Latest is ${escapeHtml(launcherTarget)}.</p>
           <div class="top-actions">
             <button class="primary-small" type="button" data-action="download-launcher" ${state.busy ? "disabled" : ""}>Update Launcher</button>
             <button class="ghost" type="button" data-action="dismiss-launcher-popup">Later</button>
@@ -2070,25 +2074,84 @@ function clientStatusKey() {
 }
 
 function latestLauncherVersion() {
-  return String(state.version?.version || state.version?.minVersion || "").trim();
+  return String(state.version?.version || "").trim();
+}
+
+function launcherUpdateMetadataValid() {
+  const latest = latestLauncherVersion();
+  const minimum = String(state.version?.minVersion || "").trim();
+  if (!latest || !minimum) return false;
+  if (compareVersions(latest, latest) === null || compareVersions(minimum, minimum) === null) return false;
+  return compareVersions(latest, minimum) >= 0;
 }
 
 function launcherNeedsUpdate() {
+  if (state.version && !launcherUpdateMetadataValid()) return true;
   const current = state.info?.version || "0.0.0";
   const latest = latestLauncherVersion();
   const minimum = String(state.version?.minVersion || "").trim();
-  return (latest && compareVersions(current, latest) < 0) || (minimum && compareVersions(current, minimum) < 0);
+  const behindLatest = latest ? compareVersions(current, latest) : null;
+  const belowMinimum = minimum ? compareVersions(current, minimum) : null;
+  return (behindLatest !== null && behindLatest < 0) || (belowMinimum !== null && belowMinimum < 0);
+}
+
+function launcherUpdateTarget() {
+  const current = state.info?.version || "0.0.0";
+  const latest = latestLauncherVersion();
+  const minimum = String(state.version?.minVersion || "").trim();
+  if (!latest || !launcherUpdateMetadataValid()) return "";
+  const installedToLatest = compareVersions(current, latest);
+  if (installedToLatest === null || installedToLatest >= 0) return "";
+  const latestToMinimum = compareVersions(latest, minimum);
+  if (latestToMinimum === null || latestToMinimum < 0) return "";
+  return latest;
 }
 
 function compareVersions(left, right) {
-  const a = String(left || "").match(/\d+/g) || [0];
-  const b = String(right || "").match(/\d+/g) || [0];
-  const length = Math.max(a.length, b.length);
-  for (let index = 0; index < length; index += 1) {
-    const diff = Number(a[index] || 0) - Number(b[index] || 0);
-    if (diff !== 0) return diff < 0 ? -1 : 1;
+  const a = parseSemVer(left);
+  const b = parseSemVer(right);
+  if (!a || !b) return null;
+
+  for (let index = 0; index < 3; index += 1) {
+    const comparison = compareNumericSemVerIdentifiers(a.core[index], b.core[index]);
+    if (comparison !== 0) return comparison;
   }
-  return 0;
+
+  if (a.prerelease.length === 0 || b.prerelease.length === 0) {
+    if (a.prerelease.length !== b.prerelease.length) return a.prerelease.length === 0 ? 1 : -1;
+    return 0;
+  }
+
+  for (let index = 0; index < Math.min(a.prerelease.length, b.prerelease.length); index += 1) {
+    const leftIdentifier = a.prerelease[index];
+    const rightIdentifier = b.prerelease[index];
+    const leftNumeric = /^\d+$/.test(leftIdentifier);
+    const rightNumeric = /^\d+$/.test(rightIdentifier);
+    let comparison;
+    if (leftNumeric && rightNumeric) {
+      comparison = compareNumericSemVerIdentifiers(leftIdentifier, rightIdentifier);
+    } else if (leftNumeric !== rightNumeric) {
+      comparison = leftNumeric ? -1 : 1;
+    } else {
+      comparison = leftIdentifier < rightIdentifier ? -1 : leftIdentifier > rightIdentifier ? 1 : 0;
+    }
+    if (comparison !== 0) return comparison;
+  }
+
+  return Math.sign(a.prerelease.length - b.prerelease.length);
+}
+
+function parseSemVer(value) {
+  const match = String(value || "").match(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/);
+  if (!match) return null;
+  const prerelease = match[4] ? match[4].split(".") : [];
+  if (prerelease.some((identifier) => /^\d+$/.test(identifier) && identifier.length > 1 && identifier.startsWith("0"))) return null;
+  return { core: [match[1], match[2], match[3]], prerelease };
+}
+
+function compareNumericSemVerIdentifiers(left, right) {
+  if (left.length !== right.length) return left.length < right.length ? -1 : 1;
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function log(message) {
@@ -2653,6 +2716,10 @@ async function installSelected() {
 }
 
 async function downloadLauncherUpdate() {
+  if (!launcherUpdateTarget()) {
+    log("No newer launcher release satisfies the server minimum yet.");
+    return;
+  }
   setBusy(true, "Downloading launcher update");
   try {
     await yieldToUi();

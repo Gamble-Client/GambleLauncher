@@ -1,0 +1,17 @@
+1.0.0-alpha	1.0.0-alpha.1	-1
+1.0.0-alpha.1	1.0.0-alpha.beta	-1
+1.0.0-alpha.beta	1.0.0-beta	-1
+1.0.0-beta	1.0.0-beta.2	-1
+1.0.0-beta.2	1.0.0-beta.11	-1
+1.0.0-beta.11	1.0.0-rc.1	-1
+1.0.0-rc.1	1.0.0	-1
+1.0.0-alpha.9	1.0.0-alpha.beta	-1
+1.0.0-alpha.beta	1.0.0-alpha.10	1
+1.0.0-alpha	1.0.0-alpha.0	-1
+1.0.0-alpha.999999999999999999999999	1.0.0-alpha.1000000000000000000000000	-1
+1.0.0-alpha.abc	1.0.0-alpha.def	-1
+1.0.0	1.0.1	-1
+1.0.9	1.0.10	-1
+1.9.0	1.10.0	-1
+1.0.0+build.2	1.0.0+build.1	0
+1.0.0-alpha+build.2	1.0.0-alpha+build.1	0

@@ -24,7 +24,7 @@ function harness(native) {
     canUseBuildForAccess, preferredBuildForAccess, canLaunchMultiple, launchState, ...promoPolicy, tauriInvoke: native,
     logoUrl: "", clientLogo: "", navigator: {}, console
   });
-  vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn, refreshMinecraftStatus, refreshSocial, refreshSpotifyStatus, refreshAccount, pollSignIn, refreshSale, currentPromo, promoBannerMarkup };`, context);
+  vm.runInContext(`${source}\nrender = () => {}; globalThis.apiForTest = { state, refreshManifest, refreshFiles, knownLaunchMessage, normalizeStoredProfiles, applyAccount, sponsorRemainingSeconds, refreshSponsorOnReturn, refreshMinecraftStatus, refreshSocial, refreshSpotifyStatus, refreshAccount, pollSignIn, refreshSale, currentPromo, promoBannerMarkup, updatePopup, launcherNeedsUpdate, latestLauncherVersion, launcherUpdateTarget, downloadLauncherUpdate, compareVersions };`, context);
   const { state } = context.apiForTest;
   Object.assign(state, { starting: false, token: "test-session", account: {
     email: "player@example.test", accessStatus: "owned", selectedPlan: "lifetime"
@@ -34,6 +34,15 @@ function harness(native) {
     click: (action = "launch") => handlers.get("click")({ target: { closest: (selector) => selector === "[data-action]" ? { dataset: { action } } : null } })
   };
 }
+
+test("launcher SemVer precedence matches the shared vectors", async () => {
+  const vectors = (await readFile(new URL("./fixtures/semver-precedence.tsv", import.meta.url), "utf8"))
+    .trim().split("\n").map((line) => line.split("\t"));
+  const { compareVersions } = harness(async () => { throw new Error("native call not expected"); });
+  for (const [left, right, expected] of vectors) {
+    assert.equal(compareVersions(left, right), Number(expected), `${left} compared with ${right}`);
+  }
+});
 
 test("Launch another forwards a separate action and keeps Stop explicit", async () => {
   let input;
@@ -56,6 +65,47 @@ test("ordinary accounts cannot invoke Launch another from the UI", async () => {
   Object.assign(ui.state, { minecraftRunning: true });
   await ui.click("launch-another");
   assert.equal(ui.state.minecraftRunning, true);
+});
+
+test("launcher update modal never offers an older or below-minimum advertised release", async () => {
+  let invoked = false;
+  const ui = harness(async () => { invoked = true; throw new Error("stale native update must not be called"); });
+  Object.assign(ui.state, {
+    info: { version: "0.1.149" },
+    version: { version: "0.1.148", minVersion: "0.1.150" },
+  });
+
+  assert.equal(ui.launcherNeedsUpdate(), true);
+  assert.equal(ui.launcherUpdateTarget(), "");
+  assert.equal(ui.updatePopup(), "");
+  await ui.downloadLauncherUpdate();
+  assert.equal(invoked, false);
+});
+
+test("launcher update metadata without a valid minimum is unavailable, not offered", () => {
+  for (const metadata of [
+    { version: "0.1.149" },
+    { version: "0.1.149", minVersion: "not-a-version" },
+    { version: "0.1.147", minVersion: "0.1.148" },
+  ]) {
+    const ui = harness(async () => { throw new Error("invalid update metadata must not be offered"); });
+    Object.assign(ui.state, { info: { version: "0.1.148" }, version: metadata });
+    assert.equal(ui.launcherNeedsUpdate(), true, JSON.stringify(metadata));
+    assert.equal(ui.launcherUpdateTarget(), "", JSON.stringify(metadata));
+    assert.equal(ui.updatePopup(), "", JSON.stringify(metadata));
+  }
+});
+
+test("launcher update modal treats SemVer prereleases and build metadata by precedence", () => {
+  for (const [version, unavailable] of [["0.1.148-rc.1", true], ["0.1.148+build.2", false]]) {
+    const ui = harness(async () => { throw new Error("equal/older update must not be offered"); });
+    Object.assign(ui.state, {
+      info: { version: "0.1.148" },
+      version: { version, minVersion: "0.1.148" },
+    });
+    assert.equal(ui.launcherNeedsUpdate(), unavailable, version);
+    assert.equal(ui.launcherUpdateTarget(), "", version);
+  }
 });
 
 test("Stop retains stop-only intent when the last child exits during status refresh", async () => {
