@@ -1311,7 +1311,7 @@ function updatesView(profile, selectedBuild, canInstall, signedIn) {
           <div><dt>Installed</dt><dd class="mono">${escapeHtml(state.info?.version || LAUNCHER_VERSION)}</dd></div>
           <div><dt>Latest</dt><dd class="mono">${escapeHtml(launcherVersionLabel)}</dd></div>
         </dl>
-        <p>${launcherTarget ? "Update the launcher to keep launching and signing in." : (launcherUpdate ? "The published launcher release cannot satisfy the server minimum yet." : "You have the latest launcher.")}</p>
+        <p>${launcherTarget ? "Update the launcher to keep launching and signing in." : (launcherUpdate ? (launcherUpdateMetadataValid() ? "The published launcher release cannot satisfy the server minimum yet." : "Could not check for launcher updates. Try again later.") : "You have the latest launcher.")}</p>
         <button class="primary-small" type="button" data-action="download-launcher" ${state.busy || !launcherTarget ? "disabled" : ""}>Update Launcher</button>
       </article>
       <article class="update-card ${clientNeedsUpdate() ? "warn" : ""}">
@@ -2077,7 +2077,16 @@ function latestLauncherVersion() {
   return String(state.version?.version || "").trim();
 }
 
+function launcherUpdateMetadataValid() {
+  const latest = latestLauncherVersion();
+  const minimum = String(state.version?.minVersion || "").trim();
+  if (!latest || !minimum) return false;
+  if (compareVersions(latest, latest) === null || compareVersions(minimum, minimum) === null) return false;
+  return compareVersions(latest, minimum) >= 0;
+}
+
 function launcherNeedsUpdate() {
+  if (state.version && !launcherUpdateMetadataValid()) return true;
   const current = state.info?.version || "0.0.0";
   const latest = latestLauncherVersion();
   const minimum = String(state.version?.minVersion || "").trim();
@@ -2090,13 +2099,11 @@ function launcherUpdateTarget() {
   const current = state.info?.version || "0.0.0";
   const latest = latestLauncherVersion();
   const minimum = String(state.version?.minVersion || "").trim();
-  if (!latest) return "";
+  if (!latest || !launcherUpdateMetadataValid()) return "";
   const installedToLatest = compareVersions(current, latest);
   if (installedToLatest === null || installedToLatest >= 0) return "";
-  if (minimum) {
-    const latestToMinimum = compareVersions(latest, minimum);
-    if (latestToMinimum === null || latestToMinimum < 0) return "";
-  }
+  const latestToMinimum = compareVersions(latest, minimum);
+  if (latestToMinimum === null || latestToMinimum < 0) return "";
   return latest;
 }
 

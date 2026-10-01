@@ -82,14 +82,28 @@ test("launcher update modal never offers an older or below-minimum advertised re
   assert.equal(invoked, false);
 });
 
+test("launcher update metadata without a valid minimum is unavailable, not offered", () => {
+  for (const metadata of [
+    { version: "0.1.149" },
+    { version: "0.1.149", minVersion: "not-a-version" },
+    { version: "0.1.147", minVersion: "0.1.148" },
+  ]) {
+    const ui = harness(async () => { throw new Error("invalid update metadata must not be offered"); });
+    Object.assign(ui.state, { info: { version: "0.1.148" }, version: metadata });
+    assert.equal(ui.launcherNeedsUpdate(), true, JSON.stringify(metadata));
+    assert.equal(ui.launcherUpdateTarget(), "", JSON.stringify(metadata));
+    assert.equal(ui.updatePopup(), "", JSON.stringify(metadata));
+  }
+});
+
 test("launcher update modal treats SemVer prereleases and build metadata by precedence", () => {
-  for (const version of ["0.1.148-rc.1", "0.1.148+build.2"]) {
+  for (const [version, unavailable] of [["0.1.148-rc.1", true], ["0.1.148+build.2", false]]) {
     const ui = harness(async () => { throw new Error("equal/older update must not be offered"); });
     Object.assign(ui.state, {
       info: { version: "0.1.148" },
       version: { version, minVersion: "0.1.148" },
     });
-    assert.equal(ui.launcherNeedsUpdate(), false, version);
+    assert.equal(ui.launcherNeedsUpdate(), unavailable, version);
     assert.equal(ui.launcherUpdateTarget(), "", version);
   }
 });
