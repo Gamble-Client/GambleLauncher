@@ -2714,12 +2714,82 @@ public class Main {
         try {
             LauncherVersion latest = fetchLauncherVersion();
             if (latest.version.isEmpty()) return "Launcher check unavailable.";
-            if (LAUNCHER_VERSION.equals(latest.version)) return "Launcher latest: " + LAUNCHER_VERSION + ".";
+            if (!isLauncherVersionNewer(LAUNCHER_VERSION, latest.version)) {
+                return "Launcher latest: " + LAUNCHER_VERSION + ".";
+            }
             String suffix = latest.downloadUrl.isEmpty() ? "" : " Download: " + latest.downloadUrl;
             return "Launcher update available: " + latest.version + "." + suffix;
         } catch (Exception e) {
             return "Could not check launcher update: " + rootMessage(e);
         }
+    }
+
+    private static final Pattern LAUNCHER_SEMVER_PATTERN = Pattern.compile(
+        "(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)"
+            + "(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?"
+            + "(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?"
+    );
+
+    static boolean isLauncherVersionNewer(String installed, String advertised) {
+        LauncherSemanticVersion current = parseLauncherSemanticVersion(installed);
+        LauncherSemanticVersion candidate = parseLauncherSemanticVersion(advertised);
+        return current != null && candidate != null && compareLauncherSemanticVersions(candidate, current) > 0;
+    }
+
+    private static LauncherSemanticVersion parseLauncherSemanticVersion(String value) {
+        if (value == null) return null;
+        var matcher = LAUNCHER_SEMVER_PATTERN.matcher(value);
+        if (!matcher.matches()) return null;
+        String prerelease = matcher.group(4);
+        if (prerelease != null) {
+            for (String identifier : prerelease.split("\\.", -1)) {
+                if (isNumericSemanticIdentifier(identifier)
+                    && identifier.length() > 1 && identifier.charAt(0) == '0') return null;
+            }
+        }
+        return new LauncherSemanticVersion(
+            matcher.group(1), matcher.group(2), matcher.group(3),
+            prerelease == null ? List.of() : List.of(prerelease.split("\\.", -1)),
+            prerelease == null
+        );
+    }
+
+    private static int compareLauncherSemanticVersions(LauncherSemanticVersion left, LauncherSemanticVersion right) {
+        for (int index = 0; index < 3; index++) {
+            int comparison = compareNumericSemanticIdentifiers(left.core().get(index), right.core().get(index));
+            if (comparison != 0) return comparison;
+        }
+        if (left.hasNoPrerelease() != right.hasNoPrerelease()) return left.hasNoPrerelease() ? 1 : -1;
+        for (int index = 0; index < Math.min(left.prerelease().size(), right.prerelease().size()); index++) {
+            String leftIdentifier = left.prerelease().get(index);
+            String rightIdentifier = right.prerelease().get(index);
+            boolean leftNumeric = isNumericSemanticIdentifier(leftIdentifier);
+            boolean rightNumeric = isNumericSemanticIdentifier(rightIdentifier);
+            int comparison;
+            if (leftNumeric && rightNumeric) {
+                comparison = compareNumericSemanticIdentifiers(leftIdentifier, rightIdentifier);
+            } else if (leftNumeric != rightNumeric) {
+                comparison = leftNumeric ? -1 : 1;
+            } else {
+                comparison = leftIdentifier.compareTo(rightIdentifier);
+            }
+            if (comparison != 0) return comparison;
+        }
+        return Integer.compare(left.prerelease().size(), right.prerelease().size());
+    }
+
+    private static int compareNumericSemanticIdentifiers(String left, String right) {
+        int byLength = Integer.compare(left.length(), right.length());
+        return byLength != 0 ? byLength : left.compareTo(right);
+    }
+
+    private static boolean isNumericSemanticIdentifier(String value) {
+        return !value.isEmpty() && value.chars().allMatch(character -> character >= '0' && character <= '9');
+    }
+
+    private record LauncherSemanticVersion(String major, String minor, String patch,
+                                           List<String> prerelease, boolean hasNoPrerelease) {
+        List<String> core() { return List.of(major, minor, patch); }
     }
 
     private boolean showLauncherUpdateRequired(Throwable error) {
