@@ -24,6 +24,11 @@
   <url type="bugtracker">https://github.com/Gamble-Client/GambleLauncher/issues</url>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.1.149" date="2026-10-02">
+      <description>
+        <p>Updates now only ever move forward: the launcher refuses older, equal or below-minimum versions, and handles pre-release version tags correctly. The game starts with Java attach protection, and update checks are stricter and clearer.</p>
+      </description>
+    </release>
     <release version="0.1.148" date="2026-09-29">
       <description>
         <p>The client build picked in Profiles is now the build that launches. The Gamble Client logo and clearer icons replace the letter badges, and accounts whose skin cannot load show their initial.</p>

@@ -155,7 +155,7 @@ public class Main {
 
     private static final String SCREEN_LAUNCH = "launch";
     private static final String SCREEN_SETTINGS = "settings";
-    private static final String LAUNCHER_VERSION = "0.1.148";
+    private static final String LAUNCHER_VERSION = "0.1.149";
     private static final String DEVELOPER_ATTACH_OVERRIDE_ENV = "GAMBLE_CLIENT_DEVELOPER_ALLOW_ATTACH";
     private static final String LOADER_JAR_NAME = "gamble-client-loader.jar";
     private static final String LOADER_PROVENANCE_ENTRY = "META-INF/gamble-loader-provenance.json";
